@@ -30,7 +30,6 @@ def compute_bounding_box_lagrangian(p,Q,L,K,k,order = 2, verbose = 0):
         box_lower = -L*l_max * (1./order)
         box_upper =  L*l_max * (1./order)
         
-    
     if order == 1:
         s_max = norm(Q,ord =  2)
         QK = np.dot(K,np.dot(Q,K.T))
@@ -44,7 +43,6 @@ def compute_bounding_box_lagrangian(p,Q,L,K,k,order = 2, verbose = 0):
     if verbose > 0:
         print("\n=== bounding-box approximation of order {} ===".format(order))
         print("largest eigenvalue of Q: {} \nlargest eigenvalue of KQK^T: {}".format(s_max,sk_max))
-        
         
     return box_lower,box_upper
     
@@ -100,13 +98,10 @@ def _vec_to_mat(v,n,tril_vec = True):
             for j in range(i,n):
                 A[i,j] = v[c]
                 A[j,i] = A[i,j]
-                c += 1
-        
-    else:
-        
+                c += 1     
+    else: 
         A = np.reshape(v,(n,n))
-    
-    
+ 
     return A    
     
     
@@ -148,18 +143,29 @@ def _get_edges_hyperrectangle(l_b,u_b,m = None):
         P = P[:m,:]
         
     return P
+ 
+   
+def state_to_operational_ellipsoid():
+    """ transform the state safety ellipsoid to the operational space ellipsoid
     
+    TODO: This is definietly the wrong place for this function. 
+        Needs to be in the corresponding environment class.
+        Needs to be analytic and differentiable
+    """
+    raise NotImplementedError("No clue yet")
+
     
 def _prod_combinations_1darray(v):
     """ Product of all pairs in a vector
     
-    Inputs:
-        v:  input vector          
+    Parameters
+    ----------
+        v: array_like, 1-dimensional 
+            input vector          
         
     Outputs:
-        v_combined:
-            vector containing the product of all pairs in v
-    
+        v_combined: array_like, 1-dimensional
+            vector containing the product of all pairs in v  
     """
     n = len(v)
     v_combined = np.empty((n*(n+1)/2,))
@@ -177,15 +183,19 @@ def _solve_LLS(A,b,eps_mp = 0.0):
     solve problem of the form
         || Ax-b ||^2 -> min
         
-    Input:
-        A:  m-by-n data-matrix
-        b:  m-by-1 data-vector 
-        
-    Optionals:        
-        eps_mp: Moore-Penrose diagonal noise
-    
-    Output:
-        x: Solution to the above problem
+    Parameters
+    ----------   
+        A: m x n array[float]
+            The data-matrix
+        b: n x 1 array [float]
+            The data-vector 
+        eps_mp: float, optional
+            Moore-Penrose diagonal noise
+            
+    Returns
+    -------
+        x: m x 1 array[float]
+            Solution to the above problem
     """
     m,n = np.shape(A)    
     
