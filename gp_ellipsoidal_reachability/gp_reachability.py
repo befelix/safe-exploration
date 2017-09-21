@@ -123,9 +123,12 @@ def onestep_reachability(p_center,gp,K,k,L_mu,L_sigm,q_shape = None, c_safety = 
         
         p_new , Q_new = sum_ellipsoids(p_sum_lagrange,Q_sum_lagrange,p_0,Q_0) 
         
-        print_ellipsoid(p_new,Q_new,text="accumulated uncertainty current step")
+        if verbose > 0:
+            print_ellipsoid(p_new,Q_new,text="accumulated uncertainty current step")
+            print_ellipsoid(p_1,q_1,text="sum old and new uncertainty")
+        
         p_1, q_1 = sum_ellipsoids(p_new,Q_new,p_center,q_shape)
-        print_ellipsoid(p_1,q_1,text="sum old and new uncertainty")
+        
         
         return p_1,q_1
         
@@ -162,9 +165,21 @@ def multistep_reachability(p_0,gp,K,k,L_mu,L_sigm,q_0 = None, c_safety = 1.,verb
     
     """
     n, n_u, n_s = np.shape(K)
+    p_all = np.empty((n,n_s))
+    q_all = np.empty((n,n_s,n_s))
     
+    ## compute the reachable set in the first time step
     K_0 = K[0]
     k_0 = k[0,:,None]
-    p_1,q_1 = onestep_reachability(p_0,gp,K_0,k_0,L_mu,L_sigm,q_shape=None,c_safety=c_safety,verbose = verbose)
+    p_new,q_new = onestep_reachability(p_0,gp,K_0,k_0,L_mu,L_sigm,q_0,c_safety,verbose)
+    p_all[0] = p_new.T
+    q_all[0] = q_new
     
-    raise NotImplementedError("Still need to work on this!")
+    ## iteratively compute it for the next steps
+    for i in range(1,n):
+        p_new,q_new = onestep_reachability(p_new,gp,K[i],k[i,:,None],L_mu,L_sigm,q_new,c_safety,verbose)
+        p_all[i] = p_new.T
+        q_all[i] = q_new
+        
+    return p_new, q_new, p_all, q_all
+        
