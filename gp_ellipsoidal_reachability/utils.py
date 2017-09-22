@@ -11,7 +11,7 @@ import numpy.linalg as nLa
 from numpy.linalg import solve,norm
 from numpy import sqrt,trace,zeros,diag, eye
 
-def compute_bounding_box_lagrangian(p,Q,L,K,k,order = 2, verbose = 0):
+def compute_bounding_box_lagrangian(q,L,K,k,order = 2, verbose = 0):
     """ Compute lagrangian remainder using lipschitz constants
         and ellipsoidal input set with affine control law
     
@@ -21,8 +21,8 @@ def compute_bounding_box_lagrangian(p,Q,L,K,k,order = 2, verbose = 0):
         raise ValueError("Cannot compute lagrangian remainder bounds for the given order")
         
     if order == 2:
-        s_max = norm(Q,ord =  2)
-        QK = np.dot(K,np.dot(Q,K.T))
+        s_max = norm(q,ord =  2)
+        QK = np.dot(K,np.dot(q,K.T))
         sk_max = norm(QK,ord =  2)
         
         l_max = s_max**2 + sk_max**2
@@ -31,8 +31,8 @@ def compute_bounding_box_lagrangian(p,Q,L,K,k,order = 2, verbose = 0):
         box_upper =  L*l_max * (1./order)
         
     if order == 1:
-        s_max = norm(Q,ord =  2)
-        QK = np.dot(K,np.dot(Q,K.T))
+        s_max = norm(q,ord =  2)
+        QK = np.dot(K,np.dot(q,K.T))
         sk_max = norm(QK,ord =  2)
         
         l_max = s_max + sk_max
@@ -177,7 +177,7 @@ def _prod_combinations_1darray(v):
     return v_combined
     
     
-def _solve_LLS(A,b,eps_mp = 0.0):
+def solve_LLS(A,b,eps_mp = 0.0):
     """ Solve Linear Least Squares Problem
     
     solve problem of the form
