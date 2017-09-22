@@ -8,8 +8,9 @@ Created on Wed Sep 20 10:34:16 2017
 import numpy as np
 import scipy.linalg as sLa
 import itertools
+import warnings
 
-from utils import _prod_combinations_1darray,_solve_LLS,_vec_to_mat,all_elements_equal
+from utils import _prod_combinations_1darray,solve_LLS,_vec_to_mat,all_elements_equal
 
 from numpy import sqrt,trace,zeros,diag, eye
 
@@ -59,23 +60,94 @@ def distance_to_center(samples,p_center,q_shape):
     
     return d
     
-def sum_ellipsoids(b1,A1,b2,A2,p=None):
-    """ 
-    Ellipsoidal approximation to sum of two ellipsoids
-    from
+def sum_two_ellipsoids(p_1,q_1,p_2,q_2,c=None):
+    """  Sum of two ellipsoids
+    
+    Computes the ellipsoidal overapproximation of the sum of two n-dimensional 
+    ellipsoids.
+    from:
     "A Kurzhanski, I Valyi - Ellipsoidal Calculus for Estimation and Control"
     
+    Parameters
+    ----------
+    p_1,p_2: n x 1 array
+        The centers of the ellipsoids to sum
+    q_1,q_2: n x n array
+        The shape matrices of the two ellipsoids
+    c: float, optional
+        The 
+    Returns
+    -------
+    p_new: n x 1 array
+        The center of the resulting ellipsoid
+    q_new: n x n array
+        The shape matrix of the resulting ellipsoid
     """
     
     ## choose p s.t. the trace of the new shape matrix is minimized
-    if p is None:
-        p = sqrt(trace(A1)/trace(A2))
+    if c is None:
+        c = sqrt(trace(q_1)/trace(q_2))
         
-    b_new = b1+b2
-    A_new = (1+(1./p))*A1 + (1+p)*A2
+    p_new = p_1+p_2
+    q_new = (1+(1./c))*q_1 + (1+c)*q_2
     
-    return b_new, A_new    
+    return p_new, q_new    
+
+def sum_ellipsoids(p,q,l=None):
+    """ Ellipsoidal overapproximation of sum of multiple ellipsoids
     
+    Compute an ellipsoidal overapproximation of the sum
+    of n individual m-dimensional ellipsoids.
+    
+    from:
+        @inproceedings{kurzhanskiy2006ellipsoidal,
+          title={Ellipsoidal toolbox (ET)},
+          author={Kurzhanskiy, Alex A and Varaiya, Pravin},
+          booktitle={Decision and Control, 2006 45th IEEE Conference on},
+          pages={1498--1503},
+          year={2006},
+          organization={IEEE}
+        }
+    
+    Parameters
+    ----------
+    p: n x m array[float]
+        The centers of the input ellipsoids   
+    q: n x m x m array[float]
+        The shape matrices of the input ellipsoids
+    l: m x 1 array[float], optional
+        A non-zero vector giving the direction along which the 
+        outer approximation should be tight
+    Returns
+    -------
+    p_new: n x 1 array
+        The center of the resulting ellipsoid
+    q_new: n x n array
+        The shape matrix of the resulting ellipsoid
+    """
+    
+    if l is None:
+        l = np.diag(q[0]) #if the matrix was diagonal, this would be an edge of the rectangle
+        warnings.warn("Bad heuristic for choice of l. Might have to think of better ones")
+    n, m = np.shape(p)
+    
+    assert n >= 2, "Need at least two input ellipsoids"
+    if n == 2:
+        return sum_two_ellipsoids(p[0,:,None],q[0],p[1,:,None],q[1])
+        
+    p_new = np.sum(p,axis = 0)[:,None]
+    
+    c = np.sqrt(np.dot(l.T,np.dot(q[0],l)))
+    q_new = (1./c) * q[0]
+    for i in range(1,n):
+        c_i = np.sqrt(np.dot(l.T,np.dot(q[i],l)))
+        q_new += (1./c_i) * q[i]
+        c += c_i
+    q_new *= c
+
+    return p_new, q_new
+    
+        
 def _get_edges_hyperrectangle(l_b,u_b,m = None):
     """ Generate set of points from box-bounds
     
@@ -99,6 +171,8 @@ def _get_edges_hyperrectangle(l_b,u_b,m = None):
         
     """
     
+    warnings.warn("We don't need this anymore! Note that this function is untested!",DeprecationWarning)
+    
     assert(len(l_b) == len(u_b))
     
     n = len(l_b)
@@ -115,18 +189,18 @@ def _get_edges_hyperrectangle(l_b,u_b,m = None):
         
     return P
         
-def ellipsoid_from_box(l_b,u_b,diag_only = False):
+def ellipsoid_from_rectangle(u_b):
     """ Compute ellipsoid covering box
     
     Given a box defined by
      
-        B = [l_b[0],u_b[0]] x ... x [l_b[-1],u_b[-1]] 
-        
+        B = [l_b[0],u_b[0]] x ... x [l_b[-1],u_b[-1]], 
+    where l_b = -u_b (element-wise),
     we compute the minimum enclosing ellipsoid in closed-form
     as the solution to a linear least squares problem.
+    This can be either done by a diagonal shape matrix (axis-aligned)
+    or a rotated/shifted ellipsoid
     
-    NOTE: since B is a box centered around 0 the problem reduces to finding 
-    a diagonal matrix D
     Method is described in:
         [1] :
         
@@ -135,60 +209,42 @@ def ellipsoid_from_box(l_b,u_b,diag_only = False):
     
     Parameters
     ----------
-        l_b: array_like, 1d    
-            list of length n containing lower bounds of intervals defining box (see above)
         u_b: array_like, 1d    
-            list of length n containing upper bounds of intervals defining box (see above)     
+            list of length n containing upper bounds of intervals defining box (see above)
     Returns
     -------
-        Q: np.ndarray[float, n_dim = 2], array of size n x n 
+        q: np.ndarray[float, n_dim = 2], array of size n x n 
             Shape matrix of covering ellipsoid
         
     """        
-    l_b = np.asarray(l_b)
     u_b = np.asarray(u_b)
-    assert l_b.ndim == 1 and u_b.ndim == 1, "lb and ub need to be 1-dimensional (1darrays)!"
-    assert l_b.size == u_b.size, "l_b and u_b need to have the same size!"
-    assert np.all(l_b < u_b), "all elements of lb need to be smaller than ub!"
-             
-    n = len(l_b)    
-    if all_elements_equal(l_b) and all_elements_equal(u_b): #check if hypercube
-        d = np.sum(u_b**2)
-        Q = np.diag(np.array([d]*n))
-        return Q
-        
-    P = _get_edges_hyperrectangle(l_b,u_b) # create a set of points from l_b and u_b 
+    assert u_b.ndim == 1, "lb and ub need to be 1-dimensional (1darrays)!"
+    assert np.all(u_b > 0), """all elements of u_bb need to be greater than zero!
+                            (otherwise the ellipsoid wouldnt be zero-centered) """
+    n = len(u_b)   
+    d = n*u_b**2
+    q = np.diag(d)
     
-    ## transform the data using [1]    
-    m,_ = np.shape(P)
-    if diag_only:
-        J = P**2
-    else: 
-        J = np.empty((m,n*(n+1)/2))   
-        for i in range(m):
-            J[i,:] = _prod_combinations_1darray(P[i,:])
-        
-    # avoid duplicates - this should be avoided in the first place
-    J_unique = np.unique(J,axis=0)
+    return q
     
-    m_unique = np.shape(J_unique)[0]
-
-    if m_unique < m:
-        print("seem to have duplicates in the matrix. Size is reduced from {} to {}!".format(m,m_unique))
-        
-        print("rank of matrix: {}".format(np.linalg.matrix_rank(J_unique)))
-    b = np.ones((m_unique,1))
-    ## solve the resulting LLS
-    params = _solve_LLS(J_unique,b,eps_mp = 1e-8)
+if __name__ == "__main__":
     
-    if diag_only:
-        Q_inv = np.diag(params.squeeze())
-    else:
-        Q_inv = _vec_to_mat(params,n)
+    ub = [0.1,0.2,0.3]
+    q = ellipsoid_from_rectangle(ub)
+    x= np.array(ub)[:,None]
+    print(np.dot(x.T,np.linalg.solve(q,x)))
     
-    # algebraic representation of matrices is always with Q^(-1)
-    # hence we need to invert it to get the actual shape matrix
-    Q = np.linalg.inv(Q_inv)
+    q_1 = np.eye(3)
+    q_2 = np.eye(3)
+    q_3 = np.eye(3)
+    q_4 = np.eye(3)
     
-    print(Q)
-    return np.round(Q, decimals = 8)
+    q = np.empty((4,3,3))
+    q[0] = q_1
+    q[1] = q_2
+    q[2] = q_3
+    q[3] = q_4
+    
+    p = np.zeros((4,3))
+    
+    print(sum_ellipsoids(p,q))
