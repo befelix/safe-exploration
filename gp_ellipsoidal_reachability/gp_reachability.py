@@ -6,11 +6,11 @@ Created on Wed Sep 20 11:13:29 2017
 """
 
 
-from utils_ellipsoid import sum_ellipsoids,ellipsoid_from_box
+from utils_ellipsoid import sum_ellipsoids,ellipsoid_from_rectangle,sum_two_ellipsoids
 from utils import compute_bounding_box_lagrangian, print_ellipsoid
 from numpy import sqrt,trace,zeros,diag, eye
 #from casadi import *
-
+import warnings
 import numpy as np
 
 def onestep_reachability(p_center,gp,K,k,L_mu,L_sigm,q_shape = None, c_safety = 1.,verbose = 1):
@@ -50,12 +50,7 @@ def onestep_reachability(p_center,gp,K,k,L_mu,L_sigm,q_shape = None, c_safety = 
             Center of the overapproximated next state ellipsoid
         Q_new: np.ndarray[float], array of shape n_s x n_s
             Shape matrix of the overapproximated next state ellipsoid  
-    """
-   
-    if verbose > 0:
-        if not q_shape is None:
-            print_ellipsoid(p_center,q_shape,text="initial uncertainty ellipsoid")
-        
+    """         
     n_u, n_s = np.shape(K)
     
     if q_shape is None: # the state is a point
@@ -67,6 +62,8 @@ def onestep_reachability(p_center,gp,K,k,L_mu,L_sigm,q_shape = None, c_safety = 
             
         z_bar = np.vstack((p_center,u_p))
         p_new, q_new_unscaled = gp.predict(z_bar.T)
+        
+        print(warnings.warn("Need to verify this!"))
         q_1 = np.diag(q_new_unscaled.squeeze() * c_safety)
         
         p_1 = p_center + p_new.T
@@ -76,6 +73,8 @@ def onestep_reachability(p_center,gp,K,k,L_mu,L_sigm,q_shape = None, c_safety = 
         
         return p_1, q_1
     else: # the state is a (ellipsoid) set
+        if verbose > 0:
+            print_ellipsoid(p_center,q_shape,text="initial uncertainty ellipsoid")
         ## compute the linearization centers
         x_bar = p_center   # center of the state ellipsoid
         u_bar = k   # u_bar = K*(u_bar-u_bar) + k = k
@@ -103,9 +102,10 @@ def onestep_reachability(p_center,gp,K,k,L_mu,L_sigm,q_shape = None, c_safety = 
         if verbose > 0:
             print_ellipsoid(p_0,Q_0,text="linear transformation uncertainty")
         ## computing the box approximate to the lagrange remainder
-        lb_mean,ub_mean = compute_bounding_box_lagrangian(p_center,q_shape,L_mu,K,k,order = 2,verbose = verbose)
-        lb_sigm,ub_sigm = compute_bounding_box_lagrangian(p_center,q_shape,L_sigm,K,k,order = 1,verbose = verbose)
+        lb_mean,ub_mean = compute_bounding_box_lagrangian(q_shape,L_mu,K,k,order = 2,verbose = verbose)
+        lb_sigm,ub_sigm = compute_bounding_box_lagrangian(q_shape,L_sigm,K,k,order = 1,verbose = verbose)
         
+        print(warnings.warn("Need to verify this!"))
         Q_lagrange_sigm = diag(c_safety*(ub_sigm+sqrt(sigm_0[0,:]))**2)   
         p_lagrange_sigm = zeros((n_s,1))
         
@@ -113,21 +113,37 @@ def onestep_reachability(p_center,gp,K,k,L_mu,L_sigm,q_shape = None, c_safety = 
             print_ellipsoid(p_lagrange_sigm,Q_lagrange_sigm,text="overapproximation lagrangian sigma")
     
 
-        Q_lagrange_mu = ellipsoid_from_box(lb_mean,ub_mean,diag_only = True)
+        Q_lagrange_mu = ellipsoid_from_rectangle(ub_mean)
         p_lagrange_mu = zeros((n_s,1))
         
         if verbose > 0:
             print_ellipsoid(p_lagrange_mu,Q_lagrange_mu,text="overapproximation lagrangian mu")
         
-        p_sum_lagrange,Q_sum_lagrange = sum_ellipsoids(p_lagrange_sigm,Q_lagrange_sigm,p_lagrange_mu,Q_lagrange_mu)
+        p_sum_lagrange,Q_sum_lagrange = sum_two_ellipsoids(p_lagrange_sigm,Q_lagrange_sigm,p_lagrange_mu,Q_lagrange_mu)
         
-        p_new , Q_new = sum_ellipsoids(p_sum_lagrange,Q_sum_lagrange,p_0,Q_0) 
+        p_new , Q_new = sum_two_ellipsoids(p_sum_lagrange,Q_sum_lagrange,p_0,Q_0) 
         
+        p_1, q_1 = sum_two_ellipsoids(p_new,Q_new,p_center,q_shape)
         if verbose > 0:
             print_ellipsoid(p_new,Q_new,text="accumulated uncertainty current step")
-            print_ellipsoid(p_1,q_1,text="sum old and new uncertainty")
+            
+            q_comb = np.empty((4,n_s,n_s))
+            q_comb[0] = q_shape
+            q_comb[1] = Q_0
+            q_comb[2] = Q_lagrange_mu
+            q_comb[3] = Q_lagrange_sigm
+            
+            p_comb = np.zeros((4,n_s))
+            
+            p_test,q_test = sum_ellipsoids(p_comb,q_comb)
+            print_ellipsoid(p_test,q_test,text="Test sum and old uncertainty combined")
         
-        p_1, q_1 = sum_ellipsoids(p_new,Q_new,p_center,q_shape)
+            print_ellipsoid(p_1,q_1,text="sum old and new uncertainty")
+            
+            print("volume of ellipsoid summed individually")
+            print(np.linalg.det(np.linalg.cholesky(q_1)))
+            print("volume of combined sum:")
+            print(np.linalg.det(np.linalg.cholesky(q_test)))
         
         
         return p_1,q_1
@@ -182,4 +198,4 @@ def multistep_reachability(p_0,gp,K,k,L_mu,L_sigm,q_0 = None, c_safety = 1.,verb
         q_all[i] = q_new
         
     return p_new, q_new, p_all, q_all
-        
+     
