@@ -7,6 +7,8 @@ Created on Wed Sep 20 10:37:51 2017
 
 import numpy as np
 import GPy
+import casadi as cas
+import casadi.tools as ctools
 
 from GPy.kern import RBF
 
@@ -104,6 +106,18 @@ class SimpleGPModel():
                 raise NotImplementedError()
         return y_mu_pred,y_sigm_pred
         
+    def predict_casadi(self,x_new,compute_grads = False):
+        """ Compute the predictive mean and variance with casadi library
+        
+        """
+        raise NotImplementedError()
+        
+    def init_casadi(self):
+        """
+        
+        """
+        raise NotImplementedError()
+             
     def predictive_gradients(self,X_new,grad_sigma = False):
         """ Compute the gradients of the predictive mean/variance w.r.t. inputs
         
