@@ -5,11 +5,11 @@ Created on Fri Sep 22 11:08:49 2017
 @author: tkoller
 
 """
-from casadi import *
+from casadi import sqrt, trace, diag
 from casadi.tools import *
 
-def sum_ellipsoids(p_1,q_1,p_2,q_2,c=None):
-    """  Sum of Ellipsoids
+def sum_two_ellipsoids(p_1,q_1,p_2,q_2,c=None):
+    """ overapproximation of sum of two ellipsoids
     
     Computes the ellipsoidal overapproximation of the sum of two n-dimensional 
     ellipsoids.
@@ -58,17 +58,17 @@ def ellipsoid_from_rectangle(u_b):
     
     Parameters
     ----------
-        u_b: array_like, 1d    
-            list of length n containing upper bounds of intervals defining box (see above)
+        u_b: n x 1 array    
+            array containing upper bounds of intervals defining box (see above)
     Returns
     -------
         q: np.ndarray[float, n_dim = 2], array of size n x n 
             The (diagonal) shape matrix of covering ellipsoid
         
     """         
-    n = len(u_b)   
+    n,_ = u_b.shape   
     d = n*u_b**2
-    q = np.diag(d)
+    q = diag(d)
     
     return q
     
