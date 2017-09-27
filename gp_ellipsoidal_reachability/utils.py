@@ -145,16 +145,6 @@ def _get_edges_hyperrectangle(l_b,u_b,m = None):
     return P
  
    
-def state_to_operational_ellipsoid():
-    """ transform the state safety ellipsoid to the operational space ellipsoid
-    
-    TODO: This is definietly the wrong place for this function. 
-        Needs to be in the corresponding environment class.
-        Needs to be analytic and differentiable
-    """
-    raise NotImplementedError("No clue yet")
-
-    
 def _prod_combinations_1darray(v):
     """ Product of all pairs in a vector
     
