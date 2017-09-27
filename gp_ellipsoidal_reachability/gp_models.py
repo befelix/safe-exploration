@@ -10,13 +10,16 @@ import GPy
 import casadi as cas
 import casadi.tools as ctools
 
-from GPy.kern import RBF
+from gp_models_utils_casadi import gp_pred_function
+from GPy.kern import RBF, Linear
 
 class SimpleGPModel():
     """ Simple Wrapper around GPy 
     
     Wrapper around the GPy library
     to get predictions per dimension.
+    
+    TODO: Shouldnt be allowed to initialize model without training data!
     
     Attributes:
         gp_trained (bool): Is set to TRUE once the train() method 
@@ -43,16 +46,16 @@ class SimpleGPModel():
         if (not X is None) and (not y is None):
             self.train(X,y,m=m)
                  
-    def train(self,X,y,m = None):
+    def train(self,X,y,m = None,kern_type = "prod_lin_rbf"):
         """ Train a GP for each state dimension
         
         Args:
             X: Training inputs of size [N, n_s + n_u]
             y: Training targets of size [N, n_s]
         """
-        
         n_data, input_dim = np.shape(X)
-        _,n_pred = np.shape(y)
+        _,self.n_s = np.shape(y)
+        self.n_u = input_dim - self.n_s
         
         if not m is None:
             if n_data < m:
@@ -69,23 +72,95 @@ class SimpleGPModel():
         else:
             X_train = X
             y_train = y
-            
-        gps = [None]*n_pred
-        for ii in range(n_pred):
-            kernel1 = RBF(input_dim,ARD = True)
-            y_ii = y_train[:,ii].reshape(-1,1)
-            model_gp = GPy.models.GPRegression(X_train,y_ii,kernel = kernel1)
+        
+        beta = np.empty((n_data,self.n_s))
+        inv_K = [None]*self.n_s
+        process_noise = np.empty((self.n_s,))
+        gps = [None]*self.n_s
+        
+        for i in range(self.n_s):
+            kern = self._init_kernel_function(kern_type)
+            y_i = y_train[:,i].reshape(-1,1)
+            model_gp = GPy.models.GPRegression(X_train,y_i,kernel = kern)
             model_gp.optimize(max_iters = 1000,messages=True)
             
-            gps[ii] = model_gp
-            
-            
-        #update the class attributes
+            post = model_gp.posterior
+            inv_K[i] = post.woodbury_inv
+            beta[:,i] = post.woodbury_vector.reshape(-1,)
+            process_noise[i] = model_gp.Gaussian_noise.variance
+            gps[i] = model_gp
+                       
+        # create a dictionary of kernel paramters
+        self.hyp = self._create_hyp_dict(gps,kern_type)
+        #update the class attributes      
+        self.inv_K = inv_K
+        self.beta = beta
         self.gps = gps
-        self.n_s = n_pred
-        self.n_u = input_dim - n_pred
         self.gp_trained = True
+        self.x_train = X_train
+        self.kern_type = kern_type
         
+    def _init_kernel_function(self,kern_type):
+        """ Initialize GPy kernel functions based on name. Check if supported.
+        
+        Utility function to return a kernel based on its type name.
+        Checks if the kernel type is supported.
+        
+        Parameters
+        ----------
+        kern_type: str
+            The name of the kernel
+            
+        Returns
+        -------
+        kern: GPy.Kern
+            The Gpy kernel function   
+        """
+        input_dim = self.n_s+self.n_u
+        if kern_type == "rbf":
+            return RBF(input_dim, ARD = True)
+        elif kern_type == "prod_lin_rbf":
+            return RBF(input_dim, ARD = True)*Linear(input_dim, ARD = True)
+        else:
+            raise ValueError("kernel type not supported")
+            
+    def _create_hyp_dict(self,gps,kern_type):
+        """ Create a hyperparameter dict from the individual supported kernels 
+        
+        Parameters
+        ----------
+        gps: n_s x 0 array_like[GPy.GP]
+            The list of trained GPs
+        kern_type:
+            The kernel identifier
+            
+        Returns
+        -------
+        hyp: list[dict]
+            A list of dictionaries containing the hyperparameters of the kernel type
+            for each dimension.
+        """
+        
+        hyp = [None]*self.n_s
+        if kern_type == "rbf":          
+            for i in range(self.n_s):
+                hyp_i = dict()
+                hyp_i["rbf_lengthscales"] = np.reshape(gps[i].kern.lengthscale,(-1,))
+                hyp_i["rbf_variance"] = gps[i].kern.variance
+                hyp[i] = hyp_i
+            
+        elif kern_type == "prod_lin_rbf":
+            for i in range(self.n_s):
+                hyp_i = dict()
+                hyp_i["rbf_lengthscales"] = np.reshape(gps[i].kern.rbf.lengthscale,(-1,))
+                hyp_i["rbf_variance"] = gps[i].kern.rbf.variance
+                hyp_i["lin_variances"] = np.reshape(gps[i].kern.linear.variances,(-1,))
+                hyp[i] = hyp_i
+        else:
+            raise ValueError("kernel type not supported")
+        
+        return hyp
+                
     def predict(self,X_new,quantiles = None):
         """ Compute the predictive mean and variance for a set of test inputs
         
@@ -106,12 +181,19 @@ class SimpleGPModel():
                 raise NotImplementedError()
         return y_mu_pred,y_sigm_pred
         
-    def predict_casadi(self,x_new,compute_grads = False):
-        """ Compute the predictive mean and variance with casadi library
+    def predict_casadi_symbolic(self,x_new,compute_grads = False):
+        """ Return a symbolic casadi function representing predictive mean/variance
         
         """
-        raise NotImplementedError()
-        
+        out_dict = gp_pred_function(x_new,self.x_train,self.beta,self.hyp,self.kern_type,self.inv_K,True,compute_grads)
+        mu_new = out_dict["pred_mu"]
+        sigma_new = out_dict["pred_sigma"]
+        if compute_grads:
+            jac_mu = out_dict["jac_mu"]
+            return mu_new, sigma_new, jac_mu
+            
+        return mu_new, sigma_new
+             
     def init_casadi(self):
         """
         
