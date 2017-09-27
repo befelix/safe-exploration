@@ -9,8 +9,9 @@ admits being use by a Casadi ( symbolic ) framework.
 @author: tkoller
 """
 
-from casadi import *
-from casadi.tools import *
+from casadi import mtimes, eig_symbolic, fmax, norm_2
+import numpy as np
+
 
 def compute_bounding_box_lagrangian(q,L,K,k,order = 2, verbose = 0):
     """ Compute box to overapproximate lagrangian remainder for Casadi
@@ -35,52 +36,68 @@ def compute_bounding_box_lagrangian(q,L,K,k,order = 2, verbose = 0):
         raise ValueError("Cannot compute lagrangian remainder bounds for the given order")
     
     if order == 2:
-        s_max = norm2(q)
+        s_max = matrix_norm_2(q)
+
         qk = mtimes(K,mtimes(q,K.T))
-        sk_max = norm2(qk)
-        
+        sk_max = matrix_norm_2(qk)
+
         l_max = s_max**2 + sk_max**2 
         box_lower = -L*l_max * 0.5
         box_upper =  L*l_max * 0.5
         
     if order == 1:
-        s_max = norm2(q)
+        s_max = matrix_norm_2(q)
+
         qk = mtimes(K,mtimes(q,K.T))
-        sk_max = norm2(qk)
-        
+        sk_max = matrix_norm_2(qk)
         l_max = s_max + sk_max
         
         box_lower = -L*l_max 
         box_upper =  L*l_max 
         
-    if verbose > 0:
-        print("\n=== bounding-box approximation of order {} ===".format(order))
-        print("largest eigenvalue of Q: {} \nlargest eigenvalue of KQK^T: {}".format(s_max,sk_max))
-        
     return box_lower, box_upper
     
-def all_elements_equal(x):
-    """ Check if all elements in a 1darray are equal 
+def vec_max(x):
+    """ Compute (symbolically) the maximum element in a vector
     
     Parameters
     ----------
-    x: numpy 1darray
-        Input array
-        
-        
-    Returns
-    -------
-    b: bool
-        Returns true if all elements in array are equal
-        
+    x : nx1 or array 
+        The symbolic input array
     """
+    n,_ = x.shape
     
-    assert len(np.shape(x)) == 1, "needs to be a 1darray"
+    if n == 1: 
+        return x[0]   
+    c = fmax(x[0],x[1])
+    if n > 2:
+        for i in range(1,n-1):
+            c = fmax(c,x[i+1])
+    return c
     
-    n_s = np.shape(x)
+def matrix_norm_2(a_mat,x = None,n_iter = None):
+    """ Compute an approximation to the maximum eigenvalue of the hermitian matrix x
+       
+    TODO: Can we impose a convergence constraint?
     
-    return 
+    """
+    n,m = a_mat.shape  
+    assert n == m, "Input matrix has to be symmetric"
     
-
+    if x is None:
+        x = np.random.rand(n,1)
+        x /= norm_2(x)
+        
+    if n_iter is None:
+        n_iter = 2*n
+    
+    y = mtimes(a_mat,x)
+    
+    for i in range(n_iter):
+        x = y / norm_2(y)
+        y = mtimes(a_mat,x)
+    
+    return mtimes(y.T,x)
+        
     
     
