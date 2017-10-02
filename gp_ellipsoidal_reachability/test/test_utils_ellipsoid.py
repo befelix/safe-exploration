@@ -20,10 +20,6 @@ def before_ellipsoid_from_rectangle(request):
         n_s = 3
         ub = [0.1]*n_s
         test_points = np.array([[-0.1,0.1,0.1],[-0.1,-0.1,-0.1],[0.1,0.1,0.1]])
-
-        
-    
-    
     test_data = {"ub":ub,"n_s":n_s,"test_points":test_points}
     return test_data
     

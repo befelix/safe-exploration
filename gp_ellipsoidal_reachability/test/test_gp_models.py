@@ -11,10 +11,11 @@ import numpy as np
 from casadi import Function, SX
 from ..gp_models import SimpleGPModel
 
-@pytest.fixture(params = ["CartPole"])
+@pytest.fixture(params = [("CartPole","rbf"),("CartPole","prod_lin_rbf")])
 def before_gp_predict_test(request):
     
-    if request.param == "CartPole":
+    env, kern_type = request.param
+    if env == "CartPole":
         n_s = 5
         n_u = 1
         path = "data_CartPole_N511.hd5"
@@ -23,7 +24,7 @@ def before_gp_predict_test(request):
     X = train_data["X"]
     y = train_data["y"]
     m = 100
-    gp = SimpleGPModel(X,y,m)
+    gp = SimpleGPModel(X,y,m,kern_type)
     
     return gp,n_s,n_u
     
