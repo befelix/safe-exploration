@@ -79,8 +79,9 @@ def matrix_norm_2(a_mat,x = None,n_iter = None):
     """ Compute an approximation to the maximum eigenvalue of the hermitian matrix x
        
     TODO: Can we impose a convergence constraint?
+    TODO: Check for diagonal matrix 
     
-    """
+    """        
     n,m = a_mat.shape  
     assert n == m, "Input matrix has to be symmetric"
     
