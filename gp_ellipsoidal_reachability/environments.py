@@ -6,8 +6,9 @@ Created on Mon Sep 25 17:16:45 2017
 """
 import abc
 import numpy as np
-
+from utils_visualization import plot_ellipsoid_2D
 from scipy.integrate import ode
+import matplotlib.pyplot as plt
 
 class Environment:
     """ Base class for environments
@@ -59,6 +60,11 @@ class Environment:
         """ Apply a random action to the system """
         pass
     
+    @abc.abstractmethod
+    def plot_ellipsoid_trajectory(self, p, q, vis_safety_bounds = True):
+        """ Visualize the reachability ellipsoid"""
+        pass
+    
     def _sample_start_state(self, mean = None, std = None):
         """ """
         init_std = self.init_std
@@ -76,6 +82,10 @@ class InvertedPendulum(Environment):
     """ The Inverted Pendulum environment
     
     The simple two-dimensional Inverted Pendulum environment.
+    The system consists of two states and one action:
+    States:
+        0. d_theta
+        1. theta
     
     TODO: Need to define a safety/fail criterion
     """
@@ -112,6 +122,7 @@ class InvertedPendulum(Environment):
         self.m = m
         self.g = g
         self.b = b
+        self.p_origin = np.array([0,np.pi])
         
     def reset(self, mean = None, std = None):
         """ Reset the system and sample a new start state
@@ -162,7 +173,37 @@ class InvertedPendulum(Environment):
             In the case of the inverted pendulum, this is the same.
         
         """
-        return state
+        return state - self.p_origin
+        
+    def plot_ellipsoid_trajectory(self,p,q, vis_safety_bounds = True):
+        """ Plot the reachability ellipsoids 
+        
+        TODO: Need more principled way to transform ellipsoid to internal states
+        
+        Parameters
+        ----------
+        p: n x n_s array[float]
+            The ellipsoid centers of the trajectory
+        q: n x (n_s * n_s) array[float]
+            The shape matrices of the trajectory
+        vis_safety_bounds: bool, optional
+            Visualize the             
+        
+        """
+        
+        n, n_s = np.shape(p)
+        
+        if vis_safety_bounds:
+            raise NotImplementedError("Need to visualize safety bounds")
+        
+        fig = plt.figure()
+        ax = fig.add_subplot(111)
+        for i in range(n):
+            p_i = p[i,:].reshape((n_s,1)) + self.p_origin.reshape((n_s,1))
+            q_i = q[i,:].reshape((n_s,n_s))
+            ax = plot_ellipsoid_2D(p_i,q_i,ax)
+         
+        plt.show()
         
     def step(self, action):
         """ Apply action to system and output current state and other information.
@@ -200,8 +241,13 @@ if __name__ == "__main__":
     print(s)
     a = pend.random_action()
     print(a)
-    s_new = pend.step(a)
+    _,s_new,_ = pend.step(a)
     print(s_new)
+    
+    p = np.vstack((s.reshape((1,-1)),s_new.reshape((1,-1))))
+    q = .1*np.eye(2).reshape((1,-1))
+    q = np.stack((q,q))
+    pend.plot_ellipsoid_trajectory(p,q,False)
         
         
         
