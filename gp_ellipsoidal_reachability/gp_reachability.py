@@ -198,4 +198,41 @@ def multistep_reachability(p_0,gp,K,k,L_mu,L_sigm,q_0 = None, c_safety = 1.,verb
         q_all[i] = q_new
         
     return p_new, q_new, p_all, q_all
+    
      
+def lin_ellipsoid_safety_distance(p_center,q_shape,h_mat,h_vec,c_safety = 1.0):
+    """ Compute the distance between eLlipsoid and polytope
+    
+    Evaluate the distance of an  ellipsoid E(p_center,q_shape), to a polytopic set
+    of the form:
+        h_mat * x <= h_vec.
+        
+    Parameters
+    ----------
+    p_center: n_s x 1 array[float]
+        The center of the state ellipsoid
+    q_shape: n_s x n_s array[float]
+        The shape matrix of the state ellipsoid
+    h_mat: m x n_s array[float]
+        The shape matrix of the safe polytope (see above)
+    h_vec: m x 1 array[float]
+        The additive vector of the safe polytope (see above)
+        
+    Returns
+    -------
+    d_safety: 1darray[float] of length m
+        The distance of the ellipsoid to the polytope. If d < 0 (elementwise),
+        the ellipsoid is inside the poltyope (safe), otherwise safety is not guaranteed.
+    """
+    
+    m, n_s = np.shape(h_mat)
+    assert np.shape(p_center) == (n_s,1), "p_center has to have shape n_s x 1"
+    assert np.shape(q_shape) == (n_s,n_s), "q_shape has to have shape n_s x n_s" 
+    assert np.shape(h_vec) == (m,1), "q_shape has to have shape m x 1" 
+    
+    d_center = np.dot(h_mat,p_center)
+    d_shape  = c_safety * np.sqrt(np.sum(np.dot(q_shape,h_mat.T)*h_mat.T,axis = 0)[:,None]) ## MISSING SQRT
+    d_safety = d_center + d_shape - h_vec
+    
+    return d_safety
+    
