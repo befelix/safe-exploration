@@ -38,7 +38,7 @@ def _k_rbf(x,hyp,y = None,diag_only = False):
     return precision * exp(-0.5 * r**2)
 
     
-def _prod_lin_rbf(x,hyp,y = None,diag_only = False):
+def _k_prod_lin_rbf(x,hyp,y = None,diag_only = False):
     """ Evaluate the prdocut of linear and rbf kernel function symbolically using Casadi
     
     """
@@ -126,7 +126,7 @@ def _get_kernel_function(kern_type):
     if kern_type == "rbf":
         return _k_rbf
     elif kern_type == "prod_lin_rbf":
-        return _prod_lin_rbf
+        return _k_prod_lin_rbf
     else:
         raise ValueError("Unknown kernel type")
     
