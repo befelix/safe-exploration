@@ -30,10 +30,11 @@ class SimpleGPModel():
         
     """
     
-    def __init__(self,X=None,y=None,m=None):
+    def __init__(self,X=None,y=None,m=None,kern_type = "prod_lin_rbf"):
         """ Initialize GP Model ( possibly without training set)
         
-        Args:
+        Parameters
+        ----------
             X (np.ndarray[float], optional): Training inputs
             y (np.ndarray[float], optional): Training targets
             m (int, optional): number of datapoints to be selected (randomly) 
@@ -44,8 +45,23 @@ class SimpleGPModel():
         self.gp_trained = False
         
         if (not X is None) and (not y is None):
-            self.train(X,y,m=m)
+            self.train(X,y,m,kern_type)
                  
+    @classmethod 
+    def from_dict(cls,gp_dict):
+        """ Initialize GP using data from a dict
+        
+        Initialized the SimpleGPModel from a dictionary containing
+        the necessary information.
+        
+        Parameters
+        ----------    
+        gp_dict: dict
+            The dictionary containing the following entries:
+            
+        """
+        raise NotImplementedError("How do I implement this?")
+        
     def train(self,X,y,m = None,kern_type = "prod_lin_rbf"):
         """ Train a GP for each state dimension
         
@@ -193,12 +209,6 @@ class SimpleGPModel():
             return mu_new, sigma_new, jac_mu
             
         return mu_new, sigma_new
-             
-    def init_casadi(self):
-        """
-        
-        """
-        raise NotImplementedError()
              
     def predictive_gradients(self,X_new,grad_sigma = False):
         """ Compute the gradients of the predictive mean/variance w.r.t. inputs
