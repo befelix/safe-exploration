@@ -53,9 +53,9 @@ def onestep_reachability(p_center,gp,K,k,L_mu,L_sigm,q_shape = None, c_safety = 
             Shape matrix of the overapproximated next state ellipsoid  
     """         
     n_u, n_s = np.shape(K)
-    
     if q_shape is None: # the state is a point
-
+    
+        
         u_p = mtimes(K,p_center) + k
         
         if verbose >0:
@@ -110,7 +110,7 @@ def onestep_reachability(p_center,gp,K,k,L_mu,L_sigm,q_shape = None, c_safety = 
         
 
 def lin_ellipsoid_safety_distance(p_center,q_shape,h_mat,h_vec,c_safety = 1.0):
-    """ Distance between ELlipsoid and Polytope
+    """ Compute symbolically the distance between eLlipsoid and polytope in casadi
     
     Evaluate the distance of an  ellipsoid E(p_center,q_shape), to a polytopic set
     of the form:
@@ -124,7 +124,7 @@ def lin_ellipsoid_safety_distance(p_center,q_shape,h_mat,h_vec,c_safety = 1.0):
         The shape matrix of the state ellipsoid
     h_mat: m x n_s array:
         The shape matrix of the safe polytope (see above)
-    h_vec: n_s x 1 array
+    h_vec: m x 1 array
         The additive vector of the safe polytope (see above)
         
     Returns
@@ -140,6 +140,19 @@ def lin_ellipsoid_safety_distance(p_center,q_shape,h_mat,h_vec,c_safety = 1.0):
     
     return d_safety
 
+
+def objective(p_all,q_all,p_target,k_ff_all,wx_cost,wu_cost,q_target=None):
+    """ 
+    
+    """    
+    n, n_s = np.shape(p_all)
+    c = 0
+    for i in range(n-1):
+        c += mtimes(mtimes(p_all[i,:]-p_target.T,wx_cost),p_all[i,:].T-p_target)
+        c += mtimes(mtimes(k_ff_all[i,:],wu_cost),k_ff_all[i,:].T)
+        
+    return c 
+    
 if __name__ == "__main__":
     p = SX.sym("p",(3,1))
     q = SX.sym("q",(3,3))
@@ -148,6 +161,8 @@ if __name__ == "__main__":
     f = Function("f",[p,q],[lin_ellipsoid_safety_distance(p,q,h_mat_safe,h_safe)])
     
     print(f(np.zeros((3,1)),0.25*np.eye(3)))
-    
+
+
+
     
     
