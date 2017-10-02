@@ -75,9 +75,9 @@ def plot_ellipsoid_2D(p, q, ax, n_points = 100):
     """
     
     r = nLa.cholesky(q).T; #checks spd inside the function
-    t = linspace(0, 2*pi, n_points);
-    z = [np.cos(t); np.sin(t)];
-    ellipse = nLa.inv(R) * z + p;
-    ax.plot(ellipse(1,:), ellipse(2,:))
+    t = np.linspace(0, 2*np.pi, n_points);
+    z = [np.cos(t), np.sin(t)];
+    ellipse = np.dot(r,z) + p;
+    ax.plot(ellipse[0,:], ellipse[1,:])
     
     return ax
