@@ -7,8 +7,11 @@ Created on Thu Sep 28 09:28:15 2017
 import numpy as np
 import casadi as cas
 import warnings
+import sys
 
-from casadi import SX, mtimes, vertcat, reshape
+from casadi import SX, mtimes, vertcat
+from casadi import reshape as cas_reshape
+
 from gp_reachability_casadi import onestep_reachability, lin_ellipsoid_safety_distance, objective
 
 class SafeMPC:
@@ -71,14 +74,13 @@ class SafeMPC:
         
         p_0 = SX.sym("initial state",(self.n_s,1))
         x_target = SX.sym("target state",(self.n_s,1)) 
-        p_all = p_0.T
         k_fb_0 = k_fb_all[0,:].reshape((self.n_u,self.n_s))
         k_ff_0 = k_ff_all[0,:].reshape((self.n_u,1))
         
         p_new, q_new = onestep_reachability(p_0,self.gp,k_fb_0,k_ff_0,self.l_mu,self.l_sigm,c_safety = self.c_safety)
         g = lin_ellipsoid_safety_distance(p_new,q_new,self.h_mat_obs,self.h_obs)
         
-        p_all = vertcat(p_all,p_new.T)
+        p_all = p_new.T
         q_all = q_new.reshape((1,self.n_s*self.n_s))
         lbg += [-cas.inf]*self.m_obs
         ubg += [0]*self.m_obs
@@ -114,16 +116,21 @@ class SafeMPC:
         self.ubg = ubg
         self.solver_initialized = True
         
-    def solve(self,p_0, p_target, k_ff_all_0 = None, k_fb_all_0 = None):
+    def solve(self,p_0, p_target, k_ff_all_0 = None, k_fb_all_0 = None, sol_verbose = False):
         """ Solve the MPC problem for a given set of input parameters
         
         
         Parameters
         ----------
-        p_0:
-        p_target
-        k_ff_all_0
-        k_fb_all_0
+        p_0: n_s x 1 array[float]
+            The initial (current) state
+        p_target n_s x 1 array[float]
+            The target state
+        k_ff_all_0: n_safe x n_u  array[float], optional
+            The initialization of the feed-forward controls
+        k_fb_all_0: n_safe x (n_s * n_u) array[float], optional
+            The initialization of the feedback controls
+            
         Returns
         -------
         k_fb_apply: n_u x n_s array[float]
@@ -144,7 +151,7 @@ class SafeMPC:
                         
         sol = self.solver(x0=u_0,lbg=self.lbg,ubg=self.ubg,p=params)
         
-        return self._get_solution(sol)
+        return self._get_solution(sol,sol_verbose)
         
     def _c_safety_from_p_safety(self,p_safety, n_s, n_steps):
         """ Convert a desired safety probability the corresponding safety coefficient """
@@ -152,7 +159,7 @@ class SafeMPC:
         
         return 11.07
         
-    def _get_solution(self,sol):
+    def _get_solution(self,sol, sol_verbose = False):
         """ Process the solution dict of the casadi solver 
         
         Processes the solution dictionary of the casadi solver and 
@@ -164,6 +171,8 @@ class SafeMPC:
         ----------
         sol: dict
             The solution dictionary returned by the casadi solver
+        sol_verbose: boolean, optional
+            Return additional solver results such as the constraint values
             
         Returns
         -------
@@ -175,31 +184,43 @@ class SafeMPC:
             The feedback control terms for all time steps
         k_ff_all: n_safe x n_u x 1
         
+        h_values: (m_obs*n_safe + m_safe) x 0 array[float], optional
+            The values of the constraint evaluation (distance to obstacle)
         """
         
         x_opt = sol["x"]
-        
+
         n_fb = self.n_s*self.n_u*self.n_safe
         x_fb = x_opt[:n_fb]
         x_ff = x_opt[n_fb:]
         
-        k_fb_all = reshape(x_fb,(self.n_safe,self.n_s*self.n_u))
-        k_ff_all = reshape(x_ff,(self.n_safe,self.n_u))
+        k_fb_all = cas_reshape(x_fb,(self.n_safe,self.n_s*self.n_u))
+        k_ff_all = cas_reshape(x_ff,(self.n_safe,self.n_u))
         
-        k_fb_apply = reshape(k_fb_all[0,:],(self.n_u,self.n_s))
-        k_ff_apply = reshape(k_ff_all[0,:],(self.n_u,1))
+        k_fb_apply = cas_reshape(k_fb_all[0,:],(self.n_u,self.n_s))
+        k_ff_apply = cas_reshape(k_ff_all[0,:],(self.n_u,1))
         
         if self.verbosity > 0:
             print("Optimized feed-forward controls:")
             print(k_ff_all)
             print("Optimized feedback controls:")
             print(k_fb_all)
+            
         if self.rhc:
             self.k_fb_all = k_fb_all
             self.k_ff_all = k_ff_all
             self.do_shift_solution = True
+            
         
-        return k_fb_apply, k_ff_apply, k_fb_all, k_ff_all
+        fb_apply_out = np.array(k_fb_apply)
+        fb_all_out = np.array(k_fb_all).reshape(self.n_safe,self.n_u,self.n_s)
+        ff_apply_out = np.array(k_ff_apply)
+        ff_all_out = np.array(k_ff_all)
+        if sol_verbose:
+            constr_values = np.array(sol["g"])
+            return fb_apply_out, ff_apply_out, fb_all_out, ff_all_out, constr_values
+        
+        return fb_apply_out, ff_apply_out, fb_all_out, ff_all_out
         
     def _get_init_controls(self, k_ff_all_0 = None, k_fb_all_0 = None):
         """ Initialize the controls for the MPC step
@@ -210,16 +231,17 @@ class SafeMPC:
                 k_ff_old = np.copy(self.k_ff_sol) 
                 k_ff_all_0 = np.vstack((k_ff_old[1:,:]),np.zeros((1,self.n_s*self.n_u)))  
             else:
-                k_ff_all_0 = np.random.rand(self.n_safe,self.n_u)
+                k_ff_all_0 = .1*np.random.rand(self.n_safe,self.n_u)
             
         if k_fb_all_0 is None:
             if self.do_shift_solution:
                 k_fb_old = np.copy(self.k_fb_sol) 
                 k_fb_all_0 = np.vstack((k_fb_old[1:,:]),np.zeros((1,self.n_s*self.n_u))) 
             else:
-                k_fb_all_0 = np.random.rand(self.n_safe,self.n_s*self.n_u)
+                k_fb_all_0 = .1*np.random.rand(self.n_safe,self.n_s*self.n_u)
                 
         return k_ff_all_0, k_fb_all_0 
                 
     def update_model(self):
         """ Update the model of the dynamics """
+        raise NotImplementedError("Need to implement this")
