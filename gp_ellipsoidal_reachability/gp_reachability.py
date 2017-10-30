@@ -7,13 +7,14 @@ Created on Wed Sep 20 11:13:29 2017
 
 
 from utils_ellipsoid import sum_ellipsoids,ellipsoid_from_rectangle,sum_two_ellipsoids
-from utils import compute_bounding_box_lagrangian, print_ellipsoid
+from utils import compute_remainder_overapproximations, print_ellipsoid
 from numpy import sqrt,trace,zeros,diag, eye
 #from casadi import *
 import warnings
 import numpy as np
 
-def onestep_reachability(p_center,gp,K,k,L_mu,L_sigm,q_shape = None, c_safety = 1.,verbose = 1):
+def onestep_reachability(p_center,gp,k_ff,l_mu,l_sigma,q_shape = None,k_fb = None,
+                         c_safety = 1.,verbose = 1,a = None, b = None):
     """ Overapproximate the reachable set of states under affine control law
     
     given a system of the form:
@@ -29,8 +30,6 @@ def onestep_reachability(p_center,gp,K,k,L_mu,L_sigm,q_shape = None, c_safety = 
             Center of state ellipsoid        
         gp: SimpleGPModel     
             The gp representing the dynamics            
-        K: n_u x n_s array[float]     
-            The state feedback-matrix for the controls         
         k: n_u x 1 array[float]     
             The additive term of the controls
         L_mu: 1d_array of size n_s
@@ -39,6 +38,8 @@ def onestep_reachability(p_center,gp,K,k,L_mu,L_sigm,q_shape = None, c_safety = 
             Set of Lipschitz constants of the predictive variance (per state dimension)
         q_shape: np.ndarray[float], array of shape n_s x n_s, optional
             Shape matrix of state ellipsoid
+        K: n_u x n_s array[float], optional     
+            The state feedback-matrix for the controls         
         c_safety: float, optional
             The scaling of the semi-axes of the uncertainty matrix 
             corresponding to a level-set of the gaussian pdf.        
@@ -51,22 +52,29 @@ def onestep_reachability(p_center,gp,K,k,L_mu,L_sigm,q_shape = None, c_safety = 
         Q_new: np.ndarray[float], array of shape n_s x n_s
             Shape matrix of the overapproximated next state ellipsoid  
     """         
-    n_u, n_s = np.shape(K)
+    n_s = np.shape(p_center)[0]
+    n_u = np.shape(k_ff)[0]
     
+    if a is None:
+        a = np.eye(n_s)
+        b = np.zeros((n_s,n_u))
+        
     if q_shape is None: # the state is a point
-        u_p = np.dot(K,p_center) + k
+        u_p = k_ff
         
         if verbose >0:
             print("\nApplying action:")
             print(u_p)
             
         z_bar = np.vstack((p_center,u_p))
-        p_new, q_new_unscaled = gp.predict(z_bar.T)
+        mu_0, sigm_0 = gp.predict(z_bar.T)
+        rkhs_bounds = c_safety * np.sqrt(sigm_0).reshape((n_s,))
         
         print(warnings.warn("Need to verify this!"))
-        q_1 = np.diag(q_new_unscaled.squeeze() * c_safety)
+        q_1 = ellipsoid_from_rectangle(rkhs_bounds)
         
-        p_1 = p_center + p_new.T
+        p_lin = np.dot(a,p_center) + np.dot(b,u_p)
+        p_1 = p_lin + mu_0.T
         
         if verbose >0:
             print_ellipsoid(p_1,q_1,text="uncertainty first state")
@@ -74,10 +82,12 @@ def onestep_reachability(p_center,gp,K,k,L_mu,L_sigm,q_shape = None, c_safety = 
         return p_1, q_1
     else: # the state is a (ellipsoid) set
         if verbose > 0:
+            print("????")
+            print(np.shape(q_shape))
             print_ellipsoid(p_center,q_shape,text="initial uncertainty ellipsoid")
         ## compute the linearization centers
         x_bar = p_center   # center of the state ellipsoid
-        u_bar = k   # u_bar = K*(u_bar-u_bar) + k = k
+        u_bar = k_ff   # u_bar = K*(u_bar-u_bar) + k = k
         z_bar = np.vstack((x_bar,u_bar))
         
         if verbose >0:
@@ -89,30 +99,33 @@ def onestep_reachability(p_center,gp,K,k,L_mu,L_sigm,q_shape = None, c_safety = 
         if verbose > 0:
             print_ellipsoid(mu_0,diag(sigm_0.squeeze()),text="predictive distribution")
             
-        Jac_mu = gp.predictive_gradients(z_bar.T)
-        A_mu = Jac_mu[0,:,:n_s]
-        B_mu = Jac_mu[0,:,n_s:]
+        jac_mu = gp.predictive_gradients(z_bar.T)
+        a_mu = jac_mu[0,:,:n_s]
+        b_mu = jac_mu[0,:,n_s:]
          
         ## reach set of the affine terms
-        H = A_mu + np.dot(B_mu,K)
-        p_0 = mu_0.T + np.dot(B_mu,k-u_bar)
+        H = a + a_mu + np.dot(b_mu+b,k_fb)
+        p_0 = mu_0.T  + np.dot(a,x_bar) + np.dot(b,u_bar)
         
         Q_0 = np.dot(H,np.dot(q_shape,H.T))
         
         if verbose > 0:
             print_ellipsoid(p_0,Q_0,text="linear transformation uncertainty")
         ## computing the box approximate to the lagrange remainder
-        lb_mean,ub_mean = compute_bounding_box_lagrangian(q_shape,L_mu,K,k,order = 2,verbose = verbose)
-        lb_sigm,ub_sigm = compute_bounding_box_lagrangian(q_shape,L_sigm,K,k,order = 1,verbose = verbose)
         
-        print(warnings.warn("Need to verify this!"))
-        Q_lagrange_sigm = diag(c_safety*(ub_sigm+sqrt(sigm_0[0,:]))**2)   
+        #lb_mean,ub_mean = compute_bounding_box_lagrangian(q_shape,L_mu,K,k,order = 2,verbose = verbose)
+        #lb_sigm,ub_sigm = compute_bounding_box_lagrangian(q_shape,L_sigm,K,k,order = 1,verbose = verbose)
+        ub_mean, ub_sigma = compute_remainder_overapproximations(q_shape,k_fb,l_mu,l_sigma)
+        
+        b_sigma_eps = c_safety*(np.sqrt(sigm_0) + ub_sigma) 
+        print(np.shape(b_sigma_eps))
+        Q_lagrange_sigm = ellipsoid_from_rectangle(b_sigma_eps.squeeze())   
         p_lagrange_sigm = zeros((n_s,1))
         
         if verbose > 0:
             print_ellipsoid(p_lagrange_sigm,Q_lagrange_sigm,text="overapproximation lagrangian sigma")
     
-
+        print(np.shape(ub_mean))
         Q_lagrange_mu = ellipsoid_from_rectangle(ub_mean)
         p_lagrange_mu = zeros((n_s,1))
         
@@ -121,35 +134,19 @@ def onestep_reachability(p_center,gp,K,k,L_mu,L_sigm,q_shape = None, c_safety = 
         
         p_sum_lagrange,Q_sum_lagrange = sum_two_ellipsoids(p_lagrange_sigm,Q_lagrange_sigm,p_lagrange_mu,Q_lagrange_mu)
         
-        p_new , Q_new = sum_two_ellipsoids(p_sum_lagrange,Q_sum_lagrange,p_0,Q_0) 
+        p_1 , q_1 = sum_two_ellipsoids(p_sum_lagrange,Q_sum_lagrange,p_0,Q_0) 
         
-        p_1, q_1 = sum_two_ellipsoids(p_new,Q_new,p_center,q_shape)
         if verbose > 0:
             print_ellipsoid(p_new,Q_new,text="accumulated uncertainty current step")
             
-            q_comb = np.empty((4,n_s,n_s))
-            q_comb[0] = q_shape
-            q_comb[1] = Q_0
-            q_comb[2] = Q_lagrange_mu
-            q_comb[3] = Q_lagrange_sigm
-            
-            p_comb = np.zeros((4,n_s))
-            
-            p_test,q_test = sum_ellipsoids(p_comb,q_comb)
-            print_ellipsoid(p_test,q_test,text="Test sum and old uncertainty combined")
-        
-            print_ellipsoid(p_1,q_1,text="sum old and new uncertainty")
-            
             print("volume of ellipsoid summed individually")
             print(np.linalg.det(np.linalg.cholesky(q_1)))
-            print("volume of combined sum:")
-            print(np.linalg.det(np.linalg.cholesky(q_test)))
-        
+
         
         return p_1,q_1
         
         
-def multistep_reachability(p_0,gp,K,k,L_mu,L_sigm,q_0 = None, c_safety = 1.,verbose = 1):
+def multistep_reachability(p_0,gp,K,k,L_mu,L_sigm,q_0 = None, c_safety = 1.,verbose = 1,a = None, b= None):
     """ Ellipsoidal overapproximation of a probabilistic safe set after multiple actions
     
     Overapproximate the region containing a pre-specified percentage of the probability
@@ -187,13 +184,13 @@ def multistep_reachability(p_0,gp,K,k,L_mu,L_sigm,q_0 = None, c_safety = 1.,verb
     ## compute the reachable set in the first time step
     K_0 = K[0]
     k_0 = k[0,:,None]
-    p_new,q_new = onestep_reachability(p_0,gp,K_0,k_0,L_mu,L_sigm,q_0,c_safety,verbose)
+    p_new,q_new = onestep_reachability(p_0,gp,k_0,L_mu,L_sigm,q_0,None,c_safety,verbose,a,b)
     p_all[0] = p_new.T
     q_all[0] = q_new
     
     ## iteratively compute it for the next steps
     for i in range(1,n):
-        p_new,q_new = onestep_reachability(p_new,gp,K[i],k[i,:,None],L_mu,L_sigm,q_new,c_safety,verbose)
+        p_new,q_new = onestep_reachability(p_new,gp,k[i,:,None],L_mu,L_sigm,q_new,K[i],c_safety,verbose,a,b)
         p_all[i] = p_new.T
         q_all[i] = q_new
         

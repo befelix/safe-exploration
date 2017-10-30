@@ -9,12 +9,13 @@ import numpy as np
 import casadi as cas
 import casadi.tools as castools
 
-from casadi import SX, mtimes, vertcat, diag, sum2, sum1, sqrt,Function
-from utils_casadi import compute_bounding_box_lagrangian,matrix_norm_2
+from casadi import SX, mtimes, vertcat, diag, sum2, sum1, sqrt,Function, repmat
+from utils_casadi import compute_bounding_box_lagrangian,matrix_norm_2, compute_remainder_overapproximations
 from utils_ellipsoid_casadi import sum_two_ellipsoids, ellipsoid_from_rectangle
 import warnings
 
-def onestep_reachability(p_center,gp,K,k,L_mu,L_sigm,q_shape = None, c_safety = 1.,verbose = 1):
+def onestep_reachability(p_center,gp,k_ff,l_mu,l_sigma,
+                         q_shape = None,k_fb = None, c_safety = 1.,verbose = 1, a = None, b = None):
     """ Overapproximate the reachable set of states under affine control law
     
     given a system of the form:
@@ -30,16 +31,17 @@ def onestep_reachability(p_center,gp,K,k,L_mu,L_sigm,q_shape = None, c_safety = 
             Center of state ellipsoid        
         gp: SimpleGPModel     
             The gp representing the dynamics            
-        K: n_u x n_s array[float]     
-            The state feedback-matrix for the controls         
-        k: n_u x 1 array[float]     
+                 
+        k_ff: n_u x 1 array[float]     
             The additive term of the controls
-        L_mu: 1d_array of size n_s
+        l_mu: 1d_array of size n_s
             Set of Lipschitz constants on the Gradients of the mean function (per state dimension)
-        L_sigm: 1d_array of size n_s
+        l_sigma: 1d_array of size n_s
             Set of Lipschitz constants of the predictive variance (per state dimension)
         q_shape: np.ndarray[float], array of shape n_s x n_s, optional
             Shape matrix of state ellipsoid
+        k_fb: n_u x n_s array[float], optional     
+            The state feedback-matrix for the controls
         c_safety: float, optional
             The scaling of the semi-axes of the uncertainty matrix 
             corresponding to a level-set of the gaussian pdf.        
@@ -52,59 +54,64 @@ def onestep_reachability(p_center,gp,K,k,L_mu,L_sigm,q_shape = None, c_safety = 
         Q_new: np.ndarray[float], array of shape n_s x n_s
             Shape matrix of the overapproximated next state ellipsoid  
     """         
-    n_u, n_s = np.shape(K)
+    n_s = np.shape(p_center)[0]
+    n_u = np.shape(k_ff)[0]
+    
+    if a is None:
+        a = SX.eye(n_s)
+        b = SX.zeros(n_s,n_u)
+        
     if q_shape is None: # the state is a point
     
-        
-        u_p = mtimes(K,p_center) + k
-        
+        u_p = k_ff
         if verbose >0:
             print("\nApplying action:")
-            print(u_p)
-            
+            print(u_p)     
         z_bar = vertcat(p_center,u_p)
-        p_new, q_new_unscaled = gp.predict_casadi_symbolic(z_bar.T)
+        mu_new, pred_var = gp.predict_casadi_symbolic(z_bar.T)
         
-        print(warnings.warn("Need to verify this!"))
-        q_1 = diag(q_new_unscaled.reshape((-1,1)) * c_safety)
+        p_lin = mtimes(a,p_center) + mtimes(b,u_p)
+        p_1 = p_lin + mu_new.T
+        
+        rkhs_bound = c_safety*sqrt(pred_var.T)
+        q_1 = ellipsoid_from_rectangle(rkhs_bound)
 
-        p_1 = p_center + p_new.T
-        
         return p_1, q_1
     else: # the state is a (ellipsoid) set
 
         ## compute the linearization centers
         x_bar = p_center   # center of the state ellipsoid
-        u_bar = k   # u_bar = K*(u_bar-u_bar) + k = k
+        u_bar = k_ff   # u_bar = K*(u_bar-u_bar) + k = k
         z_bar = vertcat(x_bar,u_bar)
         
         ##compute the zero and first order matrices
-        mu_0, sigm_0, Jac_mu = gp.predict_casadi_symbolic(z_bar.T,True)
+        mu_0, sigm_0, jac_mu = gp.predict_casadi_symbolic(z_bar.T,True)
                    
-        A_mu = Jac_mu[:,:n_s]
-        B_mu = Jac_mu[:,n_s:]
+        a_mu = jac_mu[:,:n_s]
+        b_mu = jac_mu[:,n_s:]
          
         ## reach set of the affine terms
-        H = A_mu + mtimes(B_mu,K)
-        p_0 = mu_0.T + mtimes(B_mu,k-u_bar)
+        H = a + a_mu + mtimes(b_mu+b,k_fb)
+        p_0 = mu_0.T  + mtimes(a,x_bar) + mtimes(b,u_bar)
         
         Q_0 = mtimes(H,mtimes(q_shape,H.T))
         
+        ub_mean,ub_sigma = compute_remainder_overapproximations(q_shape,k_fb,l_mu,l_sigma)
         ## computing the box approximate to the lagrange remainder
-        lb_mean,ub_mean = compute_bounding_box_lagrangian(q_shape,L_mu,K,k,order = 2,verbose = verbose)
-        lb_sigm,ub_sigm = compute_bounding_box_lagrangian(q_shape,L_sigm,K,k,order = 1,verbose = verbose)
+        #lb_mean,ub_mean = compute_bounding_box_lagrangian(q_shape,L_mu,K,k,order = 2,verbose = verbose)
+        #lb_sigm,ub_sigm = compute_bounding_box_lagrangian(q_shape,L_sigm,K,k,order = 1,verbose = verbose)
+        Q_lagrange_mu = ellipsoid_from_rectangle(ub_mean)
+        p_lagrange_mu = SX.zeros((n_s,1))        
         
-        Q_lagrange_sigm = diag(c_safety*(ub_sigm+sqrt(sigm_0[0,:].T))**2)   
+        b_sigma_eps = c_safety*(sqrt(sigm_0.T) + ub_sigma)
+        Q_lagrange_sigm = ellipsoid_from_rectangle(b_sigma_eps)   
         p_lagrange_sigm = SX.zeros((n_s,1))
           
-        Q_lagrange_mu = ellipsoid_from_rectangle(ub_mean)
-        p_lagrange_mu = SX.zeros((n_s,1))
+        
                
         p_sum_lagrange,Q_sum_lagrange = sum_two_ellipsoids(p_lagrange_sigm,Q_lagrange_sigm,p_lagrange_mu,Q_lagrange_mu)
         
-        p_new , Q_new = sum_two_ellipsoids(p_sum_lagrange,Q_sum_lagrange,p_0,Q_0) 
-        
-        p_1, q_1 = sum_two_ellipsoids(p_new,Q_new,p_center,q_shape)    
+        p_1 , q_1 = sum_two_ellipsoids(p_sum_lagrange,Q_sum_lagrange,p_0,Q_0)      
         
         return p_1,q_1
         
@@ -135,7 +142,7 @@ def lin_ellipsoid_safety_distance(p_center,q_shape,h_mat,h_vec,c_safety = 1.0):
     """
     d_center = mtimes(h_mat,p_center)
     
-    d_shape  = c_safety * sqrt(sum1(mtimes(q_shape,h_mat.T)*h_mat.T)).T ## MISSING SQRT
+    d_shape  = c_safety * sqrt(sum1(mtimes(q_shape,h_mat.T)*h_mat.T)).T 
     d_safety = d_center + d_shape - h_vec
     
     return d_safety
@@ -147,10 +154,10 @@ def objective(p_all,q_all,p_target,k_ff_all,wx_cost,wu_cost,q_target=None):
     """    
     n, n_s = np.shape(p_all)
     c = 0
-    for i in range(n-1):
-        c += mtimes(mtimes(p_all[i,:]-p_target.T,wx_cost),p_all[i,:].T-p_target)
-        c += mtimes(mtimes(k_ff_all[i,:],wu_cost),k_ff_all[i,:].T)
-        
+    #for i in range(n-1):
+    #    c += mtimes(mtimes(p_all[i,:]-p_target.T,wx_cost),p_all[i,:].T-p_target)
+    #    c += mtimes(mtimes(k_ff_all[i,:],wu_cost),k_ff_all[i,:].T)
+    c = mtimes(mtimes(p_all[0,:]-p_target.T,wx_cost),p_all[0,:].T-p_target)    
     return c 
     
 if __name__ == "__main__":
