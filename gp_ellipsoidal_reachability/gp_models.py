@@ -30,7 +30,7 @@ class SimpleGPModel():
         
     """
     
-    def __init__(self,X=None,y=None,m=None,kern_type = "prod_lin_rbf"):
+    def __init__(self,n_s,n_u,X=None,y=None,m=None,kern_type = "prod_lin_rbf"):
         """ Initialize GP Model ( possibly without training set)
         
         Parameters
@@ -42,8 +42,11 @@ class SimpleGPModel():
             
         """
         
+        self.n_s = n_s
+        self.n_u = n_u
         self.gp_trained = False
-        
+        self.m = m
+        self.kern_type = kern_type
         if (not X is None) and (not y is None):
             self.train(X,y,m,kern_type)
                  
@@ -69,10 +72,8 @@ class SimpleGPModel():
             X: Training inputs of size [N, n_s + n_u]
             y: Training targets of size [N, n_s]
         """
-        n_data, input_dim = np.shape(X)
-        _,self.n_s = np.shape(y)
-        self.n_u = input_dim - self.n_s
-        
+        n_data, _ = np.shape(X)
+
         if not m is None:
             if n_data < m:
                 warnings.warn("""The desired number of datapoints is not available. Dataset consist of {}
@@ -116,6 +117,25 @@ class SimpleGPModel():
         self.x_train = X_train
         self.kern_type = kern_type
         
+    def update_model(self, x, y, train = True):
+        """ Update the model based on the current settings and new data 
+        
+        Parameters
+        ----------
+        x: n x (n_s + n_u) array[float]
+            The training set
+        y: n x n_s
+            The training targets
+        train: bool, optional
+            If this is set to TRUE the hyperparameters are re-optimized
+        """
+        if train:
+            self.train(x,y,self.m,self.kern_type)
+        else:
+            raise NotImplementedError("""Here, we only want to update
+            the kernel matrix and the prediction vector""")
+        
+            
     def _init_kernel_function(self,kern_type):
         """ Initialize GPy kernel functions based on name. Check if supported.
         
@@ -136,7 +156,7 @@ class SimpleGPModel():
         if kern_type == "rbf":
             return RBF(input_dim, ARD = True)
         elif kern_type == "prod_lin_rbf":
-            return RBF(input_dim, ARD = True)*Linear(input_dim, ARD = True)
+            return RBF(input_dim, ARD = True)*Linear(input_dim, ARD = False)
         else:
             raise ValueError("kernel type not supported")
             
@@ -170,7 +190,7 @@ class SimpleGPModel():
                 hyp_i = dict()
                 hyp_i["rbf_lengthscales"] = np.reshape(gps[i].kern.rbf.lengthscale,(-1,))
                 hyp_i["rbf_variance"] = gps[i].kern.rbf.variance
-                hyp_i["lin_variances"] = np.reshape(gps[i].kern.linear.variances,(-1,))
+                hyp_i["lin_variances"] = np.array([gps[i].kern.linear.variances]*(self.n_s+self.n_u))
                 hyp[i] = hyp_i
         else:
             raise ValueError("kernel type not supported")
@@ -210,8 +230,16 @@ class SimpleGPModel():
             
         return mu_new, sigma_new
              
-    def predictive_gradients(self,X_new,grad_sigma = False):
+    def predictive_gradients(self,x_new,grad_sigma = False):
         """ Compute the gradients of the predictive mean/variance w.r.t. inputs
+        
+        Parameters
+        ----------
+        x_new: T x (n_s + n_u) array[float]
+            The test inputs to compute the gradients at
+        grad_sigma: bool, optional
+            Additionaly returns the gradients of the predictive variance w.r.t. the inputs if
+            this is set to TRUE
         
         """
 
@@ -220,12 +248,12 @@ class SimpleGPModel():
             ## but we dont need it right now
             raise NotImplementedError("Gradient of sigma not implemented")
         
-        T = np.shape(X_new)[0]
+        T = np.shape(x_new)[0]
         
         grad_mu_pred = np.empty([T,self.n_s,self.n_s+self.n_u])
         
         for i in range(self.n_s):
-            g_mu_pred,_ = self.gps[i].predictive_gradients(X_new)
+            g_mu_pred,_ = self.gps[i].predictive_gradients(x_new)
             grad_mu_pred[:,i,:] = g_mu_pred[:,:,0]
             
         return grad_mu_pred
