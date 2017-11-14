@@ -15,6 +15,8 @@ from casadi import reshape as cas_reshape
 
 from gp_reachability_casadi import onestep_reachability, lin_ellipsoid_safety_distance, objective
 from gp_reachability import multistep_reachability
+from ilqr_cython import CILQR
+
 class SafeMPC:
     """ Gaussian Process MPC with safety bounds
     
@@ -23,22 +25,26 @@ class SafeMPC:
     """
     
     def __init__(self, n_safe, n_perf, gp, l_mu, l_sigm, h_mat_safe, h_safe,
-                 h_mat_obs, h_obs, wx_cost, wu_cost, p_safety = .95, 
-                 rhc = True, lqr_feedback = True, lin_model = None, ctrl_bounds = None):
+                 h_mat_obs, h_obs, wx_cost, wu_cost, dt,beta_safety = 2.5,
+                 rhc = True, ilqr_init = True, lin_model = None, ctrl_bounds = None,
+                 safe_policy = None):
         """ Initialize the SafeMPC object with dynamic model information
         
         
-        """
+        """ 
         self.rhc = rhc
-        self.p_safety = p_safety 
         self.gp = gp
         self.n_safe = n_safe
         self.n_perf = n_perf
-        self.n_fail = self.n_safe + 1 #initialize s.t. there is no backup strategy
+        self.n_fail = self.n_safe #initialize s.t. there is no backup strategy
         self.n_s = self.gp.n_s
         self.n_u = self.gp.n_u
         self.l_mu = l_mu
         self.l_sigm = l_sigm
+        self.dt = dt
+        self.has_openloop = False
+        
+        self.safe_policy = safe_policy
         
         m_obs_mat, n_s_obs = np.shape(h_mat_obs)
         m_safe_mat, n_s_safe = np.shape(h_mat_safe)
@@ -63,109 +69,143 @@ class SafeMPC:
         
         self.wx_cost = wx_cost
         self.wu_cost = wu_cost
-        self.wx_feedback = wx_cost/3
-        self.wu_feedback = 15*wu_cost
+        self.wx_feedback = wx_cost
+        self.wu_feedback = 1*wu_cost
         
-        self.do_shift_solution = False
+        self.do_shift_solution = True
         self.solver_initialized = False
         
-        self.c_safety = self._c_safety_from_p_safety(None,None,None)
+        self.beta_safety = beta_safety
         self.verbosity = 2
-        self.lqr_feedback = lqr_feedback
+        self.ilqr_init = ilqr_init
+        
+        
         self.lin_prior = False
-        self.a = None
-        self.b = None
+        self.a = np.zeros((self.n_s,self.n_s))
+        self.b = np.zeros((self.n_s,self.n_u))
         if not lin_model is None:
             self.a,self.b = lin_model
             self.lin_prior = True
-            
+            if self.safe_policy is None:
+                #no safe policy specified? Use lqr as safe policy
+                K = self.get_lqr_feedback()
+                self.safe_policy = lambda x: np.dot(K,x)
+                
+        self.k_fb_all = None
+        if self.safe_policy is None:
+            warnings.warn("No SafePolicy!")
         if self.gp.gp_trained:
-            self.init_solver()
+            self.init_solver()     
+        if ilqr_init:
+            self.init_ilqr_initializer()
             
     def init_solver(self):
         """ Initialize a casadi solver object with safety bounds information
         
-        TODO: First feedback control unnecessary - remove it asap
-        
         """     
-        if self.lqr_feedback:
-            k_fb_all = SX.sym("feedback controls", (1,self.n_s*self.n_u))
-        else:
-            k_fb_all = SX.sym("feedback controls", (self.n_safe-1,self.n_s*self.n_u))
+        x_cstr_scaling = 1        
+        
+        k_fb_ctrl = SX.sym("feedback controls", (1,self.n_s*self.n_u))
+
             
-        k_ff_all = SX.sym("feed-forward control",(self.n_safe,self.n_u))
+        u_0 = SX.sym("init_control",(self.n_u,1))
+        k_ff_all = SX.sym("feed-forward control",(self.n_safe-1,self.n_u))
+        g = []
         lbg = []
         ubg = []
+        g_name = []
         
         p_0 = SX.sym("initial state",(self.n_s,1))
         x_target = SX.sym("target state",(self.n_s,1)) 
         
-        k_ff_0 = k_ff_all[0,:].reshape((self.n_u,1))
+        k_fb_0 = SX.sym("base feedback matrices",(self.n_safe-1,self.n_s*self.n_u))
         
-                
-        p_new, q_new = onestep_reachability(p_0,self.gp,k_ff_0,self.l_mu,self.l_sigm,c_safety = self.c_safety,a=self.a,b=self.b)
-        g = lin_ellipsoid_safety_distance(p_new,q_new,self.h_mat_obs,self.h_obs)
-        lbg += [-cas.inf]*self.m_obs
-        ubg += [0]*self.m_obs
+         
+        p_new, q_new = onestep_reachability(p_0,self.gp,u_0,self.l_mu,self.l_sigm,c_safety = self.beta_safety,a=self.a,b=self.b)
+        #g = x_cstr_scaling*lin_ellipsoid_safety_distance(p_new,q_new,self.h_mat_obs,self.h_obs)
+        #lbg += [-cas.inf]*self.m_obs
+        #ubg += [0]*self.m_obs
         
         if self.has_ctrl_bounds:
-                g_u_i, lbu_i, ubu_i = self._generate_control_constraint(k_ff_0)
+                g_u_i, lbu_i, ubu_i = self._generate_control_constraint(u_0)
                 g = vertcat(g,g_u_i)
                 lbg += lbu_i
                 ubg += ubu_i
+                g_name += ["u_0_ctrl_constraint"]
                 
         p_all = p_new.T
         q_all = q_new.reshape((1,self.n_s*self.n_s))
         
         
-        for i in range(1,self.n_safe):
+        for i in range(self.n_safe-1):
             p_old = p_new
             q_old = q_new
                 
-            if self.lqr_feedback:
-                k_fb_i = k_fb_all.reshape((self.n_u,self.n_s))
-            else:
-                k_fb_i = k_fb_all[i-1,:].reshape((self.n_u,self.n_s))
-                
             k_ff_i = k_ff_all[i,:].reshape((self.n_u,1))
+            k_fb_i = (k_fb_0[i] + k_fb_ctrl).reshape((self.n_u,self.n_s))
+            
             if self.has_ctrl_bounds:
                 g_u_i, lbu_i, ubu_i = self._generate_control_constraint(k_ff_i,q_old,k_fb_i)
                 g = vertcat(g,g_u_i)
                 lbg += lbu_i
                 ubg += ubu_i
+                g_name += ["ellipsoid_ctrl_constraint_{}".format(i)]*len(lbu_i)
                  
-            p_new, q_new = onestep_reachability(p_old,self.gp,k_ff_i,self.l_mu,self.l_sigm,q_old,k_fb_i,c_safety = self.c_safety,a=self.a,b=self.b) 
-            g_i = lin_ellipsoid_safety_distance(p_new,q_new,self.h_mat_obs,self.h_obs)  
-            g = vertcat(g,g_i)
-            lbg += [-cas.inf]*self.m_obs
-            ubg += [0]*self.m_obs
+            p_new, q_new = onestep_reachability(p_old,self.gp,k_ff_i,self.l_mu,self.l_sigm,q_old,k_fb_i,c_safety = self.beta_safety,a=self.a,b=self.b) 
+            #g_i = x_cstr_scaling*lin_ellipsoid_safety_distance(p_new,q_new,self.h_mat_obs,self.h_obs)  
+            #g = vertcat(g,g_i)
+            #lbg += [-cas.inf]*self.m_obs
+            #ubg += [0]*self.m_obs
             p_all = vertcat(p_all,p_new.T)
             q_all = vertcat(q_all,q_new.reshape((1,self.n_s*self.n_s)))
         
-        g_terminal = lin_ellipsoid_safety_distance(p_new,q_new,self.h_mat_safe,self.h_safe)
+        g_terminal = x_cstr_scaling*lin_ellipsoid_safety_distance(p_new,q_new,self.h_mat_safe,self.h_safe)
         g = vertcat(g,g_terminal)
+        g_name += ["terminal constraint"]*np.shape(self.h_safe)[0]
         lbg += [-cas.inf]*self.m_safe
         ubg += [0]*self.m_safe
         
-        cost = objective(p_all,q_all,x_target,k_ff_all,self.wx_cost,self.wu_cost)
+        
+        u_perf = SX.sym("u_perf",(self.n_perf-1,self.n_u))
+        x_perf = p_all[0,:]
+        x_perf_new = x_perf.T
+        for i in range(self.n_perf-1):
+            u_i = u_perf[i,:].T
+            mu_pred, _ = self.gp.predict_casadi_symbolic(cas.horzcat(x_perf_new.T,u_i.T)) 
+            x_perf_new = mtimes(self.a,x_perf_new) + mtimes(self.b,u_perf[i,:].T) + mu_pred.T
+            x_perf = vertcat(x_perf,x_perf_new.T)
+            
+            if self.has_ctrl_bounds:
+                g_u_i, lbu_i, ubu_i = self._generate_control_constraint(u_i)
+                g = vertcat(g,g_u_i)
+                lbg += lbu_i
+                ubg += ubu_i
+                g_name += ["ctrl_constr_performance_{}".format(i)]
+                
+        
+        cost = 0
+        for i in range(self.n_perf):
+            cost += mtimes((x_perf[i,:].T-x_target).T,mtimes(self.wx_cost,x_perf[i,:].T-x_target))
+            
+        n_cost_deviation = np.minimum(self.n_perf-1,self.n_safe-1)
+        for i in range(1,n_cost_deviation):
+            cost += mtimes(x_perf[i,:]-p_all[i,:],mtimes(.1*self.wx_cost,(x_perf[i,:]-p_all[i,:]).T))
+        #objective(x_perf,q_all,x_target,k_ff_all,self.wx_cost,self.wu_cost)
         
         
-        if self.lqr_feedback:
-            opt_vars = vertcat(k_ff_all.reshape((-1,1)))
-            opt_params = vertcat(p_0,x_target,k_fb_all.T)
-        else:
-            opt_vars = vertcat(k_fb_all.reshape((-1,1)),k_ff_all.reshape((-1,1)))
-            opt_params = vertcat(p_0,x_target)
+        opt_vars = vertcat(u_0,u_perf.reshape((-1,1)),k_ff_all.reshape((-1,1)),k_fb_ctrl.reshape((-1,1)))
+        opt_params = vertcat(p_0,x_target,k_fb_0.reshape((-1,1)))
         
         prob = {'f':cost,'x': opt_vars,'p':opt_params,'g':g}
-        #opt = {'ipopt':{'hessian_approximation':'limited-memory',"max_iter":30}}
-        opt = {'qpsol','hessian_approximation':'limited-memory',"max_iter":30}
-        solver = cas.nlpsol('solver','sqpmethod',prob,opt)
+        opt = {'ipopt':{'hessian_approximation':'limited-memory',"max_iter":40,"expect_infeasible_problem":"yes"}} #ipopt 
+        #opt = {'qpsol':'qpoases','max_iter':80,'hessian_approximation':'limited-memory'} #sqpmethod #,'hessian_approximation':'limited-memory'
+        solver = cas.nlpsol('solver','ipopt',prob,opt)
         
         self.solver = solver
         self.lbg = lbg
         self.ubg = ubg
         self.solver_initialized = True
+        self.g_name = g_name
     
     def _generate_control_constraint(self,k_ff,q = None,k_fb = None,ctrl_bounds = None):
         """ Build control constraints from state ellipsoids and linear feedback controls
@@ -267,7 +307,7 @@ class SafeMPC:
      
         eigVals, eigVecs = scipy.linalg.eig(a-b*k)
         
-        return k, x, eigVals
+        return np.asarray(k), np.asarray(x), eigVals
         
     def get_lqr_feedback(self,x_0 = None, u_0 = None):
         """ Get the initial feedback controller k_fb
@@ -276,8 +316,8 @@ class SafeMPC:
         u_0: n_u x 1 ndarray[float], optional
         
         """
-        q = self.wx_cost
-        r = self.wu_cost
+        q = self.wx_feedback
+        r = self.wu_feedback
         
         if x_0 is None:
             x_0 = np.zeros((self.n_s,1))
@@ -288,8 +328,8 @@ class SafeMPC:
             a = self.a
             b= self.b
             
-            k_fb,_,_ = self.dlqr(a,b,q,r)
-            k_fb = -k_fb
+            k_lqr,_,_ = self.dlqr(a,b,q,r)
+            k_fb = -k_lqr
         else:
             z = np.hstack((x_0.T,u_0.T))
             jac_mu = self.gp.predictive_gradients(z)
@@ -311,8 +351,7 @@ class SafeMPC:
             k_fb = k_fb_aug[:self.n_s,:]
             
         return k_fb.reshape((1,self.n_s*self.n_u))
-        
-        
+           
     def get_trajectory_openloop(self,x_0 , k_fb = None, k_ff = None, get_controls = False):
         """ Plan a trajectory based on an initial state and a set of controls
         
@@ -335,8 +374,12 @@ class SafeMPC:
         q_all: T x n_s x n_s ndarray[float]
             The shape matrices of the trajectory ellipsoids
         """
+        if not self.has_openloop:
+            return None,None
+            
         if k_fb is None:
             k_fb = np.array(self.k_fb_all)
+            
         if k_ff is None:
             k_ff = np.array(self.k_ff_all)
             
@@ -348,14 +391,15 @@ class SafeMPC:
             for i in range(T):
                 k_fb[i] = k_tmp
         _,_,p_all, q_all = multistep_reachability(x_0[:,None],self.gp,k_fb,k_ff,
-                                              self.l_mu,self.l_sigm,c_safety = self.c_safety, verbose=0,a =self.a,b=self.b)
+                                              self.l_mu,self.l_sigm,c_safety = self.beta_safety, verbose=0,a =self.a,b=self.b)
+    
         if get_controls:
             return p_all, q_all, k_fb, k_ff
       
           
         return p_all, q_all
         
-    def get_action(self,x0_mu, target, x0_sigm = None):
+    def get_action(self,x0_mu, x_target, x_safe, lqr_only = False):
         """ Wrapper around the solve function 
         
         Parameters
@@ -369,15 +413,21 @@ class SafeMPC:
         -------
         u_apply: n_u x 0 1darray[float]
             The action to be applied to the system
-            
-        """        
-        k_fb, k_ff, _, _, success = self.solve(x0_mu[:,None],target[:,None])
-        
+        success: bool
+            The control was not successful if we are outside the safezone
+            AND we have to revert to the safe controller.
+        """ 
         safety_failure = False
+        if lqr_only:
+            u_apply = self.safe_policy(x0_mu)
             
-        return k_ff.reshape(self.n_u,), safety_failure
+            return u_apply, safety_failure
+            
+        u_apply, success = self.solve(x0_mu[:,None],x_target[:,None],x_safe[:,None])
         
-    def solve(self,p_0, p_target, k_ff_all_0 = None, k_fb_all_0 = None, sol_verbose = False):
+        return u_apply.reshape(self.n_u,), success
+        
+    def solve(self,p_0, p_target, p_safe, k_ff_all_0 = None, k_fb_all_0 = None, sol_verbose = False):
         """ Solve the MPC problem for a given set of input parameters
         
         
@@ -387,6 +437,8 @@ class SafeMPC:
             The initial (current) state
         p_target n_s x 1 array[float]
             The target state
+        p_safe n_s x 1 array[float]
+            A safe state we may want to return to (required for ilqr initialization)
         k_ff_all_0: n_safe x n_u  array[float], optional
             The initialization of the feed-forward controls
         k_fb_all_0: n_safe x (n_s * n_u) array[float], optional
@@ -405,26 +457,17 @@ class SafeMPC:
         assert self.solver_initialized, "Need to initialize the solver first!"
         
         
-        k_ff_all_0, k_fb_all_0 = self._get_init_controls(p_0,k_ff_all_0,k_fb_all_0)
-        params = np.vstack((p_0,p_target))
+        u_0, k_ff_all_0, k_fb_0, u_perf_0, k_fb_ctrl_0  = self._get_init_controls(p_0,p_target,p_safe)
         
-        if self.lqr_feedback:
-            u_0 = k_ff_all_0.reshape((self.n_u*self.n_safe,1))    
-            params = np.vstack((params,cas_reshape(k_fb_all_0,(self.n_u*self.n_s,1))))
-        else:
-            u_0 = np.vstack((k_fb_all_0.reshape((self.n_s*self.n_u*self.n_safe,1)), \
-                        k_ff_all_0.reshape((self.n_u*self.n_safe,1))))
-        sol = self.solver(x0=u_0,lbg=self.lbg,ubg=self.ubg,p=params)
+        params = np.vstack((p_0,p_target,cas_reshape(k_fb_0,(-1,1))))
+        u_init = vertcat(cas_reshape(u_0,(-1,1)),cas_reshape(u_perf_0,(-1,1)), \
+                         cas_reshape(k_ff_all_0,(-1,1)),cas_reshape(k_fb_ctrl_0,(-1,1)))
         
-        return self._get_solution(sol,k_fb_all_0,sol_verbose)
+        sol = self.solver(x0=u_init,lbg=self.lbg,ubg=self.ubg,p=params)
+        return self._get_solution(p_0,sol,k_fb_0,sol_verbose)
         
-    def _c_safety_from_p_safety(self,p_safety, n_s, n_steps):
-        """ Convert a desired safety probability the corresponding safety coefficient """
-        warnings.warn("Still need to implement this! Currently returning c_safety = 2.0")
         
-        return 2.0
-        
-    def _get_solution(self,sol, k_fb_all_0 = None, sol_verbose = False):
+    def _get_solution(self,x_0,sol, k_fb_0, sol_verbose = False,feas_tol = 1e-3):
         """ Process the solution dict of the casadi solver 
         
         Processes the solution dictionary of the casadi solver and 
@@ -452,83 +495,165 @@ class SafeMPC:
         h_values: (m_obs*n_safe + m_safe) x 0 array[float], optional
             The values of the constraint evaluation (distance to obstacle)
         """
-        
-        print(sol)
+        g_res = np.array(sol["g"]).squeeze()
+
         success = True
+        feasible = True
+        if np.any(np.array(self.lbg) - feas_tol > g_res ) or np.any(np.array(self.ubg) + feas_tol < g_res ):      
+            feasible = False
+            
+        if self.verbosity > 1:
+            print("\n=== Constraint values:")
+            for i in range(len(g_res)):
+                print(" constraint: {}, lbg: {}, g: {}, ubg: {} ".format(self.g_name[i],self.lbg[i],g_res[i],self.ubg[i]))
+            print("\n")
         
-        if self.lqr_feedback:
-            x_ff = sol["x"]
-            k_ff_all = cas_reshape(x_ff,(self.n_safe,self.n_u))
-            k_ff_apply = cas_reshape(k_ff_all[0,:],(self.n_u,1))
-            k_fb_all = np.reshape(k_fb_all_0,(self.n_u,self.n_s))
-            k_fb_apply = k_fb_all            
-            
-            if self.rhc:
-                self.k_fb_all = k_fb_all
-                self.k_ff_all = k_ff_all
-        else:
-            x_opt = sol["x"]
-            n_fb = self.n_s*self.n_u*self.n_safe  
-            x_fb = x_opt[:n_fb]
-            x_ff = x_opt[n_fb:]
-            k_fb_all = cas_reshape(x_fb,(self.n_safe,self.n_s*self.n_u))
-            k_ff_all = cas_reshape(x_ff,(self.n_safe,self.n_u))
-            
-            k_fb_apply = cas_reshape(k_fb_all[0,:],(self.n_u,self.n_s))
-            k_ff_apply = cas_reshape(k_ff_all[0,:],(self.n_u,1))
-            k_fb_all = np.array(k_fb_all).reshape(self.n_safe,self.n_u,self.n_s)
-                
-            if self.rhc:
-                self.k_fb_all = k_fb_all
-                self.k_ff_all = k_ff_all
-                self.do_shift_solution = True
-                
-        fb_apply_out = np.array(k_fb_apply)
-        fb_all_out = np.array(k_fb_all)
-        ff_apply_out = np.array(k_ff_apply)
-        ff_all_out = np.array(k_ff_all)
-            
         if self.verbosity > 0:
-                print("Optimized feed-forward controls:")
-                print(k_ff_all)
-                print("LQR feedback controls:")
-                print(k_fb_all) 
+            print("===== SOLUTION FEASIBLE: {} ========".format(feasible))
+            
+        if feasible:
+            self.n_fail = 0
+            x_opt = sol["x"]
+            self.has_openloop = True
+            
+            #get indices of the respective variables
+            n_u_0 = self.n_u
+            n_u_perf = (self.n_perf-1)*self.n_u
+            n_k_ff = (self.n_safe-1)*self.n_u
+            n_k_fb_ctrl = self.n_s*self.n_u
+            c=0
+            idx_u_0 = np.arange(n_u_0)
+            c+= n_u_0
+            idx_u_perf = np.arange(c,c+n_u_perf)
+            c+= n_u_perf
+            idx_k_ff = np.arange(c,c+n_k_ff)
+            c+= n_k_ff 
+            idx_k_fb = np.arange(c,c+n_k_fb_ctrl)
+            
+            u_apply = np.array(x_opt[idx_u_0]).reshape((1,self.n_u))
+            u_perf = np.array(cas_reshape(x_opt[idx_u_perf],(self.n_perf-1,self.n_u)))
+            u_perf_all = np.vstack((u_apply,u_perf))
+            k_safe = np.array(cas_reshape(x_opt[idx_k_ff],(self.n_safe-1,self.n_u)))
+            k_ff_all = np.vstack((u_apply,k_safe))
+            k_fb_ctrl = np.array(cas_reshape(x_opt[idx_k_fb],(1,self.n_u*self.n_s)))
+            k_fb = k_fb_0 + np.matlib.repmat(k_fb_ctrl,self.n_safe-1,1)
+            
+            k_fb_apply = np.empty((self.n_safe-1,self.n_u,self.n_s))
+            for i in range(self.n_safe-1):
+                k_fb_apply[i] = cas_reshape(k_fb[i],(self.n_u,self.n_s))
                 
-                if self.verbosity > 1:
-                    print("\n===Constraint values:===")
-                    print(sol["g"])
-                    print("==========================\n")
-                    
-        if sol_verbose:
-            constr_values = np.array(sol["g"])
-            return fb_apply_out, ff_apply_out, fb_all_out, ff_all_out, constr_values, success
-        return fb_apply_out, ff_apply_out, fb_all_out, ff_all_out, success
+            p_ctrl , _ = self.get_trajectory_openloop(x_0.squeeze(),k_fb_apply,k_ff_all)
+            
+            if self.rhc:
+                self.k_fb_all = k_fb_apply
+                self.k_ff_all = k_ff_all
+                self.u_perf_all = u_perf_all
+                self.p_ctrl = p_ctrl
+                
+        else:
+            if self.verbosity > 1:
+                print("Infeasible solution!")
+            
+            self.n_fail += 1
+            if self.n_fail >= self.n_safe:
+                ## Too many infeasible solutions -> switch to safe controller
+                u_apply = self.safe_policy(x_0)
+            else:
+                ## can apply previous solution
+                u_apply = self.get_old_solution(x_0)
+            
+        return u_apply, success
         
-    def _get_init_controls(self,x_0, k_ff_all_0 = None, k_fb_all_0 = None):
+    def get_old_solution(self, x, k = None):
+        """ Shift previously obtained solutions in time and return solution to be applied
+        
+        Prameters
+        ---------
+        k: int, optional
+            The number of steps to shift back in time. This is number is
+            already tracked by the algorithm, so a custom value should be used with caution
+            
+        Returns
+        -------
+        u_apply: n_s x 0 1darray[float]
+            The controls to be applied at the current time step
+        """
+        if self.n_safe > self.n_safe:
+            warnings.warn("There are no previous solution to be applied. Returning None")
+            return None
+        k = self.n_fail
+        
+        k_fb_old = self.k_fb_all[k-1]
+        k_ff = self.k_ff_all[k,:,None]
+        p_ctrl = self.p_ctrl[k-1,:,None]
+        
+        return self.feedback_ctrl(x,k_ff,k_fb_old,p_ctrl)
+        
+    def feedback_ctrl(self,x,k_ff,k_fb = None,p=None):
+        """ The feedback control structure """
+        
+        if k_fb is None:
+            return k_ff
+            
+        return np.dot(k_fb,(x-p)) + k_ff
+        
+    def init_ilqr(self,x_0,p_target,p_safe):
+        """ Solve a iLQR problem to compute initial values for the MPC problem"""
+        ilqr_initializer = self.ilqr_initializer
+        ilqr_initializer.cost.x_target = p_target
+        ilqr_initializer.cost.x_safe = p_safe
+        if self.rhc and self.n_fail == 0:
+            u_old = self.k_ff_all
+            u_0 = np.vstack((u_old[1:],np.zeros((1,self.n_u))))
+        else:
+            u_0 = np.zeros((self.n_safe,self.n_u))
+        _,u_ilqr,_,k_fb_ilqr,k_ilqr,alpha_opt = ilqr_initializer.ilqr(x_0,u_0)
+        
+        k_fb_0 = np.empty((self.n_safe-1,self.n_s*self.n_u))
+        
+        u_0 = u_ilqr[0]
+        k_ff_0 = u_ilqr[1:,:]
+        
+        for i in range(self.n_safe-1):
+            k_fb_0[i] = cas_reshape(k_fb_ilqr[i+1],(1,self.n_s*self.n_u))
+            
+            if self.verbosity > 1:
+                if i == 0:
+                    print("\nu_0:")
+                    print(u_0)
+                print("\nfeedback and feed forward init ilqr step {}:".format(i))
+                print(k_fb_ilqr[i+1])
+                print(u_ilqr[i+1])
+        return u_0,k_fb_0, k_ff_0 
+        
+    def _get_init_controls(self,x_0,p_target,p_safe):
         """ Initialize the controls for the MPC step
         
         """
-        if k_ff_all_0 is None:
-            if self.do_shift_solution:
-                k_ff_old = np.copy(self.k_ff_sol) 
-                k_ff_all_0 = np.vstack((k_ff_old[1:,:]),np.zeros((1,self.n_s*self.n_u)))  
-            else:
-                k_ff_all_0 = .1*np.random.rand(self.n_safe,self.n_u)
+       
+        if self.ilqr_init:
             
-        if self.lqr_feedback:
-            if k_fb_all_0 is None:
-                k_fb_all_0 = self.get_lqr_feedback()
-                
-            return k_ff_all_0, k_fb_all_0
+            u_0, k_fb_0, k_ff_all_0 = self.init_ilqr(x_0,p_target,p_safe)
+            
+            k_fb_ctrl_0 = np.zeros((self.n_s*self.n_u,1))
+            if self.do_shift_solution and self.n_fail == 0:
+                u_perf_old = np.copy(self.u_perf_all)
+                u_perf_0 = np.vstack((u_perf_old[2:,:],np.zeros((1,self.n_u))))
+            else:
+                u_perf_0 = np.zeros((self.n_perf-1,self.n_u))
         else:
-            if k_fb_all_0 is None:
-                if self.do_shift_solution:
-                    k_fb_old = np.copy(self.k_fb_sol) 
-                    k_fb_all_0 = np.vstack((k_fb_old[1:,:]),np.zeros((1,self.n_s*self.n_u))) 
-                else:
-                    k_fb_all_0 = .1*np.random.rand(self.n_safe,self.n_s*self.n_u)
+            if self.do_shift_solution and self.n_fail == 0:
+                k_ff_old = np.copy(self.k_ff_all) 
+                u_perf_old = np.copy(self.u_perf_all)
+                u_0 = (k_ff_old[0,:] + u_perf_old[0,:])/2
+                k_ff_all_0 = np.vstack((k_ff_old[2:,:],np.zeros((1,self.n_u))))  
+                u_perf_0 = np.vstack((u_perf_old[2:,:],np.zeros((1,self.n_u))))  
+            else:
+                k_ff_all_0 = 2*np.random.randn(self.n_safe-1,self.n_u)
+                u_perf_0 = 2*np.random.randn(self.n_perf-1,self.n_u)
+                u_0 = 2*np.random.randn(self.n_u,1)
                     
-            return k_ff_all_0, k_fb_all_0 
+        return u_0, k_ff_all_0, k_fb_0, u_perf_0, k_fb_ctrl_0 
                 
     def update_model(self, x, y, train = True):
         """ Update the model of the dynamics 
@@ -547,3 +672,202 @@ class SafeMPC:
         
         self.gp.update_model(x,y-y_prior,train)
         self.init_solver()
+    
+    def init_ilqr_initializer(self):
+        """ Initialize the iLQR method to get initial values for the NLP method """
+        model = SafeMPCModelILQR(self)
+        cost = SafeMPCCostILQR(self)
+        u_min = None
+        u_max = None
+        if self.has_ctrl_bounds:
+            u_bounds = self.ctrl_bounds
+            u_min = u_bounds[:,0]
+            u_max = u_bounds[:,1]
+            
+        self.ilqr_initializer = CILQR(model,cost,H=self.n_safe,u_min=u_min,u_max=u_max,w_x= 1e3,w_u=1e2)
+        
+        
+class SafeMPCModelILQR:
+    """ Utiliy class which creates a model for the ilqr initialization
+    
+    Attributes
+    ----------
+    a
+    b: 
+    gp: SimpleGPModel
+        The GPModel
+    n_s: int
+        Number of states
+    n_u: int
+        Number of actions
+    H: int
+        The length of the control sequence
+    dt: float
+        The control frequency    
+    """
+    
+    def __init__(self,safempc):
+        """ Initialize based on a pre-existing SafeMPC object
+        
+        Parameters
+        ----------
+        safempc: SafeMPC
+            The underlying SAFEMPC object
+        """
+        self.a = safempc.a
+        self.b = safempc.b
+        self.gp = safempc.gp
+        self.n_u = safempc.n_u
+        self.n_s = safempc.n_s
+        self.H = safempc.n_safe
+        self.dt = safempc.dt
+        
+    def simulate(self,x_0,U):
+        """ Simulate a rollout/forward pass of the system
+        
+        Simulate a trajectory 
+            x_{t+1} = x_t + df(x_t,u_t) , t = 0,..,H
+                    \approx x_t + dt*A_t *x_t + dt*B_t *u_t
+        Parameters
+        ----------
+        x_0: n_s x 1 ndarray[float]
+            The start state of the trajectory
+        U: H x n_u ndarray[float]
+            The control trajectory
+            
+        Returns
+        -------
+        x_all: H x n_s ndarray[float]
+        j_x_all: H x n_s x n_s ndarray[float]
+        j_u_all: H x n_s x n_u ndarray[float]
+        
+        """
+        x_all = np.empty((self.H+1,self.n_s))
+        j_x_all = np.empty((self.H,self.n_s,self.n_s))
+        j_u_all = np.empty((self.H,self.n_s,self.n_u))
+        
+        x_all[0] = x_0.squeeze()
+        x = x_0
+        for i in range(self.H):
+            u = U[i,:,None]
+            x_diff, j_x, j_u = self.forward_step(x,u,compute_grads=True)
+            x = x + x_diff
+            
+            x_all[i+1] = x.squeeze()
+            j_x_all[i,:,:] = j_x
+            j_u_all[i,:,:] = j_u
+            
+        return x_all, j_x_all, j_u_all
+            
+    def forward_step(self, x, u, compute_grads = False):
+        """ Simulate the system one step forward
+        
+            x_+ = x + df(x,u)
+                \approx x + A*x + B *u
+                = x + J_df^x*x + J_df^u*u
+        Parameters
+        ----------
+        x: n_s x 1 ndarray[float]
+            The current state
+        u: n_u x 1 ndarray[float]
+            The current action
+        
+        Returns
+        -------
+        x_diff: n_s x 1 ndarray[float]
+            Corresponds to df(x,u) (see above)
+        J_x: n_s x n_s ndarray[float]
+            Corresponds to the jacobian w.r.t. x (see above)
+        J_u: n_s x n_u ndarray[float]
+            Corresponds to the jacobian w.r.t. u (see above)
+        """
+        inp = np.hstack((x.T,u.T))
+        pred = self.gp.predict(inp,None,compute_grads)
+        
+        x_diff_mu = pred[0]
+        x_diff = np.dot(self.a,x) + np.dot(self.b,u) + x_diff_mu.T - x       
+        if compute_grads:        
+            j_mu_inp = pred[2]
+            j_mu_x = j_mu_inp[0,:,:self.n_s]
+            j_mu_u = j_mu_inp[0,:,self.n_s:]
+            j_x = self.a-np.eye(self.n_s)+j_mu_x
+            j_u = self.b+j_mu_u
+            
+            return x_diff, j_x, j_u    
+        return x_diff
+        
+
+class SafeMPCCostILQR:
+    """ Utiliy class which creates a cost function for the ilqr initialization 
+    
+    Attributes
+    ----------
+    x_target: n_s x 1 np.array[float]
+    x_safe: n_x x 1 np.array[float]
+    
+    """
+    
+    def __init__(self,safempc):
+        """ Initialize based on a pre-existing SafeMPC object
+        
+        Parameters
+        ----------
+        safempc: SafeMPC
+            The underlying SAFEMPC object
+        """
+        self.n_s = safempc.n_s
+        self.n_u = safempc.n_u
+        self.x_safe = None
+        self.x_target = None
+        
+    def total_cost(self, x_all, u_all, w_x = None, w_u = None):
+        """ total cost of trajectory
+        x_all: n_s x 1 ndarray[float]
+            
+        """
+        tN, _  = np.shape(u_all)
+        c = 0
+        for t in range(tN):
+            c += self.cost(x_all[t,:,None],u_all[t,:,None],t,w_x,w_u)[0]
+        c += self.cost_final(x_all[-1,:,None],w_x)[0]
+        
+        return c
+        
+    def cost(self, x, u, t, w_x = None, w_u = None):
+        """ intermediate cost
+        
+        """
+        c = .5*np.dot(u.T,np.dot(w_u,u))
+        c_u = np.dot(w_u,u)
+        c_uu = w_u
+        c_ux = np.zeros((self.n_u,self.n_s))
+            
+        c_x = np.zeros((self.n_s,1))
+        c_xx = np.zeros((self.n_s,self.n_s))
+        
+        if t == 1:
+            c += .5**np.dot((x-self.x_target).T,np.dot(w_x,x-self.x_target))
+            c_x += np.dot(w_x,x-self.x_target)
+            c_xx += w_x
+                
+        if t > 1:            
+            c += .5*np.dot((x-self.x_safe).T,np.dot(w_x,x-self.x_safe))
+            c_x += np.dot(w_x,x-self.x_safe)
+            c_xx += w_x
+        
+        return c, c_x.squeeze(), c_xx, c_u.squeeze(), c_uu, c_ux
+            
+    def cost_final(self, x, w_x = None):
+        """ terminal cost
+        
+        """
+        c = .5*np.dot((x-self.x_safe).T,np.dot(w_x,x-self.x_safe))
+        c_x = np.dot(w_x,x-self.x_safe)
+        c_xx = w_x
+        
+        return c, c_x.squeeze(), c_xx
+        
+        
+        
+        
+    
