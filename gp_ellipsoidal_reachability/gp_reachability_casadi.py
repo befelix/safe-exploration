@@ -15,7 +15,7 @@ from utils_ellipsoid_casadi import sum_two_ellipsoids, ellipsoid_from_rectangle
 import warnings
 
 def onestep_reachability(p_center,gp,k_ff,l_mu,l_sigma,
-                         q_shape = None,k_fb = None, c_safety = 1.,verbose = 1, a = None, b = None):
+                         q_shape = None,k_fb = None, c_safety = 1., a = None, b = None):
     """ Overapproximate the reachable set of states under affine control law
     
     given a system of the form:
@@ -45,8 +45,7 @@ def onestep_reachability(p_center,gp,k_ff,l_mu,l_sigma,
         c_safety: float, optional
             The scaling of the semi-axes of the uncertainty matrix 
             corresponding to a level-set of the gaussian pdf.        
-        verbose: int
-            Verbosity level of the print output            
+     
     Returns:
     -------
         p_new: n_s x 1 array[float]
@@ -64,9 +63,7 @@ def onestep_reachability(p_center,gp,k_ff,l_mu,l_sigma,
     if q_shape is None: # the state is a point
     
         u_p = k_ff
-        if verbose >0:
-            print("\nApplying action:")
-            print(u_p)     
+
         z_bar = vertcat(p_center,u_p)
         mu_new, pred_var = gp.predict_casadi_symbolic(z_bar.T)
         
@@ -115,7 +112,57 @@ def onestep_reachability(p_center,gp,k_ff,l_mu,l_sigma,
         
         return p_1,q_1
         
-
+def multi_step_reachability(p_0,u_0,k_fb_0,k_fb_ctrl,k_ff,gp,l_mu,l_sigm,c_safety = 1.,a=None,b=None):
+    """ Generate trajectory of reachset by iteratively computing the one-step reachability
+    
+    Parameters
+    ----------
+    p_0: n_s x 1 ndarray[float | casadi.sym]
+        Initial state
+    u_0: n_u x 1 ndarray[casadi.sym]
+        The initial action
+    k_fb_0: n_fb x (n_s * n_u) ndarray[casadi.SX]
+        The initial guess of the feedback controls
+    k_fb_ctrl: n_u x n_s ndarray[SX.sym] 
+        The feedback ctrls to optimize over
+    k_ff: n_fb x n_u ndarray[casadi.sym]
+        The feed forward terms to optimize over
+    gp: SimpleGPModel     
+            The gp representing the dynamics            
+    l_mu: 1d_array of size n_s
+            Set of Lipschitz constants on the Gradients of the mean function (per state dimension)
+    l_sigma: 1d_array of size n_s
+            Set of Lipschitz constants of the predictive variance (per state dimension)
+    c_safety: float, optional
+            The scaling of the semi-axes of the uncertainty matrix 
+            corresponding to a level-set of the gaussian pdf.        
+    a: n_s x n_s ndarray[float]
+        The A matrix of the linear model Ax + Bu
+    b: n_s x n_u ndarray[float]
+        The B matrix of the linear model Ax + Bu
+    
+    """
+    n_u,n_s = np.shape(k_fb_ctrl)
+    n_fb = np.shape(k_fb_0)[0]
+    
+    p_new, q_new = onestep_reachability(p_0,gp,u_0,l_mu,l_sigm,None,None,c_safety,a,b)
+        
+    p_all = p_new.T
+    q_all = q_new.reshape((1,n_s*n_s))
+    
+    for i in range(n_fb):
+        p_old = p_new
+        q_old = q_new
+        k_ff_i = k_ff[i,:].reshape((n_u,1))
+        k_fb_i = (k_fb_0[i] + k_fb_ctrl).reshape((n_u,n_s))
+        
+        p_new, q_new = onestep_reachability(p_old,gp,k_ff_i,l_mu,l_sigm,q_old,k_fb_i,c_safety,a,b) 
+        
+        p_all = vertcat(p_all,p_new.T)
+        q_all = vertcat(q_all,q_new.reshape((1,n_s*n_s)))
+    
+    return p_all,q_all
+        
 def lin_ellipsoid_safety_distance(p_center,q_shape,h_mat,h_vec,c_safety = 1.0):
     """ Compute symbolically the distance between eLlipsoid and polytope in casadi
     

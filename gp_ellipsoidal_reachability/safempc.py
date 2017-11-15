@@ -12,9 +12,12 @@ import scipy
 
 from casadi import SX, mtimes, vertcat
 from casadi import reshape as cas_reshape
+from gp_reachability_casadi import multi_step_reachability as cas_multistep
 
 from gp_reachability_casadi import onestep_reachability, lin_ellipsoid_safety_distance, objective
+
 from gp_reachability import multistep_reachability
+
 from ilqr_cython import CILQR
 
 class SafeMPC:
@@ -121,51 +124,14 @@ class SafeMPC:
         k_fb_0 = SX.sym("base feedback matrices",(self.n_safe-1,self.n_s*self.n_u))
         
          
-        p_new, q_new = onestep_reachability(p_0,self.gp,u_0,self.l_mu,self.l_sigm,c_safety = self.beta_safety,a=self.a,b=self.b)
-        #g = x_cstr_scaling*lin_ellipsoid_safety_distance(p_new,q_new,self.h_mat_obs,self.h_obs)
-        #lbg += [-cas.inf]*self.m_obs
-        #ubg += [0]*self.m_obs
+        p_all, q_all = cas_multistep(p_0,u_0,k_fb_0,k_fb_ctrl,k_ff_all,self.gp,self.l_mu,self.l_sigm,self.beta_safety,self.a,self.b)
         
-        if self.has_ctrl_bounds:
-                g_u_i, lbu_i, ubu_i = self._generate_control_constraint(u_0)
-                g = vertcat(g,g_u_i)
-                lbg += lbu_i
-                ubg += ubu_i
-                g_name += ["u_0_ctrl_constraint"]
-                
-        p_all = p_new.T
-        q_all = q_new.reshape((1,self.n_s*self.n_s))
-        
-        
-        for i in range(self.n_safe-1):
-            p_old = p_new
-            q_old = q_new
-                
-            k_ff_i = k_ff_all[i,:].reshape((self.n_u,1))
-            k_fb_i = (k_fb_0[i] + k_fb_ctrl).reshape((self.n_u,self.n_s))
-            
-            if self.has_ctrl_bounds:
-                g_u_i, lbu_i, ubu_i = self._generate_control_constraint(k_ff_i,q_old,k_fb_i)
-                g = vertcat(g,g_u_i)
-                lbg += lbu_i
-                ubg += ubu_i
-                g_name += ["ellipsoid_ctrl_constraint_{}".format(i)]*len(lbu_i)
-                 
-            p_new, q_new = onestep_reachability(p_old,self.gp,k_ff_i,self.l_mu,self.l_sigm,q_old,k_fb_i,c_safety = self.beta_safety,a=self.a,b=self.b) 
-            #g_i = x_cstr_scaling*lin_ellipsoid_safety_distance(p_new,q_new,self.h_mat_obs,self.h_obs)  
-            #g = vertcat(g,g_i)
-            #lbg += [-cas.inf]*self.m_obs
-            #ubg += [0]*self.m_obs
-            p_all = vertcat(p_all,p_new.T)
-            q_all = vertcat(q_all,q_new.reshape((1,self.n_s*self.n_s)))
-        
-        g_terminal = x_cstr_scaling*lin_ellipsoid_safety_distance(p_new,q_new,self.h_mat_safe,self.h_safe)
-        g = vertcat(g,g_terminal)
-        g_name += ["terminal constraint"]*np.shape(self.h_safe)[0]
-        lbg += [-cas.inf]*self.m_safe
-        ubg += [0]*self.m_safe
-        
-        
+        g_safe, lbg_safe,ubg_safe, g_names_safe = self.generate_safety_constraints(p_all,q_all,u_0,k_fb_0,k_fb_ctrl,k_ff_all)
+        g = vertcat(g,g_safe)
+        lbg += lbg_safe
+        ubg += ubg_safe
+        g_name += g_names_safe
+
         u_perf = SX.sym("u_perf",(self.n_perf-1,self.n_u))
         x_perf = p_all[0,:]
         x_perf_new = x_perf.T
@@ -207,6 +173,70 @@ class SafeMPC:
         self.solver_initialized = True
         self.g_name = g_name
     
+    def generate_safety_constraints(self, p_all, q_all, u_0, k_fb_0, k_fb_ctrl, k_ff_all):
+        """ Generate all safety constraints
+        
+        Parameters
+        ----------
+        p_all:
+        q_all:
+        k_fb_0:
+        k_fb_ctrl:
+        k_ff:
+        ctrl_bounds:
+        
+        Returns
+        -------
+        g: list[casadi.SX]
+        lbg: list[casadi.SX]
+        ubg: list[casadi.SX]
+        """
+        g = []
+        lbg = []
+        ubg = []
+        g_name = []
+        
+        # control constraints
+        if self.has_ctrl_bounds:
+            g_u_0, lbg_u_0, ubg_u_0 = self._generate_control_constraint(u_0)
+            g = vertcat(g,g_u_0)
+            lbg+= lbg_u_0
+            ubg+= ubg_u_0
+            g_name += ["u_0_ctrl_constraint"]
+            
+            for i in range(self.n_safe-1):
+                p_i = p_all[i,:].T
+                q_i = q_all[i,:].reshape((self.n_s,self.n_s))
+                k_ff_i = k_ff_all[i,:].reshape((self.n_u,1))
+                k_fb_i = (k_fb_0[i] + k_fb_ctrl).reshape((self.n_u,self.n_s))
+                
+                g_u_i, lbg_u_i, ubg_u_i = self._generate_control_constraint(k_ff_i,q_i,k_fb_i)
+                g = vertcat(g,g_u_i)
+                lbg+= lbg_u_i
+                ubg+= ubg_u_i
+                g_name += ["ellipsoid_ctrl_constraint_{}".format(i)]*len(lbg_u_i)
+            
+        # intermediate state constraints
+        for i in range(self.n_safe-1):
+            p_i = p_all[i,:].T
+            q_i = q_all[i,:].reshape((self.n_s,self.n_s))
+            g_state = lin_ellipsoid_safety_distance(p_i,q_i,self.h_mat_obs,self.h_obs)
+            g = vertcat(g,g_state)
+            lbg += [-cas.inf]*self.m_obs
+            ubg += [0]*self.m_obs
+            g_name += ["ellipsoid_ctrl_constraint_{}".format(i)]*self.m_obs
+            
+        # terminal state constraint
+        p_T = p_all[-1,:].T
+        q_T = q_all[-1,:].reshape((self.n_s,self.n_s))
+        g_terminal = lin_ellipsoid_safety_distance(p_T,q_T,self.h_mat_safe,self.h_safe)
+        g = vertcat(g,g_terminal)
+        g_name += ["terminal constraint"]*self.m_safe
+        lbg += [-cas.inf]*self.m_safe
+        ubg += [0]*self.m_safe
+        
+        return g,lbg,ubg,g_name
+            
     def _generate_control_constraint(self,k_ff,q = None,k_fb = None,ctrl_bounds = None):
         """ Build control constraints from state ellipsoids and linear feedback controls
         
