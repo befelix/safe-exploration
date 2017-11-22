@@ -10,7 +10,7 @@ import warnings
 import sys
 import scipy
 
-from casadi import SX, mtimes, vertcat
+from casadi import SX, mtimes, vertcat, sum2, sqrt
 from casadi import reshape as cas_reshape
 from gp_reachability_casadi import multi_step_reachability as cas_multistep
 
@@ -27,7 +27,7 @@ class SafeMPC:
     
     """
     
-    def __init__(self, n_safe, n_perf, gp, l_mu, l_sigm, h_mat_safe, h_safe,
+    def __init__(self, n_safe, n_perf, gp, l_mu, l_sigma, h_mat_safe, h_safe,
                  h_mat_obs, h_obs, wx_cost, wu_cost, dt,beta_safety = 2.5,
                  rhc = True, ilqr_init = True, lin_model = None, ctrl_bounds = None,
                  safe_policy = None):
@@ -43,7 +43,7 @@ class SafeMPC:
         self.n_s = self.gp.n_s
         self.n_u = self.gp.n_u
         self.l_mu = l_mu
-        self.l_sigm = l_sigm
+        self.l_sigma = l_sigma
         self.dt = dt
         self.has_openloop = False
         
@@ -124,42 +124,47 @@ class SafeMPC:
         k_fb_0 = SX.sym("base feedback matrices",(self.n_safe-1,self.n_s*self.n_u))
         
          
-        p_all, q_all = cas_multistep(p_0,u_0,k_fb_0,k_fb_ctrl,k_ff_all,self.gp,self.l_mu,self.l_sigm,self.beta_safety,self.a,self.b)
+        p_all, q_all = cas_multistep(p_0,u_0,k_fb_0,k_fb_ctrl,k_ff_all,self.gp,self.l_mu,self.l_sigma,self.beta_safety,self.a,self.b)
         
         g_safe, lbg_safe,ubg_safe, g_names_safe = self.generate_safety_constraints(p_all,q_all,u_0,k_fb_0,k_fb_ctrl,k_ff_all)
         g = vertcat(g,g_safe)
         lbg += lbg_safe
         ubg += ubg_safe
         g_name += g_names_safe
-
-        u_perf = SX.sym("u_perf",(self.n_perf-1,self.n_u))
-        x_perf = p_all[0,:]
-        x_perf_new = x_perf.T
-        for i in range(self.n_perf-1):
-            u_i = u_perf[i,:].T
-            mu_pred, _ = self.gp.predict_casadi_symbolic(cas.horzcat(x_perf_new.T,u_i.T)) 
-            x_perf_new = mtimes(self.a,x_perf_new) + mtimes(self.b,u_perf[i,:].T) + mu_pred.T
-            x_perf = vertcat(x_perf,x_perf_new.T)
-            
-            if self.has_ctrl_bounds:
-                g_u_i, lbu_i, ubu_i = self._generate_control_constraint(u_i)
-                g = vertcat(g,g_u_i)
-                lbg += lbu_i
-                ubg += ubu_i
-                g_name += ["ctrl_constr_performance_{}".format(i)]
+        
+        u_perf = []
+        if self.n_perf > 1:
+            u_perf = SX.sym("u_perf",(self.n_perf-1,self.n_u))
+            x_perf = p_all[0,:]
+            x_perf_new = x_perf.T
+            for i in range(self.n_perf-1):
+                u_i = u_perf[i,:].T
+                mu_pred, _ = self.gp.predict_casadi_symbolic(cas.horzcat(x_perf_new.T,u_i.T)) 
+                x_perf_new = mtimes(self.a,x_perf_new) + mtimes(self.b,u_perf[i,:].T) + mu_pred.T
+                x_perf = vertcat(x_perf,x_perf_new.T)
                 
+                if self.has_ctrl_bounds:
+                    g_u_i, lbu_i, ubu_i = self._generate_control_constraint(u_i)
+                    g = vertcat(g,g_u_i)
+                    lbg += lbu_i
+                    ubg += ubu_i
+                    g_name += ["ctrl_constr_performance_{}".format(i)]
+            u_perf = u_perf.reshape((-1,1))
         
         cost = 0
-        for i in range(self.n_perf):
-            cost += mtimes((x_perf[i,:].T-x_target).T,mtimes(self.wx_cost,x_perf[i,:].T-x_target))
-            
-        n_cost_deviation = np.minimum(self.n_perf-1,self.n_safe-1)
-        for i in range(1,n_cost_deviation):
-            cost += mtimes(x_perf[i,:]-p_all[i,:],mtimes(.1*self.wx_cost,(x_perf[i,:]-p_all[i,:]).T))
+        if self.n_perf > 1:
+            for i in range(self.n_perf):
+                cost += mtimes((x_perf[i,:].T-x_target).T,mtimes(self.wx_cost,x_perf[i,:].T-x_target))
+                
+            n_cost_deviation = np.minimum(self.n_perf-1,self.n_safe-1)
+            for i in range(1,n_cost_deviation):
+                cost += mtimes(x_perf[i,:]-p_all[i,:],mtimes(.1*self.wx_cost,(x_perf[i,:]-p_all[i,:]).T))
         #objective(x_perf,q_all,x_target,k_ff_all,self.wx_cost,self.wu_cost)
+                
+        _,sigm = self.gp.predict_casadi_symbolic(vertcat(p_0,u_0).T)
+        cost += -sum2(sqrt(sigm))        
         
-        
-        opt_vars = vertcat(u_0,u_perf.reshape((-1,1)),k_ff_all.reshape((-1,1)),k_fb_ctrl.reshape((-1,1)))
+        opt_vars = vertcat(u_0,u_perf,k_ff_all.reshape((-1,1)),k_fb_ctrl.reshape((-1,1)))
         opt_params = vertcat(p_0,x_target,k_fb_0.reshape((-1,1)))
         
         prob = {'f':cost,'x': opt_vars,'p':opt_params,'g':g}
@@ -196,6 +201,7 @@ class SafeMPC:
         ubg = []
         g_name = []
         
+        H = np.shape(p_all)[0]
         # control constraints
         if self.has_ctrl_bounds:
             g_u_0, lbg_u_0, ubg_u_0 = self._generate_control_constraint(u_0)
@@ -204,7 +210,7 @@ class SafeMPC:
             ubg+= ubg_u_0
             g_name += ["u_0_ctrl_constraint"]
             
-            for i in range(self.n_safe-1):
+            for i in range(H-1):
                 p_i = p_all[i,:].T
                 q_i = q_all[i,:].reshape((self.n_s,self.n_s))
                 k_ff_i = k_ff_all[i,:].reshape((self.n_u,1))
@@ -217,7 +223,7 @@ class SafeMPC:
                 g_name += ["ellipsoid_ctrl_constraint_{}".format(i)]*len(lbg_u_i)
             
         # intermediate state constraints
-        for i in range(self.n_safe-1):
+        for i in range(H-1):
             p_i = p_all[i,:].T
             q_i = q_all[i,:].reshape((self.n_s,self.n_s))
             g_state = lin_ellipsoid_safety_distance(p_i,q_i,self.h_mat_obs,self.h_obs)
@@ -421,7 +427,7 @@ class SafeMPC:
             for i in range(T):
                 k_fb[i] = k_tmp
         _,_,p_all, q_all = multistep_reachability(x_0[:,None],self.gp,k_fb,k_ff,
-                                              self.l_mu,self.l_sigm,c_safety = self.beta_safety, verbose=0,a =self.a,b=self.b)
+                                              self.l_mu,self.l_sigma,c_safety = self.beta_safety, verbose=0,a =self.a,b=self.b)
     
         if get_controls:
             return p_all, q_all, k_fb, k_ff
@@ -497,7 +503,7 @@ class SafeMPC:
         return self._get_solution(p_0,sol,k_fb_0,sol_verbose)
         
         
-    def _get_solution(self,x_0,sol, k_fb_0, sol_verbose = False,feas_tol = 1e-3):
+    def _get_solution(self,x_0,sol, k_fb_0, sol_verbose = False,feas_tol = 1e-4):
         """ Process the solution dict of the casadi solver 
         
         Processes the solution dictionary of the casadi solver and 
@@ -685,7 +691,7 @@ class SafeMPC:
                     
         return u_0, k_ff_all_0, k_fb_0, u_perf_0, k_fb_ctrl_0 
                 
-    def update_model(self, x, y, train = True):
+    def update_model(self, x, y, train = True, replace_old = True):
         """ Update the model of the dynamics 
         
         Parameters
@@ -700,7 +706,7 @@ class SafeMPC:
         x_u = x[:,self.n_s:].reshape((n_train,self.n_u))
         y_prior = self.eval_prior(x_s,x_u)
         
-        self.gp.update_model(x,y-y_prior,train)
+        self.gp.update_model(x,y-y_prior,train,replace_old)
         self.init_solver()
     
     def init_ilqr_initializer(self):
