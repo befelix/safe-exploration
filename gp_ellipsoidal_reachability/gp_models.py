@@ -4,8 +4,9 @@ Created on Wed Sep 20 10:37:51 2017
 
 @author: tkoller
 """
-
+import sys
 import numpy as np
+import numpy.linalg as nLa
 import GPy
 import casadi as cas
 import casadi.tools as ctools
@@ -41,7 +42,6 @@ class SimpleGPModel():
                     from the training set 
             
         """
-        
         self.n_s = n_s
         self.n_u = n_u
         self.gp_trained = False
@@ -63,7 +63,32 @@ class SimpleGPModel():
             The dictionary containing the following entries:
             
         """
-        raise NotImplementedError("How do I implement this?")
+        
+        if "data_path" in gp_dict:
+            data_path = gp_dict["data_path"]
+            data = np.load(data_path)
+            x = data["X"]
+            y = data["y"]
+        elif "x" in gp_dict and "y" in gp_dict:
+            x = gp_dict["x"]
+            y = gp_dict["y"]
+        else:
+            raise ValueError("""gp_dict either needs a data_path or 
+            the data itself (key 'data_path' or keys 'x' and 'y')""")
+            
+        n_s = np.shape(y)[1]
+        n_u = np.shape(x)[1]-n_s
+        
+        m = None
+        if "m" in gp_dict:
+            m = gp_dict["m"]
+        
+        kern_type = None
+        if "kern_type" in gp_dict:
+            kern_type = gp_dict["kern_type"]
+            
+        return cls(n_s,n_u,x,y,m,kern_type)
+        
         
     def train(self,X,y,m = None,kern_type = "prod_lin_rbf"):
         """ Train a GP for each state dimension
@@ -115,9 +140,10 @@ class SimpleGPModel():
         self.gps = gps
         self.gp_trained = True
         self.x_train = X_train
+        self.y_train = y_train
         self.kern_type = kern_type
         
-    def update_model(self, x, y, train = True):
+    def update_model(self, x, y, train = True, replace_old = True):
         """ Update the model based on the current settings and new data 
         
         Parameters
@@ -129,12 +155,29 @@ class SimpleGPModel():
         train: bool, optional
             If this is set to TRUE the hyperparameters are re-optimized
         """
-        if train:
-            self.train(x,y,self.m,self.kern_type)
+        if replace_old:
+            x_new = x 
+            y_new = y
         else:
-            raise NotImplementedError("""Here, we only want to update
-            the kernel matrix and the prediction vector""")
-        
+            x_new = np.vstack((self.x_train,x))
+            y_new = np.vstack((self.y_train,y))
+            
+        if train:
+            self.train(x_new,y_new,self.m,self.kern_type)
+        else:
+            n_data = np.shape(x_new)[0]
+            inv_K = [None]*self.n_s
+            beta = np.empty((n_data,self.n_s))
+            for i in range(self.n_s):
+                self.gps[i].set_XY(x_new,y_new[:,i].reshape(-1,1))
+                self.x_train = x_new
+                self.y_train = y_new
+                post = self.gps[i].posterior
+                inv_K[i] = post.woodbury_inv
+                beta[:,i] = post.woodbury_vector.reshape(-1,)
+                
+            self.inv_K = inv_K
+            self.beta = beta
             
     def _init_kernel_function(self,kern_type):
         """ Initialize GPy kernel functions based on name. Check if supported.
@@ -158,7 +201,7 @@ class SimpleGPModel():
         elif kern_type == "prod_lin_rbf":
             return RBF(input_dim, ARD = True)*Linear(input_dim, ARD = False)
         else:
-            raise ValueError("kernel type not supported")
+            raise ValueError("kernel type '{}' not supported".format(kern_type))
             
     def _create_hyp_dict(self,gps,kern_type):
         """ Create a hyperparameter dict from the individual supported kernels 
@@ -197,14 +240,14 @@ class SimpleGPModel():
         
         return hyp
                 
-    def predict(self,X_new,quantiles = None):
+    def predict(self,x_new,quantiles = None,compute_gradients = False):
         """ Compute the predictive mean and variance for a set of test inputs
         
         
         """
         assert self.gp_trained,"Cannot predict, need to train the GP first!" 
         
-        T = np.shape(X_new)[0]
+        T = np.shape(x_new)[0]
         y_mu_pred = np.empty((T,self.n_s))
         y_sigm_pred = np.empty((T,self.n_s))
         
@@ -212,9 +255,14 @@ class SimpleGPModel():
         for i in range(self.n_s):
             
             if quantiles is None:
-                y_mu_pred[:,i],y_sigm_pred[:,i] = self.gps[i].predict_noiseless(X_new)
+                y_mu_pred[:,i],y_sigm_pred[:,i] = self.gps[i].predict_noiseless(x_new)
             else:
                 raise NotImplementedError()
+                
+        if compute_gradients:
+            grad_mu = self.predictive_gradients(x_new)
+            return y_mu_pred, y_sigm_pred, grad_mu
+            
         return y_mu_pred,y_sigm_pred
         
     def predict_casadi_symbolic(self,x_new,compute_grads = False):
@@ -280,3 +328,18 @@ class SimpleGPModel():
             S[:,:,i] = self.gps[i].posterior_samples_f(inp,size=size,full_cov = False)
             
         return S
+        
+    def information_gain(self,x = None):
+        """ """
+        
+        if x is None:
+            x = self.x_train
+            y = self.y_train
+            
+        n_data = np.shape(x)[0]
+        inf_gain_x_f = [None]*self.n_s
+        for i in range(self.n_s):
+            noise_var_i = float(self.gps[i].Gaussian_noise.variance)
+            inf_gain_x_f[i] = np.log(nLa.det(np.eye(n_data) + (1/noise_var_i)*self.gps[i].posterior._K))
+        
+        return inf_gain_x_f
