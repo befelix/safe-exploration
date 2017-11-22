@@ -104,8 +104,8 @@ class InvertedPendulum(Environment):
     TODO: Need to define a safety/fail criterion
     """
     def __init__(self,name = "InvertedPendulum", l = 1., m = 1., g = 9.82, b = .01,
-                 dt = .05, start_state = [0,np.pi], init_std = .01, plant_noise = np.array([0.01,0.01])**2,
-                 u_min = np.array([-10.]), u_max = np.array([10.]),target = np.array([0,np.pi])):
+                 dt = .05, start_state = [0,0], init_std = .01, plant_noise = np.array([0.01,0.01])**2,
+                 u_min = np.array([-20.]), u_max = np.array([20.]),target = np.array([0.0,0.0])):
         """
         Parameters
         ----------
@@ -138,9 +138,9 @@ class InvertedPendulum(Environment):
         self.m = m
         self.g = g
         self.b = b
-        self.p_origin = np.array([0,np.pi])
-        self.l_mu = np.array([0.1]*2) #TODO: This should be somewhere else
-        self.l_sigm = np.array([0.1]*2)
+        self.p_origin = np.array([0,0])
+        self.l_mu = np.array([0.01]*2) #TODO: This should be somewhere else
+        self.l_sigm = np.array([0.01]*2)
         self.target = target
         self._init_safety_bounds()
         
@@ -174,7 +174,7 @@ class InvertedPendulum(Environment):
             The ode evaluated at the given inputs.
         """
         dz = np.zeros((2,1))
-        dz[0] = (action - self.b*state[0] - self.m*self.g*self.l*np.sin(state[1])/2) / (self.m*self.l**2/3)
+        dz[0] = (action - self.b*state[0] + self.m*self.g*self.l*np.sin(state[1])) / (self.m*self.l**(3/2)*self.g**(1/2))
         dz[1] = state[0]
         
         return dz
@@ -198,9 +198,9 @@ class InvertedPendulum(Environment):
             The jacobian of the dynamics w.r.t. the state and action
         """
         jac_0 = np.zeros((1,3)) #jacobian of the first equation (dz[0])
-        jac_0[0,0] = 3*self.b/(self.m*self.l**2) # derivative w.r.t. d_theta
-        jac_0[0,1] = -(3/2)*self.g/self.l * np.cos(state[1]/2) # derivative w.r.t. theta
-        jac_0[0,2] = 3/(self.m*self.l**2) # derivative w.r.t. u
+        jac_0[0,0] = -self.b/(self.m*self.l**(3/2)*self.g**(1/2)) # derivative w.r.t. d_theta
+        jac_0[0,1] = (self.g**(1/2)/self.l**(1/2)) * np.cos(state[1]) # derivative w.r.t. theta
+        jac_0[0,2] = 1/(self.m*self.l**(3/2)*self.g**(1/2)) # derivative w.r.t. u
         
         jac_1 = np.eye(1,3) #jacobian of the second equation
         
@@ -222,17 +222,14 @@ class InvertedPendulum(Environment):
             x_center = self.p_origin
         if u_center is None:
             u_center = np.zeros((self.n_s,))
-        
+            
         jac_ct = self._jac_dynamics(0,x_center,u_center)
-        A_ct = jac_ct[:,:self.n_s]
+        A_ct = np.eye(self.n_s)+jac_ct[:,:self.n_s]
         B_ct = jac_ct[:,self.n_s:]
         
         ct_input = (A_ct,B_ct,np.eye(self.n_s),np.zeros((self.n_s,self.n_u)))
-        print(len(cont2discrete(ct_input,self.dt)))
         A,B,_,_,_ = cont2discrete(ct_input,self.dt)
         
-        print(A)
-        print(B)
         return A,B
         
     def state_to_obs(self, state, add_noise = False):
@@ -385,6 +382,7 @@ class InvertedPendulum(Environment):
         action: 1x0 1darray[float]
         """ 
         action = np.clip(np.nan_to_num(action),self.u_min,self.u_max)
+        print(action)
         self.odesolver.set_f_params(action)
         self.current_state = self.odesolver.integrate(self.odesolver.t+self.dt) 
         
@@ -406,20 +404,22 @@ class InvertedPendulum(Environment):
             A (valid) random action applied to the system.
         
         """
-        c = 0.3
+        c = 0.5
         return c*(np.random.rand(self.n_u) * (self.u_max - self.u_min) + self.u_min)
         
     def _init_safety_bounds(self):
         """ Get state and safety constraints"""
         
-        h_mat_safe_theta = np.asarray([[0,1],[0,-1]])
+        h_mat_safe_dtheta = np.asarray([[1.,0.],[-1.,0.]])
+        h_safe_dtheta = np.array([.8,.8]).reshape(2,1)
+        h_mat_safe_theta = np.asarray([[0.,1.],[0.,-1.]])
         h_safe_theta = np.array([0.1,0.1]).reshape(2,1)
-        h_mat_safe_dtheta = np.asarray([[1,0],[-1,0]])
-        h_safe_dtheta = np.array([1.0,1.0]).reshape(2,1)
+        
+        
         self.h_mat_safe = np.vstack((h_mat_safe_dtheta,h_mat_safe_theta))
         self.h_safe = np.vstack((h_safe_dtheta,h_safe_theta))
-        self.h_mat_obs = np.asarray([[0,1],[0,-1]])
-        self.h_obs = np.array([0.35,0.35]).reshape(2,1)
+        self.h_mat_obs = np.asarray([[0.,1.],[0.,-1.]])
+        self.h_obs = np.array([.5,.5]).reshape(2,1)
         
 if __name__ == "__main__":
     pend = InvertedPendulum()
