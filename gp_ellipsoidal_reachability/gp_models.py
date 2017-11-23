@@ -31,7 +31,7 @@ class SimpleGPModel():
         
     """
     
-    def __init__(self,n_s,n_u,X=None,y=None,m=None,kern_type = "prod_lin_rbf"):
+    def __init__(self,n_s,n_u,X=None,y=None,m=None,kern_types = None, hyp = None, train = False):
         """ Initialize GP Model ( possibly without training set)
         
         Parameters
@@ -46,9 +46,13 @@ class SimpleGPModel():
         self.n_u = n_u
         self.gp_trained = False
         self.m = m
-        self.kern_type = kern_type
-        if (not X is None) and (not y is None):
-            self.train(X,y,m,kern_type)
+        
+        
+        self._init_kernel_function(kern_types,hyp)
+                
+        
+        if train:
+            self.train(X,y,m)
                  
     @classmethod 
     def from_dict(cls,gp_dict):
@@ -75,6 +79,10 @@ class SimpleGPModel():
         else:
             raise ValueError("""gp_dict either needs a data_path or 
             the data itself (key 'data_path' or keys 'x' and 'y')""")
+        
+        if "prior_model" in gp_dict:
+            prior_model = gp_dict["prior_model"]
+            y = y - prior_model(x)
             
         n_s = np.shape(y)[1]
         n_u = np.shape(x)[1]-n_s
@@ -84,13 +92,32 @@ class SimpleGPModel():
             m = gp_dict["m"]
         
         kern_type = None
-        if "kern_type" in gp_dict:
-            kern_type = gp_dict["kern_type"]
+        if "kern_types" in gp_dict:
+            kern_types = gp_dict["kern_types"]
+        
+        train = False
+        if "train" in gp_dict:
+            train = gp_dict["train"]
             
-        return cls(n_s,n_u,x,y,m,kern_type)
+        hyp = None
+        if "hyp" in gp_dict:
+            hyp = gp_dict["hyp"]
+            
+        return cls(n_s,n_u,x,y,m,kern_types,hyp,train)
         
+    def to_dict(self):
+        """ return a dict summarizing the object """
+        gp_dict = dict()
+        gp_dict["x_train"] = self.x_train        
+        gp_dict["y_train"] = self.y_train
+        gp_dict["kern_type"] = self.kern_type
+        gp_dict["hyp"] = self.hyp
+        gp_dict["beta"] = self.beta
+        gp_dict["inv_K"] = self.inv_K
+
+        return gp_dict
         
-    def train(self,X,y,m = None,kern_type = "prod_lin_rbf"):
+    def train(self,X,y,m = None):
         """ Train a GP for each state dimension
         
         Args:
@@ -121,7 +148,7 @@ class SimpleGPModel():
         gps = [None]*self.n_s
         
         for i in range(self.n_s):
-            kern = self._init_kernel_function(kern_type)
+            kern = self.base_kerns[i]
             y_i = y_train[:,i].reshape(-1,1)
             model_gp = GPy.models.GPRegression(X_train,y_i,kernel = kern)
             model_gp.optimize(max_iters = 1000,messages=True)
@@ -133,7 +160,8 @@ class SimpleGPModel():
             gps[i] = model_gp
                        
         # create a dictionary of kernel paramters
-        self.hyp = self._create_hyp_dict(gps,kern_type)
+        self.hyp = self._create_hyp_dict(gps,self.kern_types)
+        
         #update the class attributes      
         self.inv_K = inv_K
         self.beta = beta
@@ -141,7 +169,6 @@ class SimpleGPModel():
         self.gp_trained = True
         self.x_train = X_train
         self.y_train = y_train
-        self.kern_type = kern_type
         
     def update_model(self, x, y, train = True, replace_old = True):
         """ Update the model based on the current settings and new data 
@@ -163,23 +190,23 @@ class SimpleGPModel():
             y_new = np.vstack((self.y_train,y))
             
         if train:
-            self.train(x_new,y_new,self.m,self.kern_type)
+            self.train(x_new,y_new,self.m)
         else:
             n_data = np.shape(x_new)[0]
             inv_K = [None]*self.n_s
             beta = np.empty((n_data,self.n_s))
             for i in range(self.n_s):
                 self.gps[i].set_XY(x_new,y_new[:,i].reshape(-1,1))
-                self.x_train = x_new
-                self.y_train = y_new
                 post = self.gps[i].posterior
                 inv_K[i] = post.woodbury_inv
                 beta[:,i] = post.woodbury_vector.reshape(-1,)
-                
+            
+            self.x_train = x_new
+            self.y_train = y_new
             self.inv_K = inv_K
             self.beta = beta
             
-    def _init_kernel_function(self,kern_type):
+    def _init_kernel_function(self,kern_types = None, hyp = None):
         """ Initialize GPy kernel functions based on name. Check if supported.
         
         Utility function to return a kernel based on its type name.
@@ -195,15 +222,41 @@ class SimpleGPModel():
         kern: GPy.Kern
             The Gpy kernel function   
         """
+
         input_dim = self.n_s+self.n_u
-        if kern_type == "rbf":
-            return RBF(input_dim, ARD = True)
-        elif kern_type == "prod_lin_rbf":
-            return RBF(input_dim, ARD = True)*Linear(input_dim, ARD = False)
-        else:
-            raise ValueError("kernel type '{}' not supported".format(kern_type))
+        kerns = [None]*self.n_s
+        
+        if hyp is None:
+            hyp = [None]*self.n_s
             
-    def _create_hyp_dict(self,gps,kern_type):
+        if kern_types is None:
+            kern_types = [None]*self.n_s
+            for i in range(self.n_s):
+                kern_types[i] = "rbf"
+                kerns[i] = RBF(input_dim, ARD = True)
+                
+        else:
+            for i in range(self.n_s):
+                if kern_types[i] == "rbf":
+                    kern_i = RBF(input_dim, ARD = True)
+                    hyp_i = hyp[i]
+                    if not hyp_i is None:
+                        if "rbf_lengthscales" in hyp_i:
+                            kern_i.lengthscale = hyp_i["rbf_lengthscales"]
+                            kern_i.lengthscale.fix()
+                        
+                        if "rbf_variance" in hyp_i:
+                            kern_i.variance = hyp_i["rbf_variance"]
+                            kern_i.variance.fix()
+                    kerns[i] = kern_i        
+                elif kern_type == "prod_lin_rbf":
+                    raise NotImplementedError("")
+                else:
+                    raise ValueError("kernel type '{}' not supported".format(kern_type))
+        self.base_kerns = kerns
+        self.kern_types = kern_types
+        
+    def _create_hyp_dict(self,gps,kern_types):
         """ Create a hyperparameter dict from the individual supported kernels 
         
         Parameters
@@ -221,22 +274,23 @@ class SimpleGPModel():
         """
         
         hyp = [None]*self.n_s
-        if kern_type == "rbf":          
-            for i in range(self.n_s):
-                hyp_i = dict()
-                hyp_i["rbf_lengthscales"] = np.reshape(gps[i].kern.lengthscale,(-1,))
-                hyp_i["rbf_variance"] = gps[i].kern.variance
-                hyp[i] = hyp_i
+       
+        for i in range(self.n_s):
+                if kern_types[i] == "rbf":          
+                    hyp_i = dict()
+                    hyp_i["rbf_lengthscales"] = np.reshape(gps[i].kern.lengthscale,(-1,))
+                    hyp_i["rbf_variance"] = gps[i].kern.variance
+                    hyp[i] = hyp_i
             
-        elif kern_type == "prod_lin_rbf":
-            for i in range(self.n_s):
-                hyp_i = dict()
-                hyp_i["rbf_lengthscales"] = np.reshape(gps[i].kern.rbf.lengthscale,(-1,))
-                hyp_i["rbf_variance"] = gps[i].kern.rbf.variance
-                hyp_i["lin_variances"] = np.array([gps[i].kern.linear.variances]*(self.n_s+self.n_u))
-                hyp[i] = hyp_i
-        else:
-            raise ValueError("kernel type not supported")
+                elif kern_types[i] == "prod_lin_rbf":
+                
+                    hyp_i = dict()
+                    hyp_i["rbf_lengthscales"] = np.reshape(gps[i].kern.rbf.lengthscale,(-1,))
+                    hyp_i["rbf_variance"] = gps[i].kern.rbf.variance
+                    hyp_i["lin_variances"] = np.array([gps[i].kern.linear.variances]*(self.n_s+self.n_u))
+                    hyp[i] = hyp_i
+                else:
+                    raise ValueError("kernel type not supported")
         
         return hyp
                 
@@ -269,7 +323,7 @@ class SimpleGPModel():
         """ Return a symbolic casadi function representing predictive mean/variance
         
         """
-        out_dict = gp_pred_function(x_new,self.x_train,self.beta,self.hyp,self.kern_type,self.inv_K,True,compute_grads)
+        out_dict = gp_pred_function(x_new,self.x_train,self.beta,self.hyp,self.kern_types,self.inv_K,True,compute_grads)
         mu_new = out_dict["pred_mu"]
         sigma_new = out_dict["pred_sigma"]
         if compute_grads:
