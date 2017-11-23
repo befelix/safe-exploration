@@ -7,15 +7,38 @@ Created on Wed Sep 20 10:43:16 2017
 
 import numpy as np
 import numpy.linalg as nLa
+import scipy.linalg as sLa
+import warnings
 
 from numpy.linalg import solve,norm
 from numpy import sqrt,trace,zeros,diag, eye
 
+
+def dlqr(a,b,q,r):
+    """ Get the feedback controls from linearized system at the current time step
+    
+    for a discrete time system Ax+Bu
+    find the infinite horizon optimal feedback controller
+    to steer the system to the origin
+    with
+    u = -K*x 
+    """
+    x = np.matrix(sLa.solve_discrete_are(a, b, q, r))
+ 
+    k = np.matrix(sLa.inv(b.T*x*b+r)*(b.T*x*a))
+ 
+    eigVals, eigVecs = sLa.eig(a-b*k)
+    
+    return np.asarray(k), np.asarray(x), eigVals
+        
+        
 def compute_bounding_box_lagrangian(q,L,K,k,order = 2, verbose = 0):
     """ Compute lagrangian remainder using lipschitz constants
         and ellipsoidal input set with affine control law
     
     """
+    warnings.warn("Function is deprecated")
+    
     SUPPORTED_TAYLOR_ORDER = [1,2]
     if not (order in SUPPORTED_TAYLOR_ORDER):
         raise ValueError("Cannot compute lagrangian remainder bounds for the given order")
@@ -45,6 +68,47 @@ def compute_bounding_box_lagrangian(q,L,K,k,order = 2, verbose = 0):
         print("largest eigenvalue of Q: {} \nlargest eigenvalue of KQK^T: {}".format(s_max,sk_max))
         
     return box_lower,box_upper
+    
+def compute_remainder_overapproximations(q,k_fb,l_mu,l_sigma):
+    """ Compute the (hyper-)rectangle over-approximating the lagrangians of mu and sigma 
+    
+    Parameters
+    ----------
+    q: n_s x n_s ndarray[float]
+        The shape matrix of the current state ellipsoid
+    k_fb: n_u x n_s ndarray[float]
+        The linear feedback term
+    l_mu: n x 0 numpy 1darray[float]
+        The lipschitz constants for the gradients of the predictive mean
+    l_sigma n x 0 numpy 1darray[float]
+        The lipschitz constans on the predictive variance
+
+    Returns
+    -------
+    u_mu: n_s x 0 numpy 1darray[float]
+        The upper bound of the over-approximation of the mean lagrangian remainder
+    u_sigma: n_s x 0 numpy 1darray[float]
+        The upper bound of the over-approximation of the variance lagrangian remainder
+    """
+    n_u,n_s = np.shape(k_fb)
+    s = np.hstack((np.eye(n_s),k_fb.T))
+    b = np.dot(s,s.T)
+    qb = np.dot(q,b)
+    evals,_ = sLa.eig(qb)
+    r_sqr = np.max(evals)
+    ## This is equivalent to:
+    # q_inv = sLA.inv(q)
+    # evals,_,_ = sLA.eig(b,q_inv)
+    # however we prefer to avoid the inversion
+    # and breaking the symmetry of b and q
+    
+    u_mu = l_mu*r_sqr
+    u_sigma = l_sigma*np.sqrt(r_sqr)
+    
+    return u_mu, u_sigma
+    
+    
+    
     
 def all_elements_equal(x):
     """ Check if all elements in a 1darray are equal
