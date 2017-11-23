@@ -9,7 +9,7 @@ admits being use by a Casadi ( symbolic ) framework.
 @author: tkoller
 """
 
-from casadi import mtimes, eig_symbolic, fmax, norm_2
+from casadi import mtimes, eig_symbolic, fmax, norm_2, horzcat,sqrt
 import numpy as np
 
 
@@ -57,6 +57,39 @@ def compute_bounding_box_lagrangian(q,L,K,k,order = 2, verbose = 0):
         
     return box_lower, box_upper
     
+def compute_remainder_overapproximations(q,k_fb,l_mu,l_sigma):
+    """ Compute symbolically the (hyper-)rectangle over-approximating the lagrangians of mu and sigma 
+    
+    Parameters
+    ----------
+    q: n_s x n_s ndarray[casadi.SX.sym]
+        The shape matrix of the current state ellipsoid
+    k_fb: n_u x n_s ndarray[casadi.SX.sym]
+        The linear feedback term
+    l_mu: n x 0 numpy 1darray[float]
+        The lipschitz constants for the gradients of the predictive mean
+    l_sigma n x 0 numpy 1darray[float]
+        The lipschitz constans on the predictive variance
+
+    Returns
+    -------
+    u_mu: n_s x 0 numpy 1darray[casadi.SX.sym]
+        The upper bound of the over-approximation of the mean lagrangian remainder
+    u_sigma: n_s x 0 numpy 1darray[casadi.SX.sym]
+        The upper bound of the over-approximation of the variance lagrangian remainder
+    """
+    n_u,n_s = np.shape(k_fb)
+    s = horzcat(np.eye(n_s),k_fb.T)
+    b = mtimes(s,s.T)
+
+    qb = mtimes(q,b)
+    evals = matrix_norm_2(qb)
+    r_sqr = vec_max(evals)
+    
+    u_mu = l_mu*r_sqr
+    u_sigma = l_sigma*sqrt(r_sqr)
+    
+    return u_mu, u_sigma
 def vec_max(x):
     """ Compute (symbolically) the maximum element in a vector
     
@@ -90,7 +123,7 @@ def matrix_norm_2(a_mat,x = None,n_iter = None):
         x /= norm_2(x)
         
     if n_iter is None:
-        n_iter = 2*n
+        n_iter = n
     
     y = mtimes(a_mat,x)
     
