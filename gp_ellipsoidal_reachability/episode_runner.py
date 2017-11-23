@@ -9,6 +9,7 @@ from sampling_models import MonteCarloSafetyVerification
 from safempc import SafeMPC
 from gp_models import SimpleGPModel
 from utils_config import create_solver, create_env
+from collections import namedtuple
 
 import numpy as np
 import warnings
@@ -19,73 +20,44 @@ import copy
 import utils_ellipsoid
 
 
-DEFAULT_EPISODE_OPTIONS = {"n_ep": 20, "n_steps": 15, "n_scenarios": 1, "n_steps_init": 8, "n_rollouts_init": 10}
-DEFAULT_SAVE_OPTIONS = {}
-DEFAULT_ENV_OPTIONS= {"env_name": "InvertedPendulum"}
-
-def run(env_options = None, episode_options = None, controller_options = None, 
-        save_options = None, data_safepath= None):
+def run_episodic(conf):
     """ Run episode setting """
         
-    n_ep, n_steps, n_scenarios, n_steps_init, n_rollouts_init = _process_episode_options(episode_options)
-    env, visualize = create_env(env_options)
+    env = create_env(conf)
 
-    if n_scenarios > 1:
+    if conf.n_scenarios > 1:
         raise NotImplementedError("For now we don't support multiple experiments!")
-        
-    X,y, S,z  = do_rollout(env, n_steps_init, visualize = False,plot_trajectory=False)
-    for i in range(1,n_rollouts_init):
-        xx,yy, ss,zz  = do_rollout(env, n_steps_init, visualize = False,plot_trajectory=False)
+
+    X,y, S,z  = do_rollout(env, conf.n_steps_init,plot_trajectory=conf.plot_trajectory)
+    for i in range(1,conf.n_rollouts_init):
+        xx,yy, ss,zz  = do_rollout(env, conf.n_steps_init,plot_trajectory=conf.plot_trajectory)
         X = np.vstack((X,xx))
         y = np.vstack((y,yy))
         S = np.vstack((S,ss))
         z = np.vstack((z,zz))
         
-    solver = create_solver(env, controller_options)
-    for i in range(n_ep):
+    solver = create_solver(conf,env)
+    
+    for i in range(conf.n_ep):
         
         solver.update_model(S,y)
-        xx, yy, ss,zz = do_rollout(env, n_steps, solver = solver, visualize = visualize, sampling_verification = False)
+        xx, yy, ss,zz = do_rollout(env, conf.n_steps, solver = solver,plot_ellipsoids = conf.plot_ellipsoids)
         
         X = np.vstack((X,xx))
         y = np.vstack((y,yy))
         S = np.vstack((S,ss))
         z = np.vstack((z,zz))
         
-    if not data_safepath is None:
-        np.savez(data_safepath,X=X,y=y,S=S,z = z)
+    if not conf.data_savename is None:
+        savepath_data = "{}/{}".format(conf.save_path,conf.data_savename)
+        np.savez(savepath_data,X=X,y=y,S=S,z = z)
         
         
-def _process_episode_options(episode_options = None):
-    """ Return default options replaced by the specified input episode options 
-    
-    Merge the default episode options with 
-    Parameters
-    ----------
-    episode_options: dict
-        The episode_options chosen by the user    
-    """
-    
-    if episode_options is None:
-        opts = DEFAULT_EPISODE_OPTIONS
-    else:
-        raise NotImplementedError()
-        
-    n_ep = opts["n_ep"]
-    n_steps = opts["n_steps"]
-    n_scenarios = opts["n_scenarios"]
-    n_steps_init = opts["n_steps_init"]
-    n_rollouts_init = opts["n_rollouts_init"]
-    
-    return n_ep, n_steps, n_scenarios, n_steps_init, n_rollouts_init
-    
-
-        
-def do_rollout(env, n_steps, solver = None, relative_dynamics = False, 
-               visualize = False, plot_trajectory = True, 
+def do_rollout(env, n_steps, solver = None, relative_dynamics = False,
+               plot_trajectory = True, 
                verbosity = 1,sampling_verification = False,
-               plot_ellipsoids = True,
-               check_system_safety = False, safedir_trajectory_plots = "trajectory_plots"): #safedir_trajectory_plots = None
+               plot_ellipsoids = False,
+               check_system_safety = False, savedir_trajectory_plots = None): #safedir_trajectory_plots = None
     """ Perform a rollout on the system
     
     TODO: measurement noise, x0_sigm?
@@ -103,11 +75,8 @@ def do_rollout(env, n_steps, solver = None, relative_dynamics = False,
     
     
     if plot_trajectory:
-        fig = plt.figure()
-        ax = fig.add_subplot(111, aspect='equal')
-        _,_,_,p_obs,width_obs,height_obs = env.get_safe_bounds()
-        ax.set_xlim(p_obs[0],p_obs[0]+width_obs)
-        ax.set_ylim(p_obs[1],p_obs[1]+height_obs)
+        fig, ax = env.plot_safety_bounds()
+        
         ell = None
         
     if sampling_verification:
@@ -123,9 +92,6 @@ def do_rollout(env, n_steps, solver = None, relative_dynamics = False,
         q_traj = None
         k_fb = None
         k_ff = None
-        
-        if visualize:
-            env.render()
             
         if solver is None:
             action = env.random_action()
@@ -158,10 +124,10 @@ def do_rollout(env, n_steps, solver = None, relative_dynamics = False,
             fig.canvas.draw()
             plt.show(block=False)
             plt.pause(0.2)               
-            if not safedir_trajectory_plots is None:
+            if not savedir_trajectory_plots is None:
                 save_name = "img_step_{}.png".format(i)
-                safe_path = "{}/{}".format(safedir_trajectory_plots,save_name)
-                plt.savefig(safe_path)
+                save_path = "{}/{}".format(savedir_trajectory_plots,save_name)
+                plt.savefig(save_path)
                 
         
         ## Verify whether the GP distribution is inside the ellipsoid over multiple steps via sampling
@@ -242,5 +208,8 @@ def do_rollout(env, n_steps, solver = None, relative_dynamics = False,
 
     
 if __name__ == "__main__":
-    run(data_safepath=None)#"inv_pend_no_rel_dyn")
+    env_options = namedtuple('conf',['env_name'])
+    conf = env_options(env_name = "InvertedPendulum")
+    print(conf.env_name)
+    run(data_safepath="inv_pend_no_rel_dyn",env_options = conf)#)
     
