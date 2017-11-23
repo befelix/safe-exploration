@@ -13,10 +13,9 @@ import scipy
 from casadi import SX, mtimes, vertcat, sum2, sqrt
 from casadi import reshape as cas_reshape
 from gp_reachability_casadi import multi_step_reachability as cas_multistep
-
 from gp_reachability_casadi import onestep_reachability, lin_ellipsoid_safety_distance, objective
-
 from gp_reachability import multistep_reachability
+from utils import dlqr
 
 from ilqr_cython import CILQR
 
@@ -27,8 +26,8 @@ class SafeMPC:
     
     """
     
-    def __init__(self, n_safe, n_perf, gp, l_mu, l_sigma, h_mat_safe, h_safe,
-                 h_mat_obs, h_obs, wx_cost, wu_cost, dt,beta_safety = 2.5,
+    def __init__(self, n_safe, n_perf, gp, l_mu, l_sigma, h_mat_safe, h_safe, wx_cost, wu_cost, dt,beta_safety = 2.5,
+                 h_mat_obs= None, h_obs = None,
                  rhc = True, ilqr_init = True, lin_model = None, ctrl_bounds = None,
                  safe_policy = None):
         """ Initialize the SafeMPC object with dynamic model information
@@ -49,12 +48,20 @@ class SafeMPC:
         
         self.safe_policy = safe_policy
         
-        m_obs_mat, n_s_obs = np.shape(h_mat_obs)
+        
+        if h_mat_obs is None:
+            m_obs_mat = 0
+        else:
+            m_obs_mat, n_s_obs = np.shape(h_mat_obs)
+            assert n_s_obs == self.n_s, " Wrong shape of obstacle matrix"
+            assert np.shape(h_obs) == (m_obs_mat,1), " Shapes of obstacle linear inequality matrix/vector must match "
+        self.m_obs = m_obs_mat
+        
+        
         m_safe_mat, n_s_safe = np.shape(h_mat_safe)
-        assert n_s_obs == self.n_s, " Wrong shape of obstacle matrix"
         assert n_s_safe == self.n_s, " Wrong shape of safety matrix"
         assert np.shape(h_safe) == (m_safe_mat,1), " Shapes of safety linear inequality matrix/vector must match "
-        assert np.shape(h_obs) == (m_obs_mat,1), " Shapes of obstacle linear inequality matrix/vector must match "
+        
         
         self.has_ctrl_bounds = False        
         if not ctrl_bounds is None:
@@ -63,7 +70,7 @@ class SafeMPC:
             to be of shape n_u x 2 with i,0 lower bound and i,1 upper bound per dimension"""
             self.ctrl_bounds = ctrl_bounds
             
-        self.m_obs = m_obs_mat
+        
         self.m_safe = m_safe_mat
         self.h_mat_safe = h_mat_safe
         self.h_safe = h_safe
@@ -84,7 +91,7 @@ class SafeMPC:
         
         
         self.lin_prior = False
-        self.a = np.zeros((self.n_s,self.n_s))
+        self.a = np.eye(self.n_s)
         self.b = np.zeros((self.n_s,self.n_u))
         if not lin_model is None:
             self.a,self.b = lin_model
@@ -93,7 +100,7 @@ class SafeMPC:
                 #no safe policy specified? Use lqr as safe policy
                 K = self.get_lqr_feedback()
                 self.safe_policy = lambda x: np.dot(K,x)
-                
+            
         self.k_fb_all = None
         if self.safe_policy is None:
             warnings.warn("No SafePolicy!")
@@ -223,14 +230,15 @@ class SafeMPC:
                 g_name += ["ellipsoid_ctrl_constraint_{}".format(i)]*len(lbg_u_i)
             
         # intermediate state constraints
-        for i in range(H-1):
-            p_i = p_all[i,:].T
-            q_i = q_all[i,:].reshape((self.n_s,self.n_s))
-            g_state = lin_ellipsoid_safety_distance(p_i,q_i,self.h_mat_obs,self.h_obs)
-            g = vertcat(g,g_state)
-            lbg += [-cas.inf]*self.m_obs
-            ubg += [0]*self.m_obs
-            g_name += ["ellipsoid_ctrl_constraint_{}".format(i)]*self.m_obs
+        if not self.h_mat_obs is None:
+            for i in range(H-1):
+                p_i = p_all[i,:].T
+                q_i = q_all[i,:].reshape((self.n_s,self.n_s))
+                g_state = lin_ellipsoid_safety_distance(p_i,q_i,self.h_mat_obs,self.h_obs)
+                g = vertcat(g,g_state)
+                lbg += [-cas.inf]*self.m_obs
+                ubg += [0]*self.m_obs
+                g_name += ["ellipsoid_ctrl_constraint_{}".format(i)]*self.m_obs
             
         # terminal state constraint
         p_T = p_all[-1,:].T
@@ -304,10 +312,9 @@ class SafeMPC:
         x_prior: n x n_s array[casadi.SX]
             The (state,action) pairs evaluated at the prior
         """
-        if self.lin_prior:
-            return mtimes(self.a,state.T) + mtimes(self.b,action.T)
-        else:
-            return state
+
+        return mtimes(self.a,state.T) + mtimes(self.b,action.T)
+
         
     def eval_prior(self, state, action):
         """ Evaluate the prior numerically 
@@ -323,27 +330,10 @@ class SafeMPC:
         x_prior: n x n_s array[float]
             The (state,action) pairs evaluated at the prior
         """
-        if self.lin_prior:
-            return np.dot(state,self.a.T) + np.dot(action,self.b.T)
-        else:
-            return state
+
+        return np.dot(state,self.a.T) + np.dot(action,self.b.T)
+
         
-    def dlqr(self,a,b,q,r):
-        """ Get the feedback controls from linearized system at the current time step
-        
-        for a discrete time system Ax+Bu
-        find the infinite horizon optimal feedback controller
-        to steer the system to the origin
-        with
-        u = -K*x 
-        """
-        x = np.matrix(scipy.linalg.solve_discrete_are(a, b, q, r))
-     
-        k = np.matrix(scipy.linalg.inv(b.T*x*b+r)*(b.T*x*a))
-     
-        eigVals, eigVecs = scipy.linalg.eig(a-b*k)
-        
-        return np.asarray(k), np.asarray(x), eigVals
         
     def get_lqr_feedback(self,x_0 = None, u_0 = None):
         """ Get the initial feedback controller k_fb
@@ -364,7 +354,7 @@ class SafeMPC:
             a = self.a
             b= self.b
             
-            k_lqr,_,_ = self.dlqr(a,b,q,r)
+            k_lqr,_,_ = dlqr(a,b,q,r)
             k_fb = -k_lqr
         else:
             z = np.hstack((x_0.T,u_0.T))
