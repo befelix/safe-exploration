@@ -68,6 +68,7 @@ class MPCExplorationOracle:
             ## generate constraints
             g_safe, lbg_safe, ubg_safe, _ = self.safempc.generate_safety_constraints(p_all,q_all,u_0,
                                                                                 k_fb_0,k_fb_ctrl,k_ff)
+                                                                                
             #stack variables and parameters
             opt_vars = vertcat(x_0,u_0,k_ff.reshape((-1,1)),k_fb_ctrl.reshape((-1,1)))
             opt_params = vertcat(k_fb_0.reshape((-1,1)))
@@ -89,7 +90,7 @@ class MPCExplorationOracle:
         
         
         prob = {'f':c,'x': opt_vars,'p':opt_params,'g':g}
-        opt = {'ipopt':{'hessian_approximation':'limited-memory',"max_iter":100,"expect_infeasible_problem":"yes"}} #ipopt 
+        opt = {'ipopt':{'hessian_approximation':'limited-memory',"max_iter":60,"expect_infeasible_problem":"yes"}} #ipopt 
        
         solver = nlpsol("solver","ipopt",prob,opt)
         
@@ -151,26 +152,20 @@ class MPCExplorationOracle:
                 params_0 = []
                 vars_0 = np.vstack((x_0,u_0))
             
-            
-            
-            
             sol = self.solver(x0 = vars_0,p=params_0,lbg = self.lbg, ubg = self.ubg)
             
             f_opt = sol["f"]
-            
-            
-            
-            sigm_i = -f_opt
+
+            sigm_i = -float(f_opt)
             if sigm_i > sigma_best: # check if solution would improve upon current best
-                g_sol = np.array(sol["g"])
-                if self._is_feasible(g_sol, self.lbg, self.ubg): #check if solution is feasible
+                g_sol = np.array(sol["g"]).squeeze()
+                if self._is_feasible(g_sol, np.array(self.lbg), np.array(self.ubg)): #check if solution is feasible
                     w_sol = sol["x"]
                     x_best = np.array(w_sol[:self.n_s])
                     u_best = np.array(w_sol[self.n_s:self.n_s+self.n_u])
                     sigma_best = sigm_i
-                    print(sigma_best)
+
                     z_i = np.vstack((x_best,u_best)).T
-                    print(np.sum(np.sqrt(self.safempc.gp.predict(z_i)[1]).squeeze()))
                     if verbosity > 0:
                         print("new optimal sigma found at iteration {}".format(i))
                         
@@ -183,7 +178,7 @@ class MPCExplorationOracle:
     def get_information_gain(self):
         return self.safempc.gp.information_gain()
         
-    def _is_feasible(self,g, lbg, ubg, feas_tol = 1e-4):
+    def _is_feasible(self,g, lbg, ubg, feas_tol = 1e-7):
         """ """
-        return np.any(np.array(lbg) - feas_tol > g ) or np.any(np.array(ubg) + feas_tol < g )
+        return np.all(g > lbg - feas_tol  ) and np.all(g < ubg + feas_tol )
             
