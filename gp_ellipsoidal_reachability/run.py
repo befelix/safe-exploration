@@ -8,7 +8,7 @@ Created on Wed Sep 20 10:03:14 2017
 import argparse
 from utils_config import loadConfig, create_env, create_solver, get_model_options_from_conf
 from exploration_runner import run_exploration
-
+from episode_runner import run_episodic
 
 def create_parser():
     """ Create the argparser """
@@ -34,7 +34,7 @@ def run_scenario(args):
     
     print(conf)
     env = create_env(conf)
-    gp_model_options = get_model_options_from_conf(conf)
+    gp_model_options = get_model_options_from_conf(conf,env)
     safempc = create_solver(conf,env,gp_model_options)
     
     
@@ -43,6 +43,8 @@ def run_scenario(args):
     if task == "exploration":
         run_exploration(env,safempc,conf.static_exploration,conf.n_iterations,
                         conf.n_restarts_optimizer,conf.visualize,conf.save_vis,conf.save_path)
+    elif task == "episode_setting":
+        run_episodic(conf)
         
 if __name__ == "__main__":
     parser = create_parser()
