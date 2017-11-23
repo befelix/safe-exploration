@@ -9,7 +9,7 @@ TODO: Undocumented!
 
 """
 
-from casadi import mtimes, exp, sum1, sum2, repmat, SX, jacobian, Function, sqrt
+from casadi import mtimes, exp, sum1, sum2, repmat, SX, jacobian, Function, sqrt, vertcat, horzcat
 import numpy as np
 
 def _k_rbf(x,hyp,y = None,diag_only = False):
@@ -88,26 +88,22 @@ def gp_pred(x,kern,beta,x_train,hyp,k_inv_training = None,pred_var = True):
     
     """
     n_pred, _ = np.shape(x)
-    n_gps = np.shape(beta)[1]
-    pred_mu = SX(n_pred,n_gps)
+
+    k_star = kern(x,hyp,y = x_train)
+    pred_mu = mtimes(k_star,beta)
     
     if pred_var:
         if k_inv_training is None:
                 raise ValueError("""The inverted kernel matrix is required 
                 for computing the predictive variance""") 
-        pred_sigm = SX(n_pred,n_gps)
-        
-    for i in range(n_gps):
-        k_star_i = kern(x,hyp[i],y = x_train)
-        pred_mu[:,i] = mtimes(k_star_i,beta[:,i])
-        
-        if pred_var:
-            k_expl_var_i = kern(x,hyp[i],diag_only = True)
-            pred_sigm[:,i] = k_expl_var_i - sum2(mtimes(k_star_i,k_inv_training[i])*k_star_i)
+                    
+        k_expl_var = kern(x,hyp,diag_only = True)
+        pred_sigm = k_expl_var- sum2(mtimes(k_star,k_inv_training)*k_star)
             
-    if pred_var:
         return pred_mu, pred_sigm
+        
     return pred_mu
+    
     
 def _get_kernel_function(kern_type):
     """ Return the casadi function for a specific kernel type
@@ -130,32 +126,53 @@ def _get_kernel_function(kern_type):
     else:
         raise ValueError("Unknown kernel type")
     
-    
-            
-def gp_pred_function(x,x_train,beta,hyp,kern_type,k_inv_training = None, pred_var = True, compute_grads = False):
+               
+def gp_pred_function(x,x_train,beta,hyp,kern_types,k_inv_training = None, pred_var = True, compute_grads = False):
     """
     
     """    
+    n_gps = np.shape(beta)[1]
     inp = SX.sym("input",(x.shape))
     out_dict = dict()
-    kern = _get_kernel_function(kern_type)
-    if pred_var:
-        mu_new,  sigma_new = gp_pred(inp,kern,beta,x_train,hyp,k_inv_training,pred_var)
-        pred_func = Function("pred_func",[inp],[mu_new,sigma_new],["inp"],["mu_1","sigma_1"])
-        F_1 = pred_func(inp=x)
-        out_dict["pred_sigma"] = F_1["sigma_1"]
-    else: 
-        mu_new = gp_pred(x,kern,beta,x_train,hyp,k_inv_training,pred_var)  
-        pred_func = Function("pred_func",[inp],[mu_new],["inp"],["mu_1"])
-        F_1 = pred_func(inp=x)
-    
-    mu_1 = F_1["mu_1"]
-    out_dict["pred_mu"] = mu_1    
-    if compute_grads:
-        jac_func = pred_func.jacobian("inp","mu_1")
-        F_1_jac = jac_func(inp = x)
-        out_dict["jac_mu"] = F_1_jac["dmu_1_dinp"]
+    mu_all = []
+    pred_sigma_all = []
+    jac_mu_all = []
+    for i in range(n_gps):
+        kern_i = _get_kernel_function(kern_types[i])
+        beta_i = beta[:,i]
+        hyp_i = hyp[i]
+        k_inv_i = None
+        if not k_inv_training is None:
+            k_inv_i = k_inv_training[i]
+         
+        if pred_var:
+            mu_new,  sigma_new = gp_pred(inp,kern_i,beta_i,x_train,hyp_i,k_inv_i,pred_var)
+            pred_func = Function("pred_func",[inp],[mu_new,sigma_new],["inp"],["mu_1","sigma_1"])
+            F_1 = pred_func(inp=x)
+            pred_sigma = F_1["sigma_1"]
+            pred_sigma_all = horzcat(pred_sigma,pred_sigma_all)
+        else: 
+            mu_new = gp_pred(inp,kern_i,beta_i,x_train,hyp_i,k_inv_i,pred_var)  
+            pred_func = Function("pred_func",[inp],[mu_new],["inp"],["mu_1"])
+            F_1 = pred_func(inp=x)
         
+        mu_1 = F_1["mu_1"]
+        mu_all = horzcat(mu_all,mu_1)
+        
+        if compute_grads:
+            jac_func = pred_func.jacobian("inp","mu_1")
+            F_1_jac = jac_func(inp = x)
+            jac_mu = F_1_jac["dmu_1_dinp"]
+            jac_mu_all = vertcat(jac_mu_all,jac_mu)
+            
+            
+    out_dict["pred_mu"] = mu_all    
+    if pred_var:
+        out_dict["pred_sigma"] = pred_sigma_all
+    if compute_grads:
+        out_dict["jac_mu"] = jac_mu_all
+            
+    
     return out_dict
     
         
