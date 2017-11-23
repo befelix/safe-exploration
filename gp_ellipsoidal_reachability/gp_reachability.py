@@ -65,7 +65,7 @@ def onestep_reachability(p_center,gp,k_ff,l_mu,l_sigma,q_shape = None,k_fb = Non
         if verbose >0:
             print("\nApplying action:")
             print(u_p)
-            
+
         z_bar = np.vstack((p_center,u_p))
         mu_0, sigm_0 = gp.predict(z_bar.T)
         rkhs_bounds = c_safety * np.sqrt(sigm_0).reshape((n_s,))
@@ -118,14 +118,13 @@ def onestep_reachability(p_center,gp,k_ff,l_mu,l_sigma,q_shape = None,k_fb = Non
         ub_mean, ub_sigma = compute_remainder_overapproximations(q_shape,k_fb,l_mu,l_sigma)
         
         b_sigma_eps = c_safety*(np.sqrt(sigm_0) + ub_sigma) 
-        print(np.shape(b_sigma_eps))
+
         Q_lagrange_sigm = ellipsoid_from_rectangle(b_sigma_eps.squeeze())   
         p_lagrange_sigm = zeros((n_s,1))
         
         if verbose > 0:
             print_ellipsoid(p_lagrange_sigm,Q_lagrange_sigm,text="overapproximation lagrangian sigma")
     
-        print(np.shape(ub_mean))
         Q_lagrange_mu = ellipsoid_from_rectangle(ub_mean)
         p_lagrange_mu = zeros((n_s,1))
         
@@ -146,7 +145,7 @@ def onestep_reachability(p_center,gp,k_ff,l_mu,l_sigma,q_shape = None,k_fb = Non
         return p_1,q_1
         
         
-def multistep_reachability(p_0,gp,K,k,L_mu,L_sigm,q_0 = None, c_safety = 1.,verbose = 1,a = None, b= None):
+def multistep_reachability(p_0,gp,k_fb,k_ff,L_mu,L_sigm,q_0 = None, c_safety = 1.,verbose = 1,a = None, b= None,k_fb_init = None):
     """ Ellipsoidal overapproximation of a probabilistic safe set after multiple actions
     
     Overapproximate the region containing a pre-specified percentage of the probability
@@ -160,7 +159,7 @@ def multistep_reachability(p_0,gp,K,k,L_mu,L_sigm,q_0 = None, c_safety = 1.,verb
             Center of state ellipsoid        
     gp: SimpleGPModel     
         The gp representing the dynamics            
-    K: n x n_u x n_s array[float]     
+    K: (n-1) x n_u x n_s array[float]     
         The state feedback-matrices for the controls at each time step        
     k: n x n_u array[float]     
         The additive term of the controls at each time step
@@ -177,20 +176,20 @@ def multistep_reachability(p_0,gp,K,k,L_mu,L_sigm,q_0 = None, c_safety = 1.,verb
         Verbosity level of the print output            
     
     """
-    n, n_u, n_s = np.shape(K)
+    n_, n_u, n_s = np.shape(k_fb)
+    n = n_ + 1
     p_all = np.empty((n,n_s))
     q_all = np.empty((n,n_s,n_s))
     
     ## compute the reachable set in the first time step
-    K_0 = K[0]
-    k_0 = k[0,:,None]
-    p_new,q_new = onestep_reachability(p_0,gp,k_0,L_mu,L_sigm,q_0,None,c_safety,verbose,a,b)
+    k_0 = k_ff[0,:,None]
+    p_new,q_new = onestep_reachability(p_0,gp,k_0,L_mu,L_sigm,q_0,k_fb_init,c_safety,verbose,a,b)
     p_all[0] = p_new.T
     q_all[0] = q_new
     
     ## iteratively compute it for the next steps
     for i in range(1,n):
-        p_new,q_new = onestep_reachability(p_new,gp,k[i,:,None],L_mu,L_sigm,q_new,K[i],c_safety,verbose,a,b)
+        p_new,q_new = onestep_reachability(p_new,gp,k_ff[i,:,None],L_mu,L_sigm,q_new,k_fb[i-1],c_safety,verbose,a,b)
         p_all[i] = p_new.T
         q_all[i] = q_new
         
