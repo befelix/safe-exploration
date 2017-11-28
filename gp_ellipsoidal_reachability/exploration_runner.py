@@ -5,7 +5,7 @@ Created on Tue Nov 21 09:37:59 2017
 @author: tkoller
 """
 
-from exploration_oracle import MPCExplorationOracle
+from exploration_oracle import StaticMPCExplorationOracle, DynamicMPCExplorationOracle
 from casadi import *
 
 import numpy as np
@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 import warnings
 
 
-def run_exploration(env, safempc,  
+def run_exploration(env, safempc,conf,  
         static_exploration = True, 
         n_iterations = 50, 
         n_restarts_optimizer = 20,
@@ -21,44 +21,62 @@ def run_exploration(env, safempc,
         save_vis = False,
         save_path = None):          
     """ """
-    exploration_module = MPCExplorationOracle(safempc,env)
-    
+    if static_exploration:
+        exploration_module = StaticMPCExplorationOracle(safempc,env)
+    else:
+        exploration_module = DynamicMPCExplorationOracle(safempc,env)
+        
     inf_gain = np.empty((n_iterations,env.n_s))
     sigm_sum = np.empty((n_iterations,1)) #the sum of the confidence intervals
     sigm = np.empty((n_iterations,env.n_s)) #the individual confidence intervals
     z_all = np.empty((n_iterations,env.n_s+env.n_u))
-    x_next_obs = np.empty((n_iterations,env.n_s))
+    x_next_obs_all = np.empty((n_iterations,env.n_s))
     x_next_pred = np.empty((n_iterations,env.n_s))
     x_next_prior = np.empty((n_iterations,env.n_s))
     
+    x_i = None
+    if not static_exploration:
+        x_i = env.p_origin
+        env.reset(x_i)
+        
     for i in range(n_iterations):
         ## find the most informative sample
-        exploration_module.init_solver()
         safempc = exploration_module.safempc
-        x_i, u_i, sigm_i = exploration_module.find_max_variance(n_restarts = n_restarts_optimizer)
+        exploration_module.init_solver()
+        
+        # in case of static exploration, the input (current state of the system)
+        # doesn't have any effect
+        x_i, u_i = exploration_module.find_max_variance(x_i)
         
         ## Apply to system and observe next state 
-        env.reset(x_i.squeeze(),0)
-        _,_,x_plus_obs,_ = env.step(u_i.squeeze())
         
-        x_next_obs[i,:] = x_plus_obs 
+        #only reset the system tp a different state in static mode
+        if static_exploration:
+            env.reset(x_i.squeeze(),0)
+            
+        _,x_next,x_next_obs,_ = env.step(u_i.squeeze())
+        
+        x_next_obs_all[i,:] = x_next_obs 
          
-        z_i = np.vstack((x_i,u_i)).T         
-        
         ## gather some information
+        z_i = np.vstack((x_i,u_i)).T
         z_all[i] = z_i.squeeze()
         mu_next,s2_next = safempc.gp.predict(z_i)
-        sigm[i] = np.sqrt(s2_next).squeeze() 
+        pred_conf = np.sqrt(s2_next)
+        sigm[i] = pred_conf.squeeze() 
         x_next_prior[i,:] = safempc.eval_prior(x_i.T,u_i.T).squeeze()
         x_next_pred[i,:] = mu_next.squeeze() + safempc.eval_prior(x_i.T,u_i.T).squeeze()      
-        sigm_sum[i] = sigm_i
+        sigm_sum[i] = np.sum(pred_conf)
         
         #update model and information gain
-        exploration_module.update_model(z_i,x_plus_obs.reshape((1,env.n_s)),train = train_model)  
+        exploration_module.update_model(z_i,x_next_obs.reshape((1,env.n_s)),train = conf.retrain_gp)  
         inf_gain[i,:] = exploration_module.get_information_gain()
-
+        
+        x_i = x_next
+        
     if not save_path is None:
-        results_dict = save_results(save_path,sigm_sum,sigm,inf_gain,z_all,x_next_obs,x_next_pred,x_next_prior)
+        results_dict = save_results(save_path,sigm_sum,sigm,inf_gain,z_all, \
+                                    x_next_obs_all,x_next_pred,x_next_prior,safempc.gp)
         
         
     if save_vis:
@@ -67,21 +85,30 @@ def run_exploration(env, safempc,
         save_plots(save_path,sigm_sum,sigm,inf_gain,z_all,env) 
 
         
-def save_results(save_path,sigm_sum,sigm,inf_gain,z_all,x_next_obs,x_next_pred,x_next_prior):
+def save_results(save_path,sigm_sum,sigm,inf_gain,z_all,x_next_obs_all,x_next_pred,x_next_prior,gp):
     """ Create a dictionary from the results and save it """
     results_dict = dict()
     results_dict["sigm_sum"] = sigm_sum
     results_dict["sigm"] = sigm
     results_dict["inf_gain"] = inf_gain
     results_dict["z_all"] = z_all
-    results_dict["x_next"] = x_next_obs
+    results_dict["x_next"] = x_next_obs_all
     results_dict["x_next_pred"] = x_next_pred
     results_dict["x_next_prior"] = x_next_prior
     save_data_path = "{}/res_data".format(save_path)
     np.save(save_data_path,results_dict)
     
+    gp_dict = gp.to_dict()
+    save_data_gp_path = "{}/res_gp".format(save_path)
+    np.save(save_data_gp_path,gp_dict)
+    
+    
     return results_dict
     
+""" 
+From here on visualization functions
+
+"""    
 def save_plots(save_path,sigm_sum,sigm,inf_gain,z_all,env):
     """ """
     n_it = np.shape(inf_gain)[0]
@@ -108,12 +135,6 @@ def save_plots(save_path,sigm_sum,sigm,inf_gain,z_all,env):
     plt.savefig(path_sampleset)
     
     ##information gain plot 
-""" 
-From here on visualization functions
 
-"""
 
-def get_information_gain_plot():
-    """ """
-    raise NotImplementedError("Still need to implement this")    
     

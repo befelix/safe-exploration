@@ -13,9 +13,12 @@ from casadi.tools import *
 from casadi import reshape as cas_reshape
 from gp_reachability_casadi import multi_step_reachability, onestep_reachability
 
-class MPCExplorationOracle:
+class StaticMPCExplorationOracle:
     """ Oracle which finds informative samples
-    similar to the GP-UCB setting but with safety constraint and MPC setting
+    similar with safety constraint and MPC setting.
+    
+    In this setting, the sample path doesn't have to be physically connected
+    (i.e. we don't have a exploration trajectory but a set of distinct samples)
     
     Attributes
     ----------
@@ -86,11 +89,8 @@ class MPCExplorationOracle:
         _,sigm = gp.predict_casadi_symbolic(vertcat(x_0,u_0).T)
         c = -sum2(sqrt(sigm)) 
         
-        
-        
-        
         prob = {'f':c,'x': opt_vars,'p':opt_params,'g':g}
-        opt = {'ipopt':{'hessian_approximation':'limited-memory',"max_iter":60,"expect_infeasible_problem":"yes"}} #ipopt 
+        opt = {'ipopt':{'hessian_approximation':'limited-memory',"max_iter":80,"expect_infeasible_problem":"yes"}} #ipopt 
        
         solver = nlpsol("solver","ipopt",prob,opt)
         
@@ -137,7 +137,7 @@ class MPCExplorationOracle:
             
             if self.T > 1:
                 if ilqr_init:
-                    u_0, k_fb_0, k_ff_0 = self.safempc.init_ilqr(x_0,self.env.p_origin,self.env.p_origin)
+                    u_0, k_fb_0, k_ff_0 = self.safempc.init_ilqr(x_0,self.env.p_origin)
                     k_fb_ctrl_0 = np.zeros((self.n_s*self.n_u,1))
                     k_fb_0 = cas_reshape(k_fb_0,(-1,1))
                 else:
@@ -169,7 +169,7 @@ class MPCExplorationOracle:
                     if verbosity > 0:
                         print("new optimal sigma found at iteration {}".format(i))
                         
-        return x_best, u_best, sigma_best
+        return x_best, u_best
         
     def update_model(self,x,y,train = False,replace_old = False):
         """ Simple wrapper around the update_model function of SafeMPC"""
@@ -182,3 +182,48 @@ class MPCExplorationOracle:
         """ """
         return np.all(g > lbg - feas_tol  ) and np.all(g < ubg + feas_tol )
             
+            
+class DynamicMPCExplorationOracle:
+    """ """
+    
+    
+    def __init__(self,safempc, env):
+        """ Initialize with a pre-defined safempc object"""
+        self.safempc = safempc
+        self.env = env
+        self.n_s = safempc.n_s 
+        self.n_u = safempc.n_u
+        self.T = safempc.n_safe
+        
+        
+    def init_solver(self):
+        """ """
+        
+        cost = None
+        self.safempc.init_solver(cost)
+        
+        
+    def find_max_variance(self,x_0):
+        
+        u_apply, success = self.safempc.get_action(x_0,self.env.p_origin)
+        
+        return x_0[:,None], u_apply[:,None]
+        
+    def _get_cost_function(self,p_0,u_0,p_all,k_ff_all):
+        """ define cost function for the safempce exploration problem
+        
+        Define an exploration objective function with the ellipsoid centers and feedforward
+        terms as inputs.
+        
+        For now simlpy use -\sigm(p_all[0],k_ff_all[0]) for now (corresponding to argmin \sigm(x,u)))
+        which is the default cost function in the safempc settings
+        """
+        
+        raise NotImplementedError("For now we are happy with the default cost function of the safempc class")
+        
+    def update_model(self,x,y,train = False,replace_old = False):
+        """ Simple wrapper around the update_model function of SafeMPC"""
+        self.safempc.update_model(x,y,train,replace_old)
+        
+    def get_information_gain(self):
+        return self.safempc.gp.information_gain()
