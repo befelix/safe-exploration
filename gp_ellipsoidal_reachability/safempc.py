@@ -9,13 +9,14 @@ import casadi as cas
 import warnings
 import sys
 import scipy
+import gp_reachability
 
 from casadi import SX, mtimes, vertcat, sum2, sqrt
 from casadi import reshape as cas_reshape
 from gp_reachability_casadi import multi_step_reachability as cas_multistep
 from gp_reachability_casadi import onestep_reachability, lin_ellipsoid_safety_distance, objective
 from gp_reachability import multistep_reachability
-from utils import dlqr
+from utils import dlqr, feedback_ctrl
 
 from ilqr_cython import CILQR
 
@@ -28,7 +29,7 @@ class SafeMPC:
     
     def __init__(self, n_safe, n_perf, gp, l_mu, l_sigma, h_mat_safe, h_safe, wx_cost, wu_cost, dt,beta_safety = 2.5,
                  h_mat_obs= None, h_obs = None,
-                 rhc = True, ilqr_init = True, lin_model = None, ctrl_bounds = None,
+                 rhc = True, ilqr_init = False, lin_model = None, ctrl_bounds = None,
                  safe_policy = None):
         """ Initialize the SafeMPC object with dynamic model information
         
@@ -109,9 +110,18 @@ class SafeMPC:
         if ilqr_init:
             self.init_ilqr_initializer()
             
-    def init_solver(self):
+    def init_solver(self, cost_func = None):
         """ Initialize a casadi solver object with safety bounds information
         
+        Parameters:
+        -----------
+        cost_func: Function
+            A function which admits casadi.SX type inputs
+            and returns a scalar function
+            If performance controls exist function has to be of the form:
+                cost_func(p_all,k_ff_all,x_perf,u_perf)
+            otherwise:
+                cost_func(p_all,k_ff_all)
         """     
         x_cstr_scaling = 1        
         
@@ -126,11 +136,9 @@ class SafeMPC:
         g_name = []
         
         p_0 = SX.sym("initial state",(self.n_s,1))
-        x_target = SX.sym("target state",(self.n_s,1)) 
         
         k_fb_0 = SX.sym("base feedback matrices",(self.n_safe-1,self.n_s*self.n_u))
         
-         
         p_all, q_all = cas_multistep(p_0,u_0,k_fb_0,k_fb_ctrl,k_ff_all,self.gp,self.l_mu,self.l_sigma,self.beta_safety,self.a,self.b)
         
         g_safe, lbg_safe,ubg_safe, g_names_safe = self.generate_safety_constraints(p_all,q_all,u_0,k_fb_0,k_fb_ctrl,k_ff_all)
@@ -158,26 +166,30 @@ class SafeMPC:
                     g_name += ["ctrl_constr_performance_{}".format(i)]
             u_perf = u_perf.reshape((-1,1))
         
-        cost = 0
-        if self.n_perf > 1:
-            for i in range(self.n_perf):
-                cost += mtimes((x_perf[i,:].T-x_target).T,mtimes(self.wx_cost,x_perf[i,:].T-x_target))
+        if cost_func is None:
+            cost = 0
+            if self.n_perf > 1:
+                n_cost_deviation = np.minimum(self.n_perf-1,self.n_safe-1)
+                for i in range(1,n_cost_deviation):
+                    cost += mtimes(x_perf[i,:]-p_all[i,:],mtimes(.1*self.wx_cost,(x_perf[i,:]-p_all[i,:]).T))
+            #objective(x_perf,q_all,x_target,k_ff_all,self.wx_cost,self.wu_cost)
+                    
+            _,sigm = self.gp.predict_casadi_symbolic(vertcat(p_0,u_0).T)
+            cost += -sum2(sqrt(sigm))        
+        else:
+            
+            if self.n_perf > 1:
+                cost = cost_func(p_0,u_0,p_all,k_ff_all,x_perf,u_perf)
+            else:
+                cost = cost_func(p_0,u_0,p_all,k_ff_all)
                 
-            n_cost_deviation = np.minimum(self.n_perf-1,self.n_safe-1)
-            for i in range(1,n_cost_deviation):
-                cost += mtimes(x_perf[i,:]-p_all[i,:],mtimes(.1*self.wx_cost,(x_perf[i,:]-p_all[i,:]).T))
-        #objective(x_perf,q_all,x_target,k_ff_all,self.wx_cost,self.wu_cost)
-                
-        _,sigm = self.gp.predict_casadi_symbolic(vertcat(p_0,u_0).T)
-        cost += -sum2(sqrt(sigm))        
-        
         opt_vars = vertcat(u_0,u_perf,k_ff_all.reshape((-1,1)),k_fb_ctrl.reshape((-1,1)))
-        opt_params = vertcat(p_0,x_target,k_fb_0.reshape((-1,1)))
+        opt_params = vertcat(p_0,k_fb_0.reshape((-1,1)))
         
         prob = {'f':cost,'x': opt_vars,'p':opt_params,'g':g}
-        opt = {'ipopt':{'hessian_approximation':'limited-memory',"max_iter":40,"expect_infeasible_problem":"yes"}} #ipopt 
-        #opt = {'qpsol':'qpoases','max_iter':80,'hessian_approximation':'limited-memory'} #sqpmethod #,'hessian_approximation':'limited-memory'
-        solver = cas.nlpsol('solver','ipopt',prob,opt)
+        #opt = {'ipopt':{'hessian_approximation':'limited-memory',"max_iter":120,"expect_infeasible_problem":"yes"}} #ipopt 
+        opt = {'qpsol':'qpoases','max_iter':80,'hessian_approximation':'limited-memory'}#,"c1":5e-4} #sqpmethod #,'hessian_approximation':'limited-memory'
+        solver = cas.nlpsol('solver','sqpmethod',prob,opt)
         
         self.solver = solver
         self.lbg = lbg
@@ -379,7 +391,7 @@ class SafeMPC:
         return k_fb.reshape((1,self.n_s*self.n_u))
            
     def get_trajectory_openloop(self,x_0 , k_fb = None, k_ff = None, get_controls = False):
-        """ Plan a trajectory based on an initial state and a set of controls
+        """ Compute a trajectory of ellipsoids based on an initial state and a set of controls
         
         Parameters
         ----------
@@ -425,7 +437,7 @@ class SafeMPC:
           
         return p_all, q_all
         
-    def get_action(self,x0_mu, x_target, x_safe, lqr_only = False):
+    def get_action(self,x0_mu, x_safe, lqr_only = False,sol_verbose = False):
         """ Wrapper around the solve function 
         
         Parameters
@@ -449,11 +461,16 @@ class SafeMPC:
             
             return u_apply, safety_failure
             
-        u_apply, success = self.solve(x0_mu[:,None],x_target[:,None],x_safe[:,None])
+        if sol_verbose: 
+            u_apply, feasible, success, k_fb_apply, k_ff_all, p_all, q_all = self.solve(x0_mu[:,None],x_safe[:,None],sol_verbose=True)
+            return u_apply.reshape(self.n_u,), feasible, success, k_fb_apply, k_ff_all, p_all, q_all
+            
+        else:
+            u_apply, success = self.solve(x0_mu[:,None],x_safe[:,None])
         
-        return u_apply.reshape(self.n_u,), success
+            return u_apply.reshape(self.n_u,), success
         
-    def solve(self,p_0, p_target, p_safe, k_ff_all_0 = None, k_fb_all_0 = None, sol_verbose = False):
+    def solve(self,p_0, p_safe, k_ff_all_0 = None, k_fb_all_0 = None, sol_verbose = False):
         """ Solve the MPC problem for a given set of input parameters
         
         
@@ -461,8 +478,6 @@ class SafeMPC:
         ----------
         p_0: n_s x 1 array[float]
             The initial (current) state
-        p_target n_s x 1 array[float]
-            The target state
         p_safe n_s x 1 array[float]
             A safe state we may want to return to (required for ilqr initialization)
         k_ff_all_0: n_safe x n_u  array[float], optional
@@ -483,17 +498,29 @@ class SafeMPC:
         assert self.solver_initialized, "Need to initialize the solver first!"
         
         
-        u_0, k_ff_all_0, k_fb_0, u_perf_0, k_fb_ctrl_0  = self._get_init_controls(p_0,p_target,p_safe)
+        u_0, k_ff_all_0, k_fb_0, u_perf_0, k_fb_ctrl_0  = self._get_init_controls(p_0,p_safe)
         
-        params = np.vstack((p_0,p_target,cas_reshape(k_fb_0,(-1,1))))
-        u_init = vertcat(cas_reshape(u_0,(-1,1)),cas_reshape(u_perf_0,(-1,1)), \
+        if u_perf_0 is None:
+            u_perf_0 = []
+        else:
+            u_perf_0 = cas_reshape(u_perf_0,(-1,1))
+        params = np.vstack((p_0,cas_reshape(k_fb_0,(-1,1))))
+        u_init = vertcat(cas_reshape(u_0,(-1,1)),u_perf_0, \
                          cas_reshape(k_ff_all_0,(-1,1)),cas_reshape(k_fb_ctrl_0,(-1,1)))
         
-        sol = self.solver(x0=u_init,lbg=self.lbg,ubg=self.ubg,p=params)
-        return self._get_solution(p_0,sol,k_fb_0,sol_verbose)
+        crash = False
+
+        try:
+            sol = self.solver(x0=u_init,lbg=self.lbg,ubg=self.ubg,p=params)
+        except:
+            crash = True
+            warnings.warn("NLP solver crashed, solution infeasible")
+            sol = None
+
+        return self._get_solution(p_0,sol,k_fb_0,sol_verbose,crash)
         
         
-    def _get_solution(self,x_0,sol, k_fb_0, sol_verbose = False,feas_tol = 1e-4):
+    def _get_solution(self,x_0,sol, k_fb_0, sol_verbose = False,crashed=False,feas_tol = 1e-6):
         """ Process the solution dict of the casadi solver 
         
         Processes the solution dictionary of the casadi solver and 
@@ -521,21 +548,25 @@ class SafeMPC:
         h_values: (m_obs*n_safe + m_safe) x 0 array[float], optional
             The values of the constraint evaluation (distance to obstacle)
         """
-        g_res = np.array(sol["g"]).squeeze()
+        
 
         success = True
         feasible = True
-        if np.any(np.array(self.lbg) - feas_tol > g_res ) or np.any(np.array(self.ubg) + feas_tol < g_res ):      
+        if crashed:
             feasible = False
+        else:
+            g_res = np.array(sol["g"]).squeeze()
+            if np.any(np.array(self.lbg) - feas_tol > g_res ) or np.any(np.array(self.ubg) + feas_tol < g_res ):      
+                feasible = False
+                
+            if self.verbosity > 1:
+                print("\n=== Constraint values:")
+                for i in range(len(g_res)):
+                    print(" constraint: {}, lbg: {}, g: {}, ubg: {} ".format(self.g_name[i],self.lbg[i],g_res[i],self.ubg[i]))
+                print("\n")
             
-        if self.verbosity > 1:
-            print("\n=== Constraint values:")
-            for i in range(len(g_res)):
-                print(" constraint: {}, lbg: {}, g: {}, ubg: {} ".format(self.g_name[i],self.lbg[i],g_res[i],self.ubg[i]))
-            print("\n")
-        
-        if self.verbosity > 0:
-            print("===== SOLUTION FEASIBLE: {} ========".format(feasible))
+            if self.verbosity > 0:
+                print("===== SOLUTION FEASIBLE: {} ========".format(feasible))
             
         if feasible:
             self.n_fail = 0
@@ -544,7 +575,9 @@ class SafeMPC:
             
             #get indices of the respective variables
             n_u_0 = self.n_u
-            n_u_perf = (self.n_perf-1)*self.n_u
+            n_u_perf = 0
+            if self.n_perf > 1:
+                n_u_perf = (self.n_perf-1)*self.n_u
             n_k_ff = (self.n_safe-1)*self.n_u
             n_k_fb_ctrl = self.n_s*self.n_u
             c=0
@@ -558,7 +591,7 @@ class SafeMPC:
             
             u_apply = np.array(x_opt[idx_u_0]).reshape((1,self.n_u))
             u_perf = np.array(cas_reshape(x_opt[idx_u_perf],(self.n_perf-1,self.n_u)))
-            u_perf_all = np.vstack((u_apply,u_perf))
+            u_perf_all = np.vstack((u_apply,u_perf))                                                
             k_safe = np.array(cas_reshape(x_opt[idx_k_ff],(self.n_safe-1,self.n_u)))
             k_ff_all = np.vstack((u_apply,k_safe))
             k_fb_ctrl = np.array(cas_reshape(x_opt[idx_k_fb],(1,self.n_u*self.n_s)))
@@ -567,9 +600,12 @@ class SafeMPC:
             k_fb_apply = np.empty((self.n_safe-1,self.n_u,self.n_s))
             for i in range(self.n_safe-1):
                 k_fb_apply[i] = cas_reshape(k_fb[i],(self.n_u,self.n_s))
-                
-            p_ctrl , _ = self.get_trajectory_openloop(x_0.squeeze(),k_fb_apply,k_ff_all)
             
+            #p_ctrl_cas, q_all_cas = cas_multistep(x_0,u_apply,k_fb_0,k_fb_ctrl
+            #f_multistep_cas = Function("f",[],[multi_step_reachability])
+            
+            p_ctrl , q_all = self.get_trajectory_openloop(x_0.squeeze(),k_fb_apply,k_ff_all)
+
             if self.rhc:
                 self.k_fb_all = k_fb_apply
                 self.k_ff_all = k_ff_all
@@ -581,16 +617,29 @@ class SafeMPC:
                 print("Infeasible solution!")
             
             self.n_fail += 1
+            q_all = None
+            k_fb_apply = None
+            k_ff_all = None
+            p_ctrl = None
+            
             if self.n_fail >= self.n_safe:
                 ## Too many infeasible solutions -> switch to safe controller
                 u_apply = self.safe_policy(x_0)
+                k_ff_all = u_apply
             else:
                 ## can apply previous solution
-                u_apply = self.get_old_solution(x_0)
+                if sol_verbose:
+                    u_apply,k_fb_apply, k_ff_all, p_ctrl = self.get_old_solution(x_0, get_ctrl_traj = True)
+                else:
+                    u_apply = self.get_old_solution(x_0)
+                    k_ff_all = u_apply
+                
+        if sol_verbose:
+            return u_apply, feasible, success, k_fb_apply, k_ff_all, p_ctrl, q_all
             
         return u_apply, success
         
-    def get_old_solution(self, x, k = None):
+    def get_old_solution(self, x, k = None, get_ctrl_traj = False):
         """ Shift previously obtained solutions in time and return solution to be applied
         
         Prameters
@@ -598,41 +647,67 @@ class SafeMPC:
         k: int, optional
             The number of steps to shift back in time. This is number is
             already tracked by the algorithm, so a custom value should be used with caution
-            
+        get_ctrl_traj: bool, optional
+            Return the safety trajectory state feedback ctrl laws in terms of k_fb,k_ff,p_ctrl
+        
         Returns
         -------
         u_apply: n_s x 0 1darray[float]
             The controls to be applied at the current time step
+            
+        if get_ctrl_traj:
+            k_fb_safe_traj: 
+                The feedback ctrls of the remaining safety trajectory
+            k_ff_safe_traj:
+                The current ff ctrl and the remaining ff ctrls of the safety trajectory
+            p_ctrl_safe_traj:
+                The 
+            
+            
+            
         """
-        if self.n_safe > self.n_safe:
+        if self.n_fail > self.n_safe:
             warnings.warn("There are no previous solution to be applied. Returning None")
             return None
-        k = self.n_fail
-        
+        if k is None:
+            k = self.n_fail
+            
+        if k < 1:
+            warnings.warn("Have to shift at least one timestep back")
+            return None
+
         k_fb_old = self.k_fb_all[k-1]
         k_ff = self.k_ff_all[k,:,None]
         p_ctrl = self.p_ctrl[k-1,:,None]
         
-        return self.feedback_ctrl(x,k_ff,k_fb_old,p_ctrl)
-        
-    def feedback_ctrl(self,x,k_ff,k_fb = None,p=None):
-        """ The feedback control structure """
-        
-        if k_fb is None:
-            return k_ff
+        u_apply = feedback_ctrl(x,k_ff,k_fb_old,p_ctrl)
+        if get_ctrl_traj:
+            k_fb_safe_traj = None
+            k_ff_safe_traj = u_apply
+            p_ctrl_safe_traj = None
             
-        return np.dot(k_fb,(x-p)) + k_ff
+            if k < self.n_safe:
+                k_fb_safe_traj = self.k_fb_all[k:,:]
+                #in accordance to the structure current ctrl u_apply is part of the k_ff ctrl trajectory
+                k_ff_safe_traj = np.vstack((u_apply,self.k_ff_all[k+1:,:]))
+                p_ctrl_safe_traj = self.p_ctrl[k:,:]
+                
+            return u_apply, k_fb_safe_traj, \
+                k_ff_safe_traj, p_ctrl_safe_traj
+            
+        return u_apply
         
-    def init_ilqr(self,x_0,p_target,p_safe):
+    def init_ilqr(self,x_0,p_safe,eps_noise = 1e-5):
         """ Solve a iLQR problem to compute initial values for the MPC problem"""
         ilqr_initializer = self.ilqr_initializer
-        ilqr_initializer.cost.x_target = p_target
+        ilqr_initializer.cost.x_target = p_safe
         ilqr_initializer.cost.x_safe = p_safe
         if self.rhc and self.n_fail == 0:
             u_old = self.k_ff_all
             u_0 = np.vstack((u_old[1:],np.zeros((1,self.n_u))))
         else:
             u_0 = np.zeros((self.n_safe,self.n_u))
+
         _,u_ilqr,_,k_fb_ilqr,k_ilqr,alpha_opt = ilqr_initializer.ilqr(x_0,u_0)
         
         k_fb_0 = np.empty((self.n_safe-1,self.n_s*self.n_u))
@@ -641,8 +716,11 @@ class SafeMPC:
         k_ff_0 = u_ilqr[1:,:]
         
         for i in range(self.n_safe-1):
-            k_fb_0[i] = cas_reshape(k_fb_ilqr[i+1],(1,self.n_s*self.n_u))
+            k_fb_0_i = cas_reshape(k_fb_ilqr[i+1],(1,self.n_s*self.n_u))
             
+            if np.allclose(k_fb_0_i,0.0): #add noise in case feedback is zero
+                k_fb_0_i += cas_reshape(eps_noise*np.eye(self.n_u,self.n_s),(1,self.n_s*self.n_u))
+            k_fb_0[i] = k_fb_0_i
             if self.verbosity > 1:
                 if i == 0:
                     print("\nu_0:")
@@ -652,32 +730,45 @@ class SafeMPC:
                 print(u_ilqr[i+1])
         return u_0,k_fb_0, k_ff_0 
         
-    def _get_init_controls(self,x_0,p_target,p_safe):
+    def _get_init_controls(self,x_0,p_safe):
         """ Initialize the controls for the MPC step
         
+            TO-DO: hard-coded initial actions are not a good idea!
         """
        
+        u_perf_0 = None
+        
         if self.ilqr_init:
             
-            u_0, k_fb_0, k_ff_all_0 = self.init_ilqr(x_0,p_target,p_safe)
+            u_0, k_fb_0, k_ff_all_0 = self.init_ilqr(x_0,p_safe)
             
             k_fb_ctrl_0 = np.zeros((self.n_s*self.n_u,1))
-            if self.do_shift_solution and self.n_fail == 0:
-                u_perf_old = np.copy(self.u_perf_all)
-                u_perf_0 = np.vstack((u_perf_old[2:,:],np.zeros((1,self.n_u))))
-            else:
-                u_perf_0 = np.zeros((self.n_perf-1,self.n_u))
+            
+            u_perf_0 = None
+            if self.n_perf > 1:
+                if self.do_shift_solution and self.n_fail == 0:
+                    u_perf_old = np.copy(self.u_perf_all)
+                    u_perf_0 = np.vstack((u_perf_old[2:,:],np.zeros((1,self.n_u))))
+                else:
+                    u_perf_0 = np.zeros((self.n_perf-1,self.n_u))
         else:
+            k_fb_ctrl_0 = np.random.randn(self.n_s*self.n_u,1)
+            k_fb_0 = np.zeros((self.n_safe-1,self.n_s*self.n_u))
+            
             if self.do_shift_solution and self.n_fail == 0:
                 k_ff_old = np.copy(self.k_ff_all) 
                 u_perf_old = np.copy(self.u_perf_all)
                 u_0 = (k_ff_old[0,:] + u_perf_old[0,:])/2
                 k_ff_all_0 = np.vstack((k_ff_old[2:,:],np.zeros((1,self.n_u))))  
-                u_perf_0 = np.vstack((u_perf_old[2:,:],np.zeros((1,self.n_u))))  
+                
+                if self.n_perf > 1:
+                    u_perf_0 = np.vstack((u_perf_old[2:,:],np.zeros((1,self.n_u))))  
             else:
                 k_ff_all_0 = 2*np.random.randn(self.n_safe-1,self.n_u)
-                u_perf_0 = 2*np.random.randn(self.n_perf-1,self.n_u)
                 u_0 = 2*np.random.randn(self.n_u,1)
+                
+                if self.n_perf > 1:                    
+                    u_perf_0 = 2*np.random.randn(self.n_perf-1,self.n_u)
                     
         return u_0, k_ff_all_0, k_fb_0, u_perf_0, k_fb_ctrl_0 
                 
