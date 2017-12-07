@@ -10,9 +10,11 @@ import numpy.linalg as nLa
 import GPy
 import casadi as cas
 import casadi.tools as ctools
+import warnings
 
+from utils import rgetattr,rsetattr
 from gp_models_utils_casadi import gp_pred_function
-from GPy.kern import RBF, Linear
+from GPy.kern import RBF, Linear, Matern52
 
 class SimpleGPModel():
     """ Simple Wrapper around GPy 
@@ -67,11 +69,10 @@ class SimpleGPModel():
             The dictionary containing the following entries:
             
         """
-        
         if "data_path" in gp_dict:
             data_path = gp_dict["data_path"]
             data = np.load(data_path)
-            x = data["X"]
+            x = data["S"]
             y = data["y"]
         elif "x" in gp_dict and "y" in gp_dict:
             x = gp_dict["x"]
@@ -91,7 +92,7 @@ class SimpleGPModel():
         if "m" in gp_dict:
             m = gp_dict["m"]
         
-        kern_type = None
+        kern_types = None
         if "kern_types" in gp_dict:
             kern_types = gp_dict["kern_types"]
         
@@ -108,9 +109,9 @@ class SimpleGPModel():
     def to_dict(self):
         """ return a dict summarizing the object """
         gp_dict = dict()
-        gp_dict["x_train"] = self.x_train        
-        gp_dict["y_train"] = self.y_train
-        gp_dict["kern_type"] = self.kern_type
+        gp_dict["x"] = self.x_train        
+        gp_dict["y"] = self.y_train
+        gp_dict["kern_types"] = self.kern_types
         gp_dict["hyp"] = self.hyp
         gp_dict["beta"] = self.beta
         gp_dict["inv_K"] = self.inv_K
@@ -214,8 +215,8 @@ class SimpleGPModel():
         
         Parameters
         ----------
-        kern_type: str
-            The name of the kernel
+        kern_types: n_s x 0 array_like[str]
+            The names of the kernels for each dimension
             
         Returns
         -------
@@ -237,22 +238,27 @@ class SimpleGPModel():
                 
         else:
             for i in range(self.n_s):
+                hyp_i = hyp[i]
                 if kern_types[i] == "rbf":
                     kern_i = RBF(input_dim, ARD = True)
-                    hyp_i = hyp[i]
-                    if not hyp_i is None:
-                        if "rbf_lengthscales" in hyp_i:
-                            kern_i.lengthscale = hyp_i["rbf_lengthscales"]
-                            kern_i.lengthscale.fix()
-                        
-                        if "rbf_variance" in hyp_i:
-                            kern_i.variance = hyp_i["rbf_variance"]
-                            kern_i.variance.fix()
-                    kerns[i] = kern_i        
-                elif kern_type == "prod_lin_rbf":
-                    raise NotImplementedError("")
+                elif kern_types[i] == "lin_rbf":
+                    kern_i = Linear(1,active_dims = [1])*RBF(1,active_dims=[1]) + Linear(input_dim,ARD=True)
+                elif kern_types[i] == "lin_mat52":
+                    kern_i = Linear(1,active_dims = [1])*Matern52(1,active_dims=[1]) + Linear(input_dim,ARD=True)
                 else:
-                    raise ValueError("kernel type '{}' not supported".format(kern_type))
+                    raise ValueError("kernel type '{}' not supported".format(kern_types[i]))
+                    
+                if not hyp_i is None:
+                    for k,v in hyp_i.items():
+                        try:
+                            rsetattr(kern_i,k,v)
+                            kern_hyp = rgetattr(kern_i,k)
+                            kern_hyp.fix()
+
+                        except:
+                            warnings.warn("Cannot set and fix hyperparameter: {}".format(k))
+                kerns[i] = kern_i
+                
         self.base_kerns = kerns
         self.kern_types = kern_types
         
@@ -274,29 +280,34 @@ class SimpleGPModel():
         """
         
         hyp = [None]*self.n_s
-       
+        
         for i in range(self.n_s):
+                hyp_i = dict()
                 if kern_types[i] == "rbf":          
-                    hyp_i = dict()
-                    hyp_i["rbf_lengthscales"] = np.reshape(gps[i].kern.lengthscale,(-1,))
-                    hyp_i["rbf_variance"] = gps[i].kern.variance
-                    hyp[i] = hyp_i
+                    
+                    hyp_i["lengthscale"] = np.reshape(gps[i].kern.lengthscale,(-1,))
+                    hyp_i["variance"] = gps[i].kern.variance
             
-                elif kern_types[i] == "prod_lin_rbf":
-                
-                    hyp_i = dict()
-                    hyp_i["rbf_lengthscales"] = np.reshape(gps[i].kern.rbf.lengthscale,(-1,))
-                    hyp_i["rbf_variance"] = gps[i].kern.rbf.variance
-                    hyp_i["lin_variances"] = np.array([gps[i].kern.linear.variances]*(self.n_s+self.n_u))
-                    hyp[i] = hyp_i
+                elif kern_types[i] == "lin_rbf":
+
+                    hyp_i["prod.rbf.lengthscale"] = np.array([gps[i].kern.mul.rbf.lengthscale])
+                    hyp_i["prod.rbf.variance"] = gps[i].kern.mul.rbf.variance
+                    hyp_i["prod.linear.variances"] = np.array(gps[i].kern.mul.linear.variances)
+                    hyp_i["linear.variances"] = np.array([gps[i].kern.linear.variances])
+                    
+                elif kern_types[i] == "lin_mat52":
+                    hyp_i["prod.mat52.lengthscale"] = np.array([gps[i].kern.mul.Mat52.lengthscale])
+                    hyp_i["prod.mat52.variance"] = gps[i].kern.mul.Mat52.variance
+                    hyp_i["prod.linear.variances"] = np.array(gps[i].kern.mul.linear.variances)
+                    hyp_i["linear.variances"] = np.array([gps[i].kern.linear.variances])
                 else:
                     raise ValueError("kernel type not supported")
-        
+                hyp[i] = hyp_i
         return hyp
                 
     def predict(self,x_new,quantiles = None,compute_gradients = False):
         """ Compute the predictive mean and variance for a set of test inputs
-        
+            
         
         """
         assert self.gp_trained,"Cannot predict, need to train the GP first!" 
