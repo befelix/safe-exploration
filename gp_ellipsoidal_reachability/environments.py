@@ -180,11 +180,7 @@ class InvertedPendulum(Environment):
         action = action * self.norm[1]
 
         sol = odeint(one_step_dyn,state,np.array([0.0,self.dt]),args=tuple(action))
-
         next_state = sol[1,:]
-
-        print(self.state_to_obs(next_state))
-        print(next_state*self.inv_norm[0])
         
         return self.state_to_obs(next_state),self.state_to_obs(next_state,True)
         
@@ -409,12 +405,10 @@ class InvertedPendulum(Environment):
             warnings.warn("plot_safety_bounds doesn't plot anything")
         
         x_polygon = self.corners_polygon
-        print(x_polygon)
-        print(self.inv_norm)
         if normalize:
             m_x = np.diag(self.inv_norm[0])
             x_polygon = np.dot(x_polygon,m_x.T)
-        print(x_polygon)    
+ 
         if plot_safe_bounds:     
             ax.add_patch(mpatch.Polygon(x_polygon,fill = False))     
         if new_fig:
