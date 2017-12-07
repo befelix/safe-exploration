@@ -7,6 +7,7 @@ Created on Tue Nov 21 09:37:59 2017
 
 from exploration_oracle import StaticMPCExplorationOracle, DynamicMPCExplorationOracle
 from casadi import *
+from gp_reachability import verify_trajectory_safety, trajectory_inside_ellipsoid
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -19,10 +20,15 @@ def run_exploration(env, safempc,conf,
         n_restarts_optimizer = 20,
         visualize = False,
         save_vis = False,
-        save_path = None):          
+        save_path = None,
+        verify_safety = True):          
     """ """
     if static_exploration:
         exploration_module = StaticMPCExplorationOracle(safempc,env)
+        
+        if verify_safety:
+            warnings.warn("Safety_verification not possible in static mode")
+            verify_safety = False
     else:
         exploration_module = DynamicMPCExplorationOracle(safempc,env)
         
@@ -34,27 +40,62 @@ def run_exploration(env, safempc,conf,
     x_next_pred = np.empty((n_iterations,env.n_s))
     x_next_prior = np.empty((n_iterations,env.n_s))
     
-    x_i = None
-    if not static_exploration:
-        x_i = env.p_origin
-        env.reset(x_i)
+    if visualize:
+        fig, ax = env.plot_safety_bounds()
+        ell = None
+        
+    safety_all = None
+    inside_ellipsod= None    
+    if verify_safety:
+        safety_all = np.zeros((n_iterations,),dtype = np.bool)
+        inside_ellipsoid = np.zeros((n_iterations,safempc.n_safe))
+    if static_exploration:
+        x_i = None
+    else:
+        x_i = env.reset(env.p_origin)
         
     for i in range(n_iterations):
         ## find the most informative sample
         safempc = exploration_module.safempc
         exploration_module.init_solver()
         
-        # in case of static exploration, the input (current state of the system)
-        # doesn't have any effect
-        x_i, u_i = exploration_module.find_max_variance(x_i)
         
+        if verify_safety:
+            x_i, u_i, feasible, k_fb_all,k_ff_all,p_ctrl,q_all = exploration_module.find_max_variance(x_i,sol_verbose = True) 
+            
+            if feasible:
+                h_m_safe_norm,h_safe_norm,h_m_obs_norm,h_obs_norm = env.get_safety_constraints(normalize = True) 
+                safety_all[i],x_traj_safe = verify_trajectory_safety(env,x_i.squeeze(),k_fb_all, \
+                                            k_ff_all,p_ctrl,h_m_safe_norm,h_safe_norm,h_m_obs_norm,h_obs_norm)
+                inside_ellipsoid[i,:] = trajectory_inside_ellipsoid(env,x_i.squeeze(), p_ctrl,q_all,k_fb_all,k_ff_all)
+                
+                if visualize:
+                    if not ell is None:
+                        for j in range(len(ell)):
+                            ell[j].remove()
+                    ax, ell = env.plot_ellipsoid_trajectory(p_ctrl,q_all,ax = ax,color = "r")
+                    fig.canvas.draw()
+                    plt.show(block=False)
+                    plt.pause(0.5)
+        
+        else:
+            x_i, u_i = exploration_module.find_max_variance(x_i,n_restarts_optimizer)
+        
+        if visualize:
+            ax = env.plot_state(ax,x = x_i,normalize = False)
+            fig.canvas.draw()
+            plt.show(block=False)
+            plt.pause(0.25)
+            
         ## Apply to system and observe next state 
         
-        #only reset the system tp a different state in static mode
+        #only reset the system to a different state in static mode
         if static_exploration:
-            env.reset(x_i.squeeze(),0)
+            x_next,x_next_obs = env.simulate_onestep(x_i.squeeze(),u_i.squeeze())
+        else:
+            _,x_next,x_next_obs,_ = env.step(u_i.squeeze())
             
-        _,x_next,x_next_obs,_ = env.step(u_i.squeeze())
+        
         
         x_next_obs_all[i,:] = x_next_obs 
          
@@ -76,7 +117,8 @@ def run_exploration(env, safempc,conf,
         
     if not save_path is None:
         results_dict = save_results(save_path,sigm_sum,sigm,inf_gain,z_all, \
-                                    x_next_obs_all,x_next_pred,x_next_prior,safempc.gp)
+                                    x_next_obs_all,x_next_pred,x_next_prior, \
+                                    safempc.gp,safety_all)
         
         
     if save_vis:
@@ -85,7 +127,7 @@ def run_exploration(env, safempc,conf,
         save_plots(save_path,sigm_sum,sigm,inf_gain,z_all,env) 
 
         
-def save_results(save_path,sigm_sum,sigm,inf_gain,z_all,x_next_obs_all,x_next_pred,x_next_prior,gp):
+def save_results(save_path,sigm_sum,sigm,inf_gain,z_all,x_next_obs_all,x_next_pred,x_next_prior,gp,safety_all = None):
     """ Create a dictionary from the results and save it """
     results_dict = dict()
     results_dict["sigm_sum"] = sigm_sum
@@ -95,6 +137,9 @@ def save_results(save_path,sigm_sum,sigm,inf_gain,z_all,x_next_obs_all,x_next_pr
     results_dict["x_next"] = x_next_obs_all
     results_dict["x_next_pred"] = x_next_pred
     results_dict["x_next_prior"] = x_next_prior
+    if not safety_all is None:
+        results_dict["safety_all"] = safety_all
+    
     save_data_path = "{}/res_data".format(save_path)
     np.save(save_data_path,results_dict)
     
