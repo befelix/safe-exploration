@@ -99,7 +99,7 @@ class StaticMPCExplorationOracle:
         self.ubg = ubg
         self.T = T
         
-    def find_max_variance(self, n_restarts = 1,ilqr_init = False, 
+    def find_max_variance(self, x_0, n_restarts = 1,ilqr_init = False, 
                           sample_mean = None, 
                           sample_var = None, 
                           verbosity = 1, beta_safety = None):
@@ -130,7 +130,7 @@ class StaticMPCExplorationOracle:
         sigma_best = 0
         x_best = None
         u_best = None
-        
+
         for i in range(n_restarts):
             
             x_0 = self.env._sample_start_state(sample_mean,sample_var)[:,None] # sample initial state
@@ -155,7 +155,6 @@ class StaticMPCExplorationOracle:
             sol = self.solver(x0 = vars_0,p=params_0,lbg = self.lbg, ubg = self.ubg)
             
             f_opt = sol["f"]
-
             sigm_i = -float(f_opt)
             if sigm_i > sigma_best: # check if solution would improve upon current best
                 g_sol = np.array(sol["g"]).squeeze()
@@ -203,11 +202,14 @@ class DynamicMPCExplorationOracle:
         self.safempc.init_solver(cost)
         
         
-    def find_max_variance(self,x_0):
+    def find_max_variance(self,x_0,sol_verbose = False):
         
-        u_apply, success = self.safempc.get_action(x_0,self.env.p_origin)
-        
-        return x_0[:,None], u_apply[:,None]
+        if sol_verbose:
+            u_apply, feasible,_ ,k_fb, k_ff,p_ctrl,q_all = self.safempc.get_action(x_0,self.env.p_origin,sol_verbose = True)
+            return x_0[:,None], u_apply, feasible,k_fb, k_ff, p_ctrl,q_all
+        else:
+            u_apply, _ = self.safempc.get_action(x_0,self.env.p_origin)
+            return x_0[:,None], u_apply[:,None]
         
     def _get_cost_function(self,p_0,u_0,p_all,k_ff_all):
         """ define cost function for the safempce exploration problem
