@@ -8,7 +8,7 @@ import abc
 import numpy as np
 import warnings
 from utils_visualization import plot_ellipsoid_2D
-from scipy.integrate import ode
+from scipy.integrate import ode,odeint
 from scipy.signal import cont2discrete
 import matplotlib.patches as mpatch
 import matplotlib.pyplot as plt
@@ -56,7 +56,7 @@ class Environment:
         pass
      
     @abc.abstractmethod
-    def state_to_obs(self,current_state):
+    def state_to_obs(self,current_state = None):
         """ Transform the dynamics state to the state to be observed """
         pass
     
@@ -103,9 +103,10 @@ class InvertedPendulum(Environment):
     
     TODO: Need to define a safety/fail criterion
     """
-    def __init__(self,name = "InvertedPendulum", l = .5, m = .15, g = 9.82, b = .01,
+    def __init__(self,name = "InvertedPendulum", l = .5, m = .15, g = 9.82, b = 0.,
                  dt = .05, start_state = [0,0], init_std = .01, plant_noise = np.array([0.001,0.001])**2,
-                 u_min = np.array([-.8]), u_max = np.array([.8]),target = np.array([0.0,0.0])):
+                 u_min = np.array([-1.]), u_max = np.array([1.]),target = np.array([0.0,0.0]),
+                 verbosity = 1, norm_x = None, norm_u = None):
         """
         Parameters
         ----------
@@ -138,12 +139,25 @@ class InvertedPendulum(Environment):
         self.m = m
         self.g = g
         self.b = b
-        self.p_origin = np.array([0,0])
-        self.l_mu = np.array([0.05]*2) #TODO: This should be somewhere else
-        self.l_sigm = np.array([0.05]*2)
+        self.p_origin = np.array([0.0,0.0])
+        self.l_mu = np.array([0.1,.05]) #TODO: This should be somewhere else
+        self.l_sigm = np.array([0.1,.05])
         self.target = target
-        self._init_safety_bounds()
+       
+        self.verbosity = verbosity
         
+        max_deg = 30
+        if norm_x is None:
+            norm_x = np.array([np.sqrt(g/l), np.deg2rad(max_deg)])
+        
+        if norm_u is None:
+            norm_u = np.array([g*m*l*np.sin(np.deg2rad(max_deg))])
+            
+        self.norm = [norm_x,norm_u]
+        self.inv_norm = [arr ** -1 for arr in self.norm]
+        
+        self._init_safety_constraints()
+         
     def reset(self, mean = None, std = None):
         """ Reset the system and sample a new start state
         
@@ -154,6 +168,26 @@ class InvertedPendulum(Environment):
         self.odesolver.set_initial_value(self.current_state,0.0)
         
         return self.state_to_obs(self.current_state)
+        
+    def simulate_onestep(self, state, action):
+        """ """
+        
+        one_step_dyn = lambda s,t,a: self._dynamics(t,s,a).squeeze()
+        
+        
+        #unnormalize state and action
+        state = state*self.norm[0]
+        action = action * self.norm[1]
+
+        sol = odeint(one_step_dyn,state,np.array([0.0,self.dt]),args=tuple(action))
+
+        next_state = sol[1,:]
+
+        print(self.state_to_obs(next_state))
+        print(next_state*self.inv_norm[0])
+        
+        return self.state_to_obs(next_state),self.state_to_obs(next_state,True)
+        
         
     def _dynamics(self, t, state, action):
         """ Evaluate the system dynamics 
@@ -209,7 +243,7 @@ class InvertedPendulum(Environment):
         
         return np.vstack((jac_0,jac_1))
         
-    def linearize_discretize(self,x_center=None,u_center=None):
+    def linearize_discretize(self,x_center=None,u_center=None, normalize = True):
         """ Discretize and linearize the system around an equilibrium point
         
         Parameters
@@ -230,12 +264,40 @@ class InvertedPendulum(Environment):
         A_ct = jac_ct[:,:self.n_s]
         B_ct = jac_ct[:,self.n_s:]
         
+        if normalize:
+            m_x = np.diag(self.norm[0])
+            m_u = np.diag(self.norm[1])
+            m_x_inv = np.diag(self.inv_norm[0])
+            m_u_inv = np.diag(self.inv_norm[1])
+            A_ct = np.linalg.multi_dot((m_x_inv,A_ct,m_x))
+            B_ct = np.linalg.multi_dot((m_x_inv,B_ct,m_u))
+        
         ct_input = (A_ct,B_ct,np.eye(self.n_s),np.zeros((self.n_s,self.n_u)))
         A,B,_,_,_ = cont2discrete(ct_input,self.dt)
         
         return A,B
         
-    def state_to_obs(self, state, add_noise = False):
+    def normalize(self,state = None,action = None):
+        """ Normalize the inputs"""
+        if not state is None:
+            state = self.inv_norm[0]*state
+            
+        if not action is None:
+            action = self.inv_norm[1]*action
+            
+        return state, action
+        
+    def unnormalize(self,state = None, action = None):
+        """ Unnormalize the inputs"""
+        if not state is None:
+            state = self.norm[0]*state
+            
+        if not action is None:
+            action = self.norm[1]*action
+            
+        return state, action
+        
+    def state_to_obs(self, state = None, add_noise = False):
         """ Transform the dynamics state to the state to be observed
         
         Parameters
@@ -252,13 +314,18 @@ class InvertedPendulum(Environment):
             In the case of the inverted pendulum, this is the same.
         
         """
+        if state is None:
+            state = self.current_state
         noise = 0
         if add_noise:
             noise += np.random.randn(self.n_s)*np.sqrt(self.plant_noise)
-            
-        return state - self.p_origin + noise
         
-    def plot_state(self, ax, x = None, color = "b"):
+        state_noise = state + noise
+        state_norm = state_noise * self.inv_norm[0]
+           
+        return state_norm
+        
+    def plot_state(self, ax, x = None, color = "b",normalize =True):
         """ Plot the current state or a given state vector
         
         Parameters:
@@ -274,6 +341,8 @@ class InvertedPendulum(Environment):
         """ 
         if x is None:
             x = self.current_state
+            if normalize:
+                x,_ = self.normalize(x)
         assert len(x) == self.n_s, "x needs to have the same number of states as the dynamics"
         plt.sca(ax)
         ax.plot(x[0],x[1],"{}x".format(color))
@@ -316,7 +385,7 @@ class InvertedPendulum(Environment):
             
         return ax, handles
         
-    def plot_safety_bounds(self,ax = None, plot_safe_bounds = True):
+    def plot_safety_bounds(self,ax = None, plot_safe_bounds = True,plot_obs = False, normalize = True):
         """ Given a 2D axes object, plot the safety bounds on it 
     
         Parameters
@@ -339,12 +408,18 @@ class InvertedPendulum(Environment):
         if not (plot_safe_bounds or plot_obs):
             warnings.warn("plot_safety_bounds doesn't plot anything")
         
-        p_safe, width_safe, height_safe = self.get_safe_bounds()
+        x_polygon = self.corners_polygon
+        print(x_polygon)
+        print(self.inv_norm)
+        if normalize:
+            m_x = np.diag(self.inv_norm[0])
+            x_polygon = np.dot(x_polygon,m_x.T)
+        print(x_polygon)    
         if plot_safe_bounds:     
-            ax.add_patch(mpatch.Rectangle(p_safe,width_safe,height_safe,fill = False))     
+            ax.add_patch(mpatch.Polygon(x_polygon,fill = False))     
         if new_fig:
-            ax.set_xlim(p_safe[0]-.6,p_safe[0]+width_safe+.6)
-            ax.set_ylim(p_safe[1]-.3,p_safe[1]+height_safe+.3)
+            #ax.set_xlim(-2.,2.)
+            #ax.set_ylim(-.6,.6)
             
             return fig, ax
             
@@ -368,6 +443,7 @@ class InvertedPendulum(Environment):
         height_safe: float
             The height of the obstacle free rectangle               
         """
+        raise DeprecationWarning("We replace rectangles with polygons. Simpler for drawing")
         dtheta_max_safe = self.h_safe[0]
         dtheta_min_safe = -self.h_safe[1]
         theta_max_safe = self.h_safe[2]
@@ -384,19 +460,34 @@ class InvertedPendulum(Environment):
         
         Parameters
         ----------
-        action: 1x0 1darray[float]
+        action: n_u x 0 1darray[float]
+            The normalized(!) action
         """ 
-        action = np.clip(np.nan_to_num(action),self.u_min,self.u_max)
+        
+        action_clipped = np.clip(np.nan_to_num(action),self.u_min,self.u_max) #clip to normalized max action
+        action = self.norm[1] * action_clipped #unnormalize
+        
         self.odesolver.set_f_params(action)
+        old_state = np.copy(self.current_state)
         self.current_state = self.odesolver.integrate(self.odesolver.t+self.dt) 
         
         self.iteration += 1
         done = False
+        
         new_state_noise_obs = self.state_to_obs(np.copy(self.current_state),add_noise=True)
         new_state_obs = self.state_to_obs(np.copy(self.current_state))
         
         if self.odesolver.successful():
-            return action,new_state_obs,new_state_noise_obs,done
+            
+            if self.verbosity>0:
+                print("\n===Old state:")
+                print(old_state)
+                print("===Action:")
+                print(action)
+                print("===Next state:")
+                print(self.current_state)
+            
+            return action_clipped,new_state_obs,new_state_noise_obs,done
         raise ValueError("Odesolver failed!")
         
     def random_action(self):
@@ -408,22 +499,56 @@ class InvertedPendulum(Environment):
             A (valid) random action applied to the system.
         
         """
-        c = 0.1
+        c = 0.5
         return c*(np.random.rand(self.n_u) * (self.u_max - self.u_min) + self.u_min)
         
-    def _init_safety_bounds(self):
-        """ Get state and safety constraints"""
+    def _init_safety_constraints(self):
+        """ Get state and safety constraints
         
+        We define the state constraints as:
+            x_0 - 3*x_1 <= 1
+            x_0 - 3*x_1 >= -1
+            x_1 <= max_rad
+            x_1 >= -max_rad
+        """
+        
+        max_deg = 12
+        
+        max_rad = np.deg2rad(max_deg)
+        max_dtheta = .4
         h_mat_safe_dtheta = np.asarray([[1.,0.],[-1.,0.]])
-        h_safe_dtheta = np.array([.4,.4]).reshape(2,1)
+        h_safe_dtheta = np.array([max_dtheta,max_dtheta]).reshape(2,1)
         h_mat_safe_theta = np.asarray([[0.,1.],[0.,-1.]])
-        h_safe_theta = np.array([0.15,0.15]).reshape(2,1)
+        h_safe_theta = np.array([max_rad,max_rad]).reshape(2,1)
         
         
+        #normalize safety bounds
         self.h_mat_safe = np.vstack((h_mat_safe_dtheta,h_mat_safe_theta))
         self.h_safe = np.vstack((h_safe_dtheta,h_safe_theta))
         self.h_mat_obs = None#p.asarray([[0.,1.],[0.,-1.]])
         self.h_obs = None #np.array([.6,.6]).reshape(2,1)
+        
+        #upper left, lower 
+        self.corners_polygon = np.array([[max_dtheta,-max_rad],\
+                                           [max_dtheta,max_rad ],\
+                                           [ -max_dtheta,max_rad],\
+                                           [-max_dtheta,-max_rad]])
+                                           
+    def get_safety_constraints(self, normalize = True):
+        """ Return the safe constraints
+        
+        Parameters
+        ----------
+        normalize: boolean, optional
+            If TRUE: Returns normalized constraints
+        """
+        if normalize:
+            m_x= np.diag(self.norm[0])
+            h_mat_safe = np.dot(self.h_mat_safe,m_x)
+        else:
+            h_mat_safe = self.h_mat_safe
+            
+        return h_mat_safe,self.h_safe,self.h_mat_obs,self.h_obs
         
 if __name__ == "__main__":
     pend = InvertedPendulum()
