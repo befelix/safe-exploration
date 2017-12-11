@@ -36,7 +36,7 @@ def sample_inside_ellipsoid(samples,p_center,q_shape,c = 1.):
     
     
 def distance_to_center(samples,p_center,q_shape):
-    """ Get the of a set of samples to the center of the ellipsoid
+    """ Get the distance of a set of samples to the center of the ellipsoid
     
     
     Compute the distance:
@@ -55,7 +55,7 @@ def distance_to_center(samples,p_center,q_shape):
                                     (see above)
     """
     
-    p_centered = (samples - p_center.T).squeeze()
+    p_centered = (samples - p_center.T)
     d = np.sum(p_centered * sLa.solve(q_shape,p_centered.T).T, axis=1)
     
     return d
@@ -219,12 +219,12 @@ def ellipsoid_from_rectangle(u_b):
     """        
     u_b = np.asarray(u_b)
     assert u_b.ndim == 1, "lb and ub need to be 1-dimensional (1darrays)!"
-    assert np.all(u_b > 0), """all elements of u_bb need to be greater than zero!
+    assert np.all(u_b > 0), """all elements of u_b need to be greater than zero!
                             (otherwise the ellipsoid wouldnt be zero-centered) """
     n = len(u_b)   
     d = n*u_b**2
     q = np.diag(d)
-    
+
     return q
     
 if __name__ == "__main__":
@@ -232,7 +232,6 @@ if __name__ == "__main__":
     ub = [0.1,0.2,0.3]
     q = ellipsoid_from_rectangle(ub)
     x= np.array(ub)[:,None]
-    print(np.dot(x.T,np.linalg.solve(q,x)))
     
     q_1 = np.eye(3)
     q_2 = np.eye(3)
