@@ -341,7 +341,7 @@ class InvertedPendulum(Environment):
                 x,_ = self.normalize(x)
         assert len(x) == self.n_s, "x needs to have the same number of states as the dynamics"
         plt.sca(ax)
-        ax.plot(x[0],x[1],"{}x".format(color))
+        ax.plot(x[0],x[1],color = color,marker = "o",mew=1.2)
         return ax
         
     def plot_ellipsoid_trajectory(self,p,q, vis_safety_bounds = True,ax = None, color = "r"):
@@ -381,7 +381,8 @@ class InvertedPendulum(Environment):
             
         return ax, handles
         
-    def plot_safety_bounds(self,ax = None, plot_safe_bounds = True,plot_obs = False, normalize = True):
+    def plot_safety_bounds(self,ax = None, plot_safe_bounds = True,
+                           plot_obs = False, normalize = True, color = (0.,0.,0.)):
         """ Given a 2D axes object, plot the safety bounds on it 
     
         Parameters
@@ -409,11 +410,12 @@ class InvertedPendulum(Environment):
             m_x = np.diag(self.inv_norm[0])
             x_polygon = np.dot(x_polygon,m_x.T)
  
-        if plot_safe_bounds:     
-            ax.add_patch(mpatch.Polygon(x_polygon,fill = False))     
+        if plot_safe_bounds: 
+            ax.plot(x_polygon[:,0],x_polygon[:,1],color = color,linewidth = 2)
+            #ax.add_patch(mpatch.Polygon(x_polygon,fill = False))     
         if new_fig:
-            #ax.set_xlim(-2.,2.)
-            #ax.set_ylim(-.6,.6)
+            ax.set_xlim(-1.,1.)
+            ax.set_ylim(-1.5,1.5)
             
             return fig, ax
             
@@ -506,27 +508,35 @@ class InvertedPendulum(Environment):
             x_1 >= -max_rad
         """
         
-        max_deg = 12
+        max_deg = 15
+        max_dtheta = .5
         
         max_rad = np.deg2rad(max_deg)
-        max_dtheta = .4
-        h_mat_safe_dtheta = np.asarray([[1.,0.],[-1.,0.]])
-        h_safe_dtheta = np.array([max_dtheta,max_dtheta]).reshape(2,1)
-        h_mat_safe_theta = np.asarray([[0.,1.],[0.,-1.]])
-        h_safe_theta = np.array([max_rad,max_rad]).reshape(2,1)
         
+        # -max_dtheta <dtheta <= max_dtheta
+        h_0_mat = np.asarray([[1.,0.],[-1.,0.]])       
+        h_0_vec = np.array([max_dtheta,max_dtheta])[:,None]
+        
+        #  (1/.4)*dtheta + (2/.26)*theta <= 1
+        h_1_mat = np.asarray([1./max_rad,2./max_rad])[None,:]
+        h_1_vec = np.asarray([1.])[:,None]
+        
+        #  (1/.4)*dtheta + (2/.26)*theta  >= -1
+        h_2_mat = -h_1_mat
+        h_2_vec = h_1_vec        
         
         #normalize safety bounds
-        self.h_mat_safe = np.vstack((h_mat_safe_dtheta,h_mat_safe_theta))
-        self.h_safe = np.vstack((h_safe_dtheta,h_safe_theta))
+        self.h_mat_safe = np.vstack((h_0_mat,h_1_mat,h_2_mat))
+        self.h_safe = np.vstack((h_0_vec,h_1_vec,h_2_vec))
         self.h_mat_obs = None#p.asarray([[0.,1.],[0.,-1.]])
         self.h_obs = None #np.array([.6,.6]).reshape(2,1)
         
-        #upper left, lower 
-        self.corners_polygon = np.array([[max_dtheta,-max_rad],\
-                                           [max_dtheta,max_rad ],\
-                                           [ -max_dtheta,max_rad],\
-                                           [-max_dtheta,-max_rad]])
+        #arrange the corner points such that it can be ploted via a line plot
+        self.corners_polygon = np.array([[-max_dtheta,max_rad],\
+                                            [max_dtheta,0.0 ],\
+                                            [max_dtheta,-max_rad],\
+                                            [ -max_dtheta,0.0],\
+                                            [-max_dtheta,max_rad]])
                                            
     def get_safety_constraints(self, normalize = True):
         """ Return the safe constraints
