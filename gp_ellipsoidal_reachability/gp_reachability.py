@@ -6,9 +6,10 @@ Created on Wed Sep 20 11:13:29 2017
 """
 
 
-from utils_ellipsoid import sum_ellipsoids,ellipsoid_from_rectangle,sum_two_ellipsoids
-from utils import compute_remainder_overapproximations, print_ellipsoid
+from utils_ellipsoid import sum_ellipsoids,ellipsoid_from_rectangle,sum_two_ellipsoids, sample_inside_ellipsoid
+from utils import compute_remainder_overapproximations, print_ellipsoid, feedback_ctrl,sample_inside_polytope
 from numpy import sqrt,trace,zeros,diag, eye
+from casadi import reshape as cas_reshape
 #from casadi import *
 import warnings
 import numpy as np
@@ -61,7 +62,7 @@ def onestep_reachability(p_center,gp,k_ff,l_mu,l_sigma,q_shape = None,k_fb = Non
         
     if q_shape is None: # the state is a point
         u_p = k_ff
-        
+
         if verbose >0:
             print("\nApplying action:")
             print(u_p)
@@ -70,11 +71,11 @@ def onestep_reachability(p_center,gp,k_ff,l_mu,l_sigma,q_shape = None,k_fb = Non
         mu_0, sigm_0 = gp.predict(z_bar.T)
         rkhs_bounds = c_safety * np.sqrt(sigm_0).reshape((n_s,))
         
-        print(warnings.warn("Need to verify this!"))
         q_1 = ellipsoid_from_rectangle(rkhs_bounds)
         
         p_lin = np.dot(a,p_center) + np.dot(b,u_p)
         p_1 = p_lin + mu_0.T
+        
         
         if verbose >0:
             print_ellipsoid(p_1,q_1,text="uncertainty first state")
@@ -82,8 +83,6 @@ def onestep_reachability(p_center,gp,k_ff,l_mu,l_sigma,q_shape = None,k_fb = Non
         return p_1, q_1
     else: # the state is a (ellipsoid) set
         if verbose > 0:
-            print("????")
-            print(np.shape(q_shape))
             print_ellipsoid(p_center,q_shape,text="initial uncertainty ellipsoid")
         ## compute the linearization centers
         x_bar = p_center   # center of the state ellipsoid
@@ -136,7 +135,7 @@ def onestep_reachability(p_center,gp,k_ff,l_mu,l_sigma,q_shape = None,k_fb = Non
         p_1 , q_1 = sum_two_ellipsoids(p_sum_lagrange,Q_sum_lagrange,p_0,Q_0) 
         
         if verbose > 0:
-            print_ellipsoid(p_new,Q_new,text="accumulated uncertainty current step")
+            print_ellipsoid(p_1,q_1,text="accumulated uncertainty current step")
             
             print("volume of ellipsoid summed individually")
             print(np.linalg.det(np.linalg.cholesky(q_1)))
@@ -144,6 +143,62 @@ def onestep_reachability(p_center,gp,k_ff,l_mu,l_sigma,q_shape = None,k_fb = Non
         
         return p_1,q_1
         
+def multistep_reachability_new(p_0,u_0,k_fb_0,k_fb_ctrl,k_ff,gp,L_mu,L_sigm, c_safety = 1.,verbose = 1,a = None, b= None):
+    """ Ellipsoidal overapproximation of a probabilistic safe set after multiple actions
+
+    Overapproximate the region containing a pre-specified percentage of the probability
+    mass of the system after n actions are applied to the system. The overapproximating
+    set is given by an ellipsoid.
+    
+    Parameters
+    ----------
+    
+    p_0: n_s x 1 array[float]     
+            Center of state ellipsoid        
+    gp: SimpleGPModel     
+        The gp representing the dynamics            
+    K: (n-1) x n_u x n_s array[float]     
+        The state feedback-matrices for the controls at each time step        
+    k: n x n_u array[float]     
+        The additive term of the controls at each time step
+    L_mu: 1d_array of size n_s
+        Set of Lipschitz constants on the Gradients of the mean function (per state dimension)
+    L_sigm: 1d_array of size n_s
+        Set of Lipschitz constants of the predictive variance (per state dimension)
+    q_shape: np.ndarray[float], array of shape n_s x n_s, optional
+        Shape matrix of the initial state ellipsoid
+    c_safety: float, optional
+        The scaling of the semi-axes of the uncertainty matrix 
+        corresponding to a level-set of the gaussian pdf.        
+    verbose: int
+        Verbosity level of the print output            
+    
+    """
+    n_u, n_s = np.shape(k_fb_ctrl)
+    n_fb = np.shape(k_fb_0)[0]
+    p_all = np.empty((n_fb+1,n_s))
+    q_all = np.empty((n_fb+1,n_s*n_s))
+    
+    ## compute the reachable set in the first time step
+    #k_0 = k_ff[0,:,None]
+
+    p_new,q_new = onestep_reachability(p_0,gp,u_0,L_mu,L_sigm,None,None,c_safety,verbose,a,b)
+    p_all[0] = p_new.T
+    q_all[0] = np.reshape(q_new,(n_s*n_s))
+    
+    ## iteratively compute it for the next steps
+    for i in range(n_fb):
+        p_old = p_new
+        q_old = q_new
+        k_ff_i = k_ff[i,:].reshape((n_u,1))
+        k_fb_i = np.reshape(k_fb_0[i] + k_fb_ctrl,(n_u,n_s))
+        
+        p_new,q_new = onestep_reachability(p_old,gp,k_ff_i,L_mu,L_sigm,q_old,k_fb_i,c_safety,verbose,a,b)
+        p_all[i+1] = p_new.T
+        q_all[i+1] = np.reshape(q_new,(n_s*n_s))
+        
+        
+    return p_new, q_new, p_all, q_all
         
 def multistep_reachability(p_0,gp,k_fb,k_ff,L_mu,L_sigm,q_0 = None, c_safety = 1.,verbose = 1,a = None, b= None,k_fb_init = None):
     """ Ellipsoidal overapproximation of a probabilistic safe set after multiple actions
@@ -183,6 +238,7 @@ def multistep_reachability(p_0,gp,k_fb,k_ff,L_mu,L_sigm,q_0 = None, c_safety = 1
     
     ## compute the reachable set in the first time step
     k_0 = k_ff[0,:,None]
+
     p_new,q_new = onestep_reachability(p_0,gp,k_0,L_mu,L_sigm,q_0,k_fb_init,c_safety,verbose,a,b)
     p_all[0] = p_new.T
     q_all[0] = q_new
@@ -231,4 +287,107 @@ def lin_ellipsoid_safety_distance(p_center,q_shape,h_mat,h_vec,c_safety = 1.0):
     d_safety = d_center + d_shape - h_vec
     
     return d_safety
+    
+    
+def simulate_trajectory(env,p_0,k_fb,k_ff,p_ctrl):
+    """ Simulate a trajectory forward via feedback laws
+    
+    n: number of actions
+        Note: n = 1 is a valid input
+        
+    p_0: n_s x 0 1darray[float]
+        The initial state (normalized)
+    k_fb: (n-1) x n_u * n_s ndarray[float]
+        The feedback gain. Ignored in the case of n=1
+    k_ff: n x n_u ndarray[float]
+    p_ctrl: (n-1) x n_s ndarray[float]
+        The centers of the ctrl feedback laws
+    """
+    n, n_u = np.shape(k_ff)
+    n_s = p_0.size
+    
+    x_all = np.empty((n+1,n_s))
+    x_all[0,:] = p_0
+    
+    x_1,_ = env.simulate_onestep(p_0,k_ff[0])
+    x_all[1,:] = x_1
+    x = x_1
+    for i in range(n-1):
+        action = feedback_ctrl(x[:,None],k_ff[i+1,:,None],k_fb[i,:].reshape((n_u,n_s)),p_ctrl[i,:,None])
+        x_next,_ = env.simulate_onestep(x,action)
+        x_all[i+2,:] = x_next        
+        x = x_next
+        
+    return x_all
+    
+    
+def verify_trajectory_safety(env,p_0,k_fb,k_ff,p_ctrl,h_mat_safe,h_safe,h_mat_obs = None,h_obs = None):
+    """ Verify if a simulated trajectory is inside the state and terminal constraint
+    
+    n: number of actions
+        Note: n = 1 is a valid input
+    n_s: number of states
+    n_u: number of actions
+    
+    Parameters    
+    ----------
+    env: Environment object
+        
+    p_0: n_s x 1 ndarray[float]
+        The initial state
+    k_fb: (n-1) x n_u * n_s ndarray[float]
+        The feedback gain. Ignored in the case of n=1
+    k_ff: n x n_u ndarray[float]
+    p_ctrl: (n-1) x n_s ndarray[float]
+        The centers of the ctrl feedback laws.. Ignored in the case of n=1
+
+    
+    """
+    n, _ = np.shape(k_ff)
+    x_all = simulate_trajectory(env,p_0,k_fb,k_ff,p_ctrl)
+
+    in_all = True
+    if not h_mat_obs is None:
+        for i in range(1,n):
+            in_all = in_all & sample_inside_polytope(x_all[None,i,:],h_mat_obs,h_obs)
+
+    in_all = in_all  & sample_inside_polytope(x_all[None,-1,:],h_mat_safe,h_safe)
+
+    return in_all, x_all
+    
+    
+def trajectory_inside_ellipsoid(env,p_0, p_all,q_all,k_fb,k_ff):
+    """ Verify if the real trajectory is inside the safe ellipsoid trajectory 
+    
+    n: number of actions
+    n_s: number of states
+    n_u: number of actions
+    
+    Parameters    
+    ----------
+    env: Environment object
+        
+    p_0: n_s x 1 ndarray[float]
+        The initial state
+    p_all: n x n_s ndarray[float]
+        The centers of the ellipsoids
+    q_all: n x n_s*n_s ndarray[float]
+    k_fb: (n-1) x n_u * n_s ndarray[float]
+    k_ff: n x n_u ndarray[float]
+    
+    """
+    n, _ = np.shape(k_ff)
+    n_u = env.n_u
+    n_s = env.n_s
+    #init system to p_0
+    
+    x_all = simulate_trajectory(env,p_0,k_fb,k_ff,p_all)[1:,:]
+    
+    inside_ellipsoid = np.zeros((n,),dtype=np.bool)
+    for i in range(n):
+        inside_ellipsoid[i] = sample_inside_ellipsoid(x_all[None,i,:],p_all[i,:,None],q_all[i,:].reshape((n_s,n_s)))
+
+          
+    return inside_ellipsoid
+    
     
