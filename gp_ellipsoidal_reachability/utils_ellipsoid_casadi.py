@@ -65,7 +65,7 @@ def ellipsoid_from_rectangle(u_b):
         q: np.ndarray[float, n_dim = 2], array of size n x n 
             The (diagonal) shape matrix of covering ellipsoid
         
-    """         
+    """       
     n,_ = u_b.shape   
     d = n*u_b**2
     q = diag(d)
