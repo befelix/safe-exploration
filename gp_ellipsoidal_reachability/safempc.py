@@ -107,6 +107,8 @@ class SafeMPC:
             warnings.warn("No SafePolicy!")
         if self.gp.gp_trained:
             self.init_solver()     
+            
+        self.ilqr_custom_c = None
         if ilqr_init:
             self.init_ilqr_initializer()
             
@@ -175,7 +177,9 @@ class SafeMPC:
             #objective(x_perf,q_all,x_target,k_ff_all,self.wx_cost,self.wu_cost)
                     
             _,sigm = self.gp.predict_casadi_symbolic(vertcat(p_0,u_0).T)
-            cost += -sum2(sqrt(sigm))        
+            cost += -sum2(sqrt(sigm))  
+            
+            self.ilqr_custom_c = (-sum2(sqrt(sigm)),p_0,u_0)
         else:
             
             if self.n_perf > 1:
@@ -793,7 +797,11 @@ class SafeMPC:
     def init_ilqr_initializer(self):
         """ Initialize the iLQR method to get initial values for the NLP method """
         model = SafeMPCModelILQR(self)
-        cost = SafeMPCCostILQR(self)
+        
+        custom_c = None
+        if not self.ilqr_custom_c is None:
+            custom_c = _init_costfunc_ilqr(*self.ilqr_custom_c)
+        cost = SafeMPCCostILQR(self,custom_c)
         u_min = None
         u_max = None
         if self.has_ctrl_bounds:
@@ -803,6 +811,37 @@ class SafeMPC:
             
         self.ilqr_initializer = CILQR(model,cost,H=self.n_safe,u_min=u_min,u_max=u_max,w_x= 1e3,w_u=1e2)
         
+    def _init_costfunc_ilqr(self,f,x_0,u_0,w_expl_ilqr = 100.):
+        """ Symbolic 2nd order approximation to f with inputs x_0,u_0
+        
+        Parameters
+        ----------
+        f: Casadi.SX
+            The symbolic casadi code representing the cost function
+            
+        x_0: n_s x 1 array[Casadi.SX]
+        u_0: n_u x 1 array[Casadi.SX]
+        
+        Returns:
+        --------
+        c_all : the cost-function
+        
+        
+        """
+        
+        f_z, f_zz = cas.hessian(f*w_expl_ilqr,vertcat(x_0,u_0))
+        c_z = cas.Function("c_x",[vertcat(x_0,u_0)],[f_x])
+        c_zz = cas.Function("c_xx",[vertcat(x_0,u_0)],[f_xx])
+        
+        c = cas.Function("c",[x,u],[f])
+        c_x = lambda x,u: c_z(x,u)[:self.n_s]
+        c_u = lambda x,u: c_z(x,u)[self.n_s:]
+        c_xx = lambda x,u: c_zz(x,u)[:self.n_s,:self.n_s]
+        c_ux = lambda x,u: c_zz(x,u)[self.n_s:,:self.n_s]
+        c_uu = lambda x,u: c_zz(x,u)[self.n_s:,self.n_s:]
+        
+        c_all = lambda x,u : c(x,u), c_x(x,u), c_xx(x,u),c_u(x,u),c_uu(x,u),c_ux(x,u)
+        return c_all
         
 class SafeMPCModelILQR:
     """ Utiliy class which creates a model for the ilqr initialization
@@ -924,7 +963,7 @@ class SafeMPCCostILQR:
     
     """
     
-    def __init__(self,safempc):
+    def __init__(self,safempc,custom_cost = None):
         """ Initialize based on a pre-existing SafeMPC object
         
         Parameters
@@ -936,6 +975,7 @@ class SafeMPCCostILQR:
         self.n_u = safempc.n_u
         self.x_safe = None
         self.x_target = None
+        self.custom_cost = custom_cost
         
     def total_cost(self, x_all, u_all, w_x = None, w_u = None):
         """ total cost of trajectory
@@ -962,10 +1002,22 @@ class SafeMPCCostILQR:
         c_x = np.zeros((self.n_s,1))
         c_xx = np.zeros((self.n_s,self.n_s))
         
+
         if t == 1:
-            c += .5**np.dot((x-self.x_target).T,np.dot(w_x,x-self.x_target))
-            c_x += np.dot(w_x,x-self.x_target)
-            c_xx += w_x
+            if self.custom_cost is None:
+            
+                c += .5**np.dot((x-self.x_target).T,np.dot(w_x,x-self.x_target))
+                c_x += np.dot(w_x,x-self.x_target)
+                c_xx += w_x
+            else:
+                c_custom, c_x_custom, c_xx_custom, c_u_custom, \
+                            c_uu_custom, c_ux_custom = self.custom_cost(x,u,t)
+                c+=c_custom 
+                c_x += c_x_custom 
+                c_xx += c_xx_custom
+                c_u += c_u_custom
+                c_uu += c_uu_custom
+                c_ux += c_ux_custom
                 
         if t > 1:            
             c += .5*np.dot((x-self.x_safe).T,np.dot(w_x,x-self.x_safe))
