@@ -23,7 +23,7 @@ import utils_ellipsoid
 def run_episodic(conf):
     """ Run episode setting """
         
-    env = create_env(conf)
+    env = create_env(conf.env_name,conf.env_options)
 
     if conf.n_scenarios > 1:
         raise NotImplementedError("For now we don't support multiple experiments!")
@@ -158,15 +158,6 @@ def do_rollout(env, n_steps, solver = None, relative_dynamics = False,
         if done:
             break
 
-        if verbosity > 0:
-            print("\n===== time step {} =====".format(i))
-            print("= State =")
-            print(state)
-            print("= Action =")
-            print(action)
-            print("= Observation =")
-            print(observation)
-            print("==========================\n")
         state_action = np.hstack((old_observation,action))
         state_action_noiseless = np.hstack((state,action))
         xx = np.vstack((xx,state_action))
