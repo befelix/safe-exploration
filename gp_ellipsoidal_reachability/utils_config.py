@@ -25,65 +25,85 @@ def create_solver(conf, env, model_options = None):
     n_perf = conf.n_perf
     l_mu = env.l_mu
     l_sigm = env.l_sigm
-    h_mat_safe = env.h_mat_safe
-    h_safe = env.h_safe
-    h_mat_obs = env.h_mat_obs
-    h_obs = env.h_obs
     wx_cost = conf.lqr_wx_cost
     wu_cost = conf.lqr_wu_cost
     lin_model = None
     
-    a,b = env.linearize_discretize()
+    h_mat_safe, h_safe, h_mat_obs, h_obs = env.get_safety_constraints(normalize = True) 
+    print(h_mat_safe)
+    print(env.h_mat_safe)
+    a_true,b_true = env.linearize_discretize()
     
     safe_policy = None
     if conf.lin_prior:
-        lin_model = (a,b)
-    else:
-        #by default takes identity as prior. Need to define safe_policy
-        q= wx_cost
-        r= wu_cost
-        k_lqr,_,_ = dlqr(a,b,q,r)
-        k_fb = -k_lqr
-        safe_policy = lambda x: np.dot(K,x) 
         
+        a_prior, b_prior = get_prior_model_from_conf(conf,env)
+        lin_model = (a_prior,b_prior)
+        #by default takes identity as prior. Need to define safe_policy
+    q= wx_cost
+    r= wu_cost
+    k_lqr,_,_ = dlqr(a_true,b_true,q,r)
+    k_fb = -k_lqr
+    safe_policy = lambda x: np.dot(k_fb,x) 
+    
     if model_options is None:
-        gp = SimpleGPModel(env.n_s,env.n_u,kern_type = conf.kern_type)
+        gp = SimpleGPModel(env.n_s,env.n_u,kern_types = conf.kern_types)
     else:
         gp = SimpleGPModel.from_dict(model_options)
     
     dt = env.dt
     ctrl_bounds = np.hstack((np.reshape(env.u_min,(-1,1)),np.reshape(env.u_max,(-1,1))))
     mpc_control = SafeMPC(n_safe,n_perf,gp,l_mu,l_sigm,h_mat_safe,h_safe,
-                          wx_cost,wu_cost,dt,h_mat_obs = h_mat_obs,h_obs = h_obs,
-                          lin_model = lin_model,ctrl_bounds = ctrl_bounds,safe_policy=safe_policy)
+                          wx_cost,wu_cost,dt,beta_safety = conf.beta_safety,h_mat_obs = h_mat_obs,h_obs = h_obs,
+                          lin_model = lin_model,ctrl_bounds = ctrl_bounds,safe_policy=safe_policy,ilqr_init = conf.ilqr_init)
     #mpc_control.init_solver()
     
     return mpc_control
     
     
-def create_env(conf):
+def create_env(env_name,env_options_dict = None):
     """ Given a set of options, create an environment """
-    print(conf.env_name)
-    if conf.env_name == "InvertedPendulum":
-        return InvertedPendulum(init_std = conf.init_std)
+    if env_options_dict is None:
+        env_options_dict = dict()
+    if env_name == "InvertedPendulum":
+        return InvertedPendulum(**env_options_dict)
     else:
         raise NotImplementedError("Unknown environment: {}".format(conf.env_name))
         
+def get_prior_model_from_conf(conf,env_true):
+    """ Get prior model from config"""
+    if conf.lin_prior:
+        ##unless specified otherwise, use the same normalization as for the true model
+        if not "norm_x" in conf.prior_model:
+            conf.prior_model["norm_x"] = env_true.norm[0]
+        if not "norm_u" in conf.prior_model:
+            conf.prior_model["norm_u"] = env_true.norm[1]
+            
+        env_prior = create_env(conf.env_name,conf.prior_model)
         
+        a_prior,b_prior = env_prior.linearize_discretize()     
+    else:
+        a_prior,b_prior = (np.eye(env_true.n_s),np.zeros((env_true.n_s,env.n_u)))
+        
+    return a_prior, b_prior
+    
 def get_model_options_from_conf(conf,env):
     """ Utility function to create a gp options dict from the config class"""
     
+    
+    #There already is a gp_dict ready to use
+    if not conf.gp_dict_path is None:
+        return np.load(conf.gp_dict_path)
+    
+    #neither a gp_dict_path nor a gp_data_path exists -> return None
     if conf.gp_data_path is None:
         return None
-        
     gp_dict = dict()
-    if conf.lin_prior:
-        a,b = env.linearize_discretize()     
-    else:
-        a,b = (np.eye(env.n_s),np.zeros((env.n_s,env.n_u)))
+    
+    a_prior,b_prior = get_prior_model_from_conf(conf,env)
         
-    ab = np.hstack((a,b))
-    prior_model = lambda z: np.dot(z,ab.T)
+    ab_prior = np.hstack((a_prior,b_prior))
+    prior_model = lambda z: np.dot(z,ab_prior.T)
     gp_dict["prior_model"] = prior_model
     
     gp_dict["data_path"] = conf.gp_data_path
