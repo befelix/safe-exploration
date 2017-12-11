@@ -83,7 +83,7 @@ def compute_remainder_overapproximations(q,k_fb,l_mu,l_sigma):
     b = mtimes(s,s.T)
 
     qb = mtimes(q,b)
-    evals = matrix_norm_2(qb)
+    evals = matrix_norm_2_generalized(b,q)
     r_sqr = vec_max(evals)
     
     u_mu = l_mu*r_sqr
@@ -108,6 +108,40 @@ def vec_max(x):
             c = fmax(c,x[i+1])
     return c
     
+def matrix_norm_2_generalized(a, b_inv, x = None, n_iter = None):
+    """ Get largest generalized eigenvalue of the pair inv_a^{-1},b
+    
+    get the largest eigenvalue of the generalized eigenvalue problem 
+        a x = \lambda b x 
+    <=> b x = (1/\lambda) a x 
+    
+    Let \omega := 1/lambda
+    
+    We solve the problem 
+        b x = \omega a x 
+    using the inverse power iteration which converges to
+    the smallest generalized eigenvalue \omega_\min
+    
+    Hence we can get  \lambda_\max = 1/\omega_\min,
+        the largest eigenvalue of a x = \lambda b x
+        
+    """
+    n,_ = a.shape
+    if x is None:
+        x = np.eye(n,1)
+        x /= norm_2(x)
+        
+    if n_iter is None:
+        n_iter = 2*n
+        
+    y = mtimes(b_inv,mtimes(a,x))
+    for i in range(n_iter):
+        x = y/norm_2(y)
+        y = mtimes(b_inv,mtimes(a,x))
+        
+    return mtimes(y.T,x)
+    
+    
 def matrix_norm_2(a_mat,x = None,n_iter = None):
     """ Compute an approximation to the maximum eigenvalue of the hermitian matrix x
        
@@ -119,11 +153,11 @@ def matrix_norm_2(a_mat,x = None,n_iter = None):
     assert n == m, "Input matrix has to be symmetric"
     
     if x is None:
-        x = np.random.rand(n,1)
+        x = np.eye(n,1)
         x /= norm_2(x)
         
     if n_iter is None:
-        n_iter = n
+        n_iter = 2*n
     
     y = mtimes(a_mat,x)
     
