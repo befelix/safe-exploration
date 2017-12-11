@@ -58,3 +58,32 @@ def test_ellipsoid_from_from_rectangle_residuals_zero_(before_ellipsoid_from_rec
     d_test_points = distance_to_center(test_points,p_center,q_shape)
     
     assert np.all(np.abs(d_test_points-1) <= eps_tol)
+    
+    
+@pytest.fixture(params = ["t_1","t_2","t_3"])
+def before_distance_tests(request):
+    test_name = request.param
+    if test_name == "t_1":
+        
+        q = 4*np.eye(2)
+        p = np.eye(2,1)
+        x = np.eye(2,1)+np.sqrt(2)
+        d = 1
+    elif test_name == "t_2":
+        q = 4*np.eye(2)
+        p = np.zeros((2,1))
+        x = np.zeros((2,1))+np.sqrt(2)
+        d = 1
+    elif test_name == "t_3":
+        q = 4*np.eye(2)
+        p = np.eye(2,1)
+        x = np.eye(2,1)+np.sqrt(2)
+        d = 1
+    
+    return p,q,x.T,d
+def test_distance_to_center(before_distance_tests):
+    """ """
+    p,q,x,d = before_distance_tests
+    
+    
+    assert np.allclose(distance_to_center(x,p,q),d)
