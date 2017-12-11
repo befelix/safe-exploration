@@ -8,6 +8,7 @@ Created on Tue Nov 21 09:37:59 2017
 from exploration_oracle import StaticMPCExplorationOracle, DynamicMPCExplorationOracle
 from casadi import *
 from gp_reachability import verify_trajectory_safety, trajectory_inside_ellipsoid
+from matplotlib.cm import viridis
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -40,8 +41,21 @@ def run_exploration(env, safempc,conf,
     x_next_pred = np.empty((n_iterations,env.n_s))
     x_next_prior = np.empty((n_iterations,env.n_s))
     
-    if visualize:
-        fig, ax = env.plot_safety_bounds()
+    #initialize color code for plotting the states
+    #d_blue = np.linspace(1.0,0.0,n_iterations)
+    d_red = np.linspace(0.0,1.0,n_iterations)    
+    c_sample = lambda it: (d_red[it],0.0,0.0)#d_blue[it]) #use color code which transitions from green to blue
+    
+    if visualize or save_vis:
+        fig, ax = env.plot_safety_bounds(color ="b")
+        
+        ##plot the initial train set
+        x_train_init = exploration_module.safempc.gp.x_train
+        c_black = (0.,0.,0.)
+        n_train, _ = np.shape(x_train_init)
+        for i in range(n_train):
+            ax = env.plot_state(ax,x_train_init[i,:env.n_s],color = c_black)
+            
         ell = None
         
     safety_all = None
@@ -49,6 +63,7 @@ def run_exploration(env, safempc,conf,
     if verify_safety:
         safety_all = np.zeros((n_iterations,),dtype = np.bool)
         inside_ellipsoid = np.zeros((n_iterations,safempc.n_safe))
+    
     if static_exploration:
         x_i = None
     else:
@@ -62,30 +77,32 @@ def run_exploration(env, safempc,conf,
         
         if verify_safety:
             x_i, u_i, feasible, k_fb_all,k_ff_all,p_ctrl,q_all = exploration_module.find_max_variance(x_i,sol_verbose = True) 
-            
+            print(feasible)
             if feasible:
                 h_m_safe_norm,h_safe_norm,h_m_obs_norm,h_obs_norm = env.get_safety_constraints(normalize = True) 
                 safety_all[i],x_traj_safe = verify_trajectory_safety(env,x_i.squeeze(),k_fb_all, \
                                             k_ff_all,p_ctrl,h_m_safe_norm,h_safe_norm,h_m_obs_norm,h_obs_norm)
                 inside_ellipsoid[i,:] = trajectory_inside_ellipsoid(env,x_i.squeeze(), p_ctrl,q_all,k_fb_all,k_ff_all)
                 
-                if visualize:
+                if visualize or save_vis:
                     if not ell is None:
                         for j in range(len(ell)):
                             ell[j].remove()
                     ax, ell = env.plot_ellipsoid_trajectory(p_ctrl,q_all,ax = ax,color = "r")
                     fig.canvas.draw()
-                    plt.show(block=False)
-                    plt.pause(0.5)
+                    if visualize:
+                        plt.show(block=False)
+                        plt.pause(0.5)
         
         else:
             x_i, u_i = exploration_module.find_max_variance(x_i,n_restarts_optimizer)
         
-        if visualize:
-            ax = env.plot_state(ax,x = x_i,normalize = False)
+        if visualize or save_vis:
+            ax = env.plot_state(ax,x = x_i,color = c_sample(i),normalize = False)
             fig.canvas.draw()
-            plt.show(block=False)
-            plt.pause(0.25)
+            if visualize:
+                plt.show(block=False)
+                plt.pause(0.25)
             
         ## Apply to system and observe next state 
         
@@ -118,16 +135,16 @@ def run_exploration(env, safempc,conf,
     if not save_path is None:
         results_dict = save_results(save_path,sigm_sum,sigm,inf_gain,z_all, \
                                     x_next_obs_all,x_next_pred,x_next_prior, \
-                                    safempc.gp,safety_all)
+                                    safempc.gp,safety_all,x_train_init)
         
         
     if save_vis:
         if save_path is None:
             warnings.warn("Cannot save the visualizations / figures without save_path being specified")
-        save_plots(save_path,sigm_sum,sigm,inf_gain,z_all,env) 
+        save_plots(save_path,env,sigm_sum,sigm,inf_gain,z_all,x_train_init) 
 
         
-def save_results(save_path,sigm_sum,sigm,inf_gain,z_all,x_next_obs_all,x_next_pred,x_next_prior,gp,safety_all = None):
+def save_results(save_path,sigm_sum,sigm,inf_gain,z_all,x_next_obs_all,x_next_pred,x_next_prior,gp,x_train_0,safety_all = None):
     """ Create a dictionary from the results and save it """
     results_dict = dict()
     results_dict["sigm_sum"] = sigm_sum
@@ -137,6 +154,8 @@ def save_results(save_path,sigm_sum,sigm,inf_gain,z_all,x_next_obs_all,x_next_pr
     results_dict["x_next"] = x_next_obs_all
     results_dict["x_next_pred"] = x_next_pred
     results_dict["x_next_prior"] = x_next_prior
+    results_dict["x_train_0"] = x_train_0
+    
     if not safety_all is None:
         results_dict["safety_all"] = safety_all
     
@@ -154,7 +173,7 @@ def save_results(save_path,sigm_sum,sigm,inf_gain,z_all,x_next_obs_all,x_next_pr
 From here on visualization functions
 
 """    
-def save_plots(save_path,sigm_sum,sigm,inf_gain,z_all,env):
+def save_plots(save_path,env,sigm_sum,sigm,inf_gain,z_all,x_train_0):
     """ """
     n_it = np.shape(inf_gain)[0]
     fig, ax = plt.subplots()
@@ -173,13 +192,30 @@ def save_plots(save_path,sigm_sum,sigm,inf_gain,z_all,env):
     path_sigm_sum = "{}/sigm_sum.png".format(save_path)
     plt.savefig(path_sigm_sum)
     
-    fig, ax = env.plot_safety_bounds()
-    ax.plot(z_all[:,0],z_all[:,1],"bx")
-    
-    path_sampleset = "{}/sample_set.png".format(save_path)
+    plot_sample_set(x_train_0,z_all)
     plt.savefig(path_sampleset)
     
-    ##information gain plot 
+def plot_sample_set(x_train,z_all,env):
+    """ plot the sample set"""
+    
+    s_train = x_train[:,:env.n_s]
+    n_train = np.shape(s_train)[0]
+    
+    s_expl = z_all[:,:env.n_s]
+    n_it = np.shape(s_expl)[0]
+    fig, ax = env.plot_safety_bounds(color = "r")
+    
+    c_spectrum = viridis(np.arange(n_it))
+    ##plot initial dataset    
+    for i in range(n_train):
+        ax = env.plot_state(ax,s_train[i,:env.n_s],color = c_spectrum[0])
+    
+    ##plot the data gatehred
+    for i in range(n_it)        :
+        ax = env.plot_state(ax,s_expl[i,:env.n_s],color = c_spectrum[i])
+        
+    return fig, ax
+    
 
 
     
