@@ -9,10 +9,11 @@ import numpy as np
 import numpy.linalg as nLa
 import scipy.linalg as sLa
 import warnings
+import functools
 
 from numpy.linalg import solve,norm
 from numpy import sqrt,trace,zeros,diag, eye
-
+from numpy.matlib import repmat
 
 def dlqr(a,b,q,r):
     """ Get the feedback controls from linearized system at the current time step
@@ -31,6 +32,33 @@ def dlqr(a,b,q,r):
     
     return np.asarray(k), np.asarray(x), eigVals
         
+def sample_inside_polytope(x,a,b):
+    """ 
+    for a set of samples x = [x_1,..,x_k]^T 
+    check sample_wise
+        Ax_i \leq b , i=1,..,k
+    
+    x: k x n np.ndarray[float]
+        The samples (k samples of dimensionality n)
+    a: m x n np.ndarray[float]
+        the matrix of the linear inequality
+    b: m x 1 np.ndarray[float]
+        the vector of the linear inequality
+    
+    """
+    k,_ = x.shape
+    c = np.dot(a,x.T) - repmat(b,1,k)
+    
+    return np.all(c < 0, axis = 0).squeeze()
+    
+def feedback_ctrl(x,k_ff,k_fb = None,p=None):
+    """ The feedback control structure """
+    
+    if k_fb is None:
+        return k_ff
+        
+    return np.dot(k_fb,(x-p)) + k_ff
+    
         
 def compute_bounding_box_lagrangian(q,L,K,k,order = 2, verbose = 0):
     """ Compute lagrangian remainder using lipschitz constants
@@ -261,3 +289,25 @@ def solve_LLS(A,b,eps_mp = 0.0):
     x = solve(A_tilde,b_tilde)
     
     return x
+    
+
+def rsetattr(obj, attr, val):
+    """ 
+    from https://stackoverflow.com/questions/31174295/getattr-and-setattr-on-nested-objects
+    """
+    pre, _, post = attr.rpartition('.')
+    return setattr(rgetattr(obj, pre) if pre else obj, post, val)
+
+sentinel = object()
+
+
+def rgetattr(obj, attr, default=sentinel):
+    """
+    from https://stackoverflow.com/questions/31174295/getattr-and-setattr-on-nested-objects
+    """
+    if default is sentinel:
+        _getattr = getattr
+    else:
+        def _getattr(obj, name):
+            return getattr(obj, name, default)
+    return functools.reduce(_getattr, [obj]+attr.split('.'))
