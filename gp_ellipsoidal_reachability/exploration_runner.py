@@ -192,7 +192,8 @@ def save_plots(save_path,env,sigm_sum,sigm,inf_gain,z_all,x_train_0):
     path_sigm_sum = "{}/sigm_sum.png".format(save_path)
     plt.savefig(path_sigm_sum)
     
-    plot_sample_set(x_train_0,z_all)
+    path_sampleset = "{}/sampleset".format(save_path)
+    plot_sample_set(x_train_0,z_all,env)
     plt.savefig(path_sampleset)
     
 def plot_sample_set(x_train,z_all,env):
