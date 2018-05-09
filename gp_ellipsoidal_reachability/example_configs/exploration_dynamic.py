@@ -18,26 +18,25 @@ class Config(DefaultConfigExploration):
     """
     Options class for the exploration setting
     """
-    
-    static_exploration = True 
-    init_std = np.array([.3,.3])
-    ## env
+    static_exploration = False    
     
     ##GP
-    gp_data_path = "data.npz"
+    gp_data_path = "data_safe.npz"
     m = 25 #subset of data of size m for training
     
     ##safempc
-    n_safe = 3
-    visualize = False
-    
+    n_safe = 1
+    beta_safety = 2
     # exploration
-    n_iterations = 100
-    n_restarts_optimizer = 25
+    n_iterations = 200
+    lin_prior = True
+    init_ilqr = True
+    verify_safety = True
+    visualize = True
 
     def __init__(self):
         """ """
         super(Config,self).__init__(__file__)
-        
+       
             
             

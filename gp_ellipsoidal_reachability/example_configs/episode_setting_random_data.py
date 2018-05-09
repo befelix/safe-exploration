@@ -22,10 +22,11 @@ class Config(DefaultConfigEpisode):
     # episode settings
     n_ep = 0
     n_steps_init = 0
-
-    n_steps_init = 5
-    n_rollouts_init = 15
+    init_std = np.array([0.4,.3])
+    n_steps_init = 4
+    n_rollouts_init = 50
     visualize = False
+    plot_trajectory = False
     
     data_savename = "random_rollouts_{}".format(n_steps_init*n_rollouts_init)
     def __init__(self):

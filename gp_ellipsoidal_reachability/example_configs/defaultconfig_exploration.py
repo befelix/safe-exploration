@@ -19,29 +19,32 @@ class DefaultConfigExploration(DefaultConfig):
     ##environment
     env_name = "InvertedPendulum"
     env_options = dict()
-    init_std = np.array([.3,.1])
+    init_std = np.array([.05,.05])
     env_options["init_std"] = init_std
     
     ##safempc
-    beta_safety = 2.
+    beta_safety = 2.0
     n_safe = 1
     n_perf = 0
     lqr_wx_cost = np.diag([1.,2.])
-    lqr_wu_cost = 50*np.eye(1)
+    lqr_wu_cost = 25*np.eye(1)
     init_ilqr = True
+    str_cost_func = None
     
     ##prior model: The prior model for the safempc approach
     # can be different from the true model (!)
     lin_prior = True
     prior_model = dict()
     prior_m = .1
+    prior_b = 0.0
     prior_model["m"] = prior_m
+    prior_model["b"] = prior_b
     
     
     ##GP
     gp_dict_path = None
     gp_data_path = None # None means no initial training data
-    m = None #subset of data of size m for training
+    m = 25 #subset of data of size m for training
     kern_types = ["lin_mat52","lin_mat52"] #kernel type
     train_gp = True # train the gp initially?
     retrain_gp = False # retrain the gp after every sample?
