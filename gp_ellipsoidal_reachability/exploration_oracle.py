@@ -194,7 +194,6 @@ class DynamicMPCExplorationOracle:
         self.n_u = safempc.n_u
         self.T = safempc.n_safe
         
-        
     def init_solver(self):
         """ """
         
@@ -205,23 +204,11 @@ class DynamicMPCExplorationOracle:
     def find_max_variance(self,x_0,sol_verbose = False):
         
         if sol_verbose:
-            u_apply, feasible,_ ,k_fb, k_ff,p_ctrl,q_all = self.safempc.get_action(x_0,self.env.p_origin,sol_verbose = True)
-            return x_0[:,None], u_apply, feasible,k_fb, k_ff, p_ctrl,q_all
+            u_apply, feasible, safe_ctrl_applied ,k_fb, k_ff,p_ctrl,q_all = self.safempc.get_action(x_0,self.env.p_origin,sol_verbose = True)
+            return x_0[:,None], u_apply, feasible,safe_ctrl_applied,k_fb, k_ff, p_ctrl,q_all
         else:
             u_apply, _ = self.safempc.get_action(x_0,self.env.p_origin)
             return x_0[:,None], u_apply[:,None]
-        
-    def _get_cost_function(self,p_0,u_0,p_all,k_ff_all):
-        """ define cost function for the safempce exploration problem
-        
-        Define an exploration objective function with the ellipsoid centers and feedforward
-        terms as inputs.
-        
-        For now simlpy use -\sigm(p_all[0],k_ff_all[0]) for now (corresponding to argmin \sigm(x,u)))
-        which is the default cost function in the safempc settings
-        """
-        
-        raise NotImplementedError("For now we are happy with the default cost function of the safempc class")
         
     def update_model(self,x,y,train = False,replace_old = False):
         """ Simple wrapper around the update_model function of SafeMPC"""
