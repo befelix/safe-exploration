@@ -1,0 +1,149 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Mon Sep 25 09:18:58 2017
+
+@author: tkoller
+"""
+
+import numpy as np
+from casadi import *
+
+
+
+def one_step_taylor(mu_x,gp, k_ff, sigma_x = None, k_fb = None, a = None, b = None):
+    """ One-step uncertainty propagation via first-order taylor approximation
+
+    Parameters
+    ---------- 
+    mu: n_s x 1 ndarray[casadi.sym]
+            Mean of the gaussian input 
+    gp: GaussianProcess
+            The gp  
+    k_ff: n_u x 1 array[float]     
+            The additive term of the controls
+    sigma: n_s x n_s ndarray[casadi.sym]
+            The covariance matrix of the gaussian input
+
+    
+
+
+    Returns
+    -------
+    mu_new: n_s x 1 ndarray[casadi.sym]
+            Mean of the gaussian output of the uncertainty propagation 
+    sigma_new: n_s x n_s ndarray[casadi.sym]
+            The covariance matrix of the gaussian output of the uncertainty propagation
+
+    """
+    
+    n_s = np.shape(mu_x)[0]
+    n_u = np.shape(k_ff)[0]
+
+    u_p = k_ff
+    z_bar = vertcat(mu_x,u_p)
+    if a is None: 
+        a = SX.eye(n_s)
+        b = SX.zeros(n_s,n_u)
+
+    if sigma_x is None:
+        pred_mu, pred_var = gp.predict_casadi_symbolic(z_bar.T)
+        lin_prior = mtimes(a,mu_x) + mtimes(b,u_p)
+        mu_new = lin_prior + pred_mu.T
+
+
+        return mu_new, diag(pred_var)
+
+
+    mu_g, sigma_g, jac_mu = gp.predict_casadi_symbolic(z_bar.T,True)
+
+
+    ## Compute taylor approximation of the posterior 
+    sigma_u = mtimes(k_fb,mtimes(sigma_x,k_fb.T)) #covariance of control input
+    sigma_xu = mtimes(sigma_x,k_fb.T) #cross-covariance between state and controls
+
+    print(np.shape(sigma_xu))
+    print(np.shape(sigma_x))
+    print(np.shape(sigma_u))
+    sigma_z_0 = horzcat(sigma_x, sigma_xu )
+    sigma_z_1 = horzcat(sigma_xu.T,  sigma_u)
+    print(np.shape(sigma_z_0))
+    print(np.shape(sigma_z_1))
+    sigma_z = vertcat(sigma_z_0,sigma_z_1) #covariance matrix of combined state-control input z 
+
+    
+    sigma_zg = mtimes(sigma_z,jac_mu.T) #cross-covariance between g and z
+    
+    print(np.shape(sigma_g))
+    sigma_all_0 = horzcat(sigma_z,sigma_zg)
+    sigma_all_1 = horzcat(sigma_zg.T,diag(sigma_g))
+
+    sigma_all = vertcat(sigma_all_0,sigma_all_1) #covariance of combined z and g 
+
+
+    lin_trafo_mat = horzcat(a,b,SX.eye(n_s)) # linear trafo matrix
+
+    mu_zg = vertcat(mu_x,k_ff,mu_g.T)
+    mu_new = mtimes(lin_trafo_mat,mu_zg)
+    print(np.shape(sigma_all))
+    sigma_new = mtimes(lin_trafo_mat,mtimes(sigma_all,lin_trafo_mat.T))
+    print(np.shape(sigma_new))
+    return mu_new , sigma_new
+
+
+def multi_step_taylor_symbolic(mu_0, gp, k_ff, k_fb , sigma_0 = None, a = None, b = None):
+    """ Multi step ahead predictions of the taylor uncertainty propagation
+
+
+
+    Parameters
+    ----------
+    mu_0: n_s x 1 ndarray[casadi.sym | float]
+        Initial state
+    gp: GaussianProcess
+        The gp  
+    k_ff: T x n_u ndarray[casadi.sym]
+        The feed forward terms to optimize over
+    k_fb: (T-1) x (n_u * n_s) ndarray[casadi.SX]
+        The feedback gains
+    sigma_0: n_s x n_s ndarray[casadi.sym | float] 
+        The initial uncertainty 
+    a: n_s x n_s ndarray[float]
+        The A matrix of the linear model Ax + Bu
+    b: n_s x n_u ndarray[float]
+        The B matrix of the linear model Ax + Bu
+
+
+    Returns
+    -------
+    mu_all: T x n_s ndarray[casadi.sym | float]
+        The means of the uncertainty propagation trajectory
+    sigma_all: T x (n_s*n_s) ndarray[casadi.sym | float]
+        The variances of the uncertainty propagation trajectory
+
+    """
+
+    if not sigma_0 is None:
+        raise NotImplementedError("Still need  to do this")
+
+    n_s = np.shape(mu_0)[0]
+    T, n_u = np.shape(k_ff)
+
+    mu_new, sigma_new = one_step_taylor(mu_0,gp,k_ff[0,:].reshape((n_u,1)),None,None,a,b)
+    mu_all = mu_new.T
+    sigma_all = sigma_new.reshape((1,n_s*n_s))
+
+    for i in range(T-1):
+        mu_old = mu_new
+        sigma_old = sigma_new
+        k_ff_i = k_ff[i+1,:].reshape((n_u,1))
+        k_fb_i = k_fb[i,:].reshape((n_u,n_s))
+
+        mu_new, sigma_new = one_step_taylor(mu_old,gp,k_ff_i,sigma_old,k_fb_i,a,b)
+
+
+        mu_all = vertcat(mu_all,mu_new.T)
+        sigma_all = vertcat(sigma_all,sigma_new.reshape((1,n_s*n_s)))
+
+    return mu_all, sigma_all 
+    
+
