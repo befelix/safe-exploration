@@ -251,9 +251,13 @@ def gp_pred_function(x,x_train,beta,hyp,kern_types,k_inv_training = None, pred_v
         mu_all = horzcat(mu_all,mu_1)
         
         if compute_grads:
-            jac_func = pred_func.jacobian("inp","mu_1")
+            #jac_func = pred_func.jacobian("inp","mu_1")
+
+            jac_func = pred_func.factory('dmudinp', ['inp'], ['jac:mu_1:inp'])
+                
             F_1_jac = jac_func(inp = x)
-            jac_mu = F_1_jac["dmu_1_dinp"]
+            #print(F_1_jac)
+            jac_mu = F_1_jac['jac_mu_1_inp']
             jac_mu_all = vertcat(jac_mu_all,jac_mu)
             
             
