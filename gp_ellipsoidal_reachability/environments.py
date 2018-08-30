@@ -12,6 +12,10 @@ from scipy.integrate import ode,odeint
 from scipy.signal import cont2discrete
 import matplotlib.patches as mpatch
 import matplotlib.pyplot as plt
+import pygame
+
+
+
 
 
 class Environment:
@@ -554,19 +558,325 @@ class InvertedPendulum(Environment):
             
         return h_mat_safe,self.h_safe,self.h_mat_obs,self.h_obs
         
+
+class CartPole(Environment):
+    """ The classic CartPole swing-up Task
+    
+    
+    The CartPole swing-up task with the following states:
+    
+        ODE:
+            0. x-position cart
+            1. x-velocity cart
+            2. pendulum angle theta
+            3. pendulum angle velocity theta
+            
+        OBSERVATIONS:
+            0. x-position cart
+            1. x-velocity cart
+            2. pendulum angle theta
+            3. pendulum angle velocity theta
+    
+    Task: swing up pendulum via the cart in order to reach a upright resting position (zero angular velocity)
+
+    """
+    def __init__(self,name = 'CartPole',dt=0.01,l = 0.5,m=0.5,M=0.5,b=0.1,g=9.82,start_state = np.array([0.0,0.0,0.0,0.0]),visualize = True, init_std = 0.0):
+        super(CartPole,self).__init__(name,4,1,dt,start_state,init_std,np.array([0.01,0.01,0.01,0.01])**2,np.array([-10.0]),np.array([10.0]),np.array([0.0,l,0.0]))
+        ns = 4 
+        nu = 1
+
+        self.ns_ode = 4
+        
+        self.current_state = None
+        
+        self.T = 15
+        ## initialize the physical properties
+        self.l = l
+        self.m = m
+        self.M = M
+        self.b = b
+        self.g = g
+        self.dt = 0.05
+        self.visualize = visualize
+        
+        self.idx_angles = np.array([2])
+        self.obs_angles_sin = np.array([3])
+        self.obs_angles_cos = np.array([4])
+        
+        self.delay = 20.0 #fps
+        
+        self.D_cost = np.array([40,80,20])
+        self.R_cost = np.array([1.0])
+        self.start_state = start_state
+
+        
+        
+        self.odesolver = ode(self._dynamics)
+        self.name = name
+    def delay_vis(self):
+        self.clock.tick(self.delay)
+        
+    def state_to_obs(self,state, add_noise = False):
+        """ Represent the angles via sine/cosine components
+        
+        
+        Mind the NEGATIVE cos representation
+        """
+        
+        obs = np.copy(state)
+        noise = 0.
+        
+        if add_noise:
+            noise += np.random.randn(self.n_s)*np.sqrt(self.plant_noise)
+        
+        obs += noise
+        angi = self.idx_angles
+        obs_ang = [np.sin(obs[angi[0]]),np.cos(obs[angi[0]])]
+        
+        obs = np.delete(obs,self.idx_angles)
+        obs = np.append(obs,obs_ang)
+        
+        return obs
+        
+    def reset(self,mean = None, std = None):
+        """
+        
+        """
+        self.current_state = self._sample_start_state(mean = mean,std = std)
+        self.iteration = 0
+        self.odesolver.set_initial_value(self.current_state,0.0)
+        
+        self._vis_initialized = False
+        
+        return self.state_to_obs(self.current_state)
+    
+    
+    
+    def step(self,action):
+        """
+        
+        
+        """
+        action = np.clip(np.nan_to_num(action),self.u_min,self.u_max)
+        print(action)
+        self.odesolver.set_f_params(action)
+        
+        self.current_state = self.odesolver.integrate(self.odesolver.t+self.dt) + np.random.randn(self.ns_ode)*np.sqrt(self.plant_noise)
+        self.iteration += 1
+        
+        done = False
+        if self.current_state[0] < -3 or self.current_state[0] > 3:
+            done = True
+
+        
+        new_state_noise_obs = self.state_to_obs(np.copy(self.current_state),add_noise=True)
+        new_state_obs = self.state_to_obs(np.copy(self.current_state))
+        
+        cc = self._get_step_cost(self.current_state,action)
+        
+        if self.odesolver.successful():
+            return action,new_state_obs,new_state_noise_obs,done
+        
+    def state_to_cost_space_gaussian(self,mu,sigma):
+        """ """
+    def render(self):
+        """
+        
+        """
+        if not self._vis_initialized:
+            self._init_vis()
+            
+        self._draw_cartpole()
+        self.delay_vis()
+            
+  
+    def _init_vis(self):
+        """
+        
+        """
+        screen_width=400
+        screen_height=300
+        axis = [-3.0,3.0,-2.0,2.0]
+        
+        self.screen = pygame.display.set_mode((screen_width,screen_height))
+        self.axis = axis
+        self.display_width = screen_width
+        self.display_height = screen_height
+        
+        self.clock = pygame.time.Clock()
+        
+        self._vis_initialized = True
+        
+        
+    def _sample_start_state(self,mean = None, std = None):
+        #return np.array([0.0,0.0,0.0,0.0])#np.zeros((self.ns,))
+        init_std = 0.01
+        if not std is None:
+            init_std = std
+            
+        init_m = mean
+        if init_m is None:
+            init_m = self.start_state
+        
+        return init_std*np.random.randn(4)+init_m
+        
+    def _draw_cartpole(self):
+        """ Draw the screen for the cart pole environment
+        
+        """
+        
+        # blacken screen
+        self.screen.fill((0,0,0))
+        ## get the cart box coordinates
+        scrwidt = self.display_width
+        scrhght = self.display_height
+        cart_x = self.current_state[0]
+        cart_coords = (cart_x -0.2, cart_x + 0.2,-0.1,0.1)
+        
+        
+        cart_height = float(((cart_coords[3]-cart_coords[2])/float(self.axis[3] - self.axis[2]))*float(scrhght))
+        #cart rectangle image coords
+        img_coords_cart = [0,0,0,0]
+        img_coords_cart[0] = float(((cart_coords[0] - self.axis[0])/float(self.axis[1] - self.axis[0]))*float(scrwidt)) #left side x coordinate      
+        img_coords_cart[1] = scrhght - cart_height - float(((cart_coords[3] - self.axis[2])/float(self.axis[3] - self.axis[2]))*float(scrhght)) #top y coord
+        img_coords_cart[2] = float(((cart_coords[1]-cart_coords[0])/float(self.axis[1] - self.axis[0]))*float(scrwidt)) # width
+        img_coords_cart[3] = cart_height # height
+        
+        cart_color = (255,255,0)
+
+
+        self.screen.fill(cart_color,pygame.Rect(tuple(img_coords_cart)))
+        #self.screen.fill()
+        #pygame.Rect()
+        #pole endpoints image coords
+        cart_coords = (cart_x,0.0)
+        img_coords_pole_0 = self.convert_coords(cart_coords)
+        img_coords_pole_1 = self.convert_coords(self._single_pend_top_pos(self.state_to_obs(self.current_state)))
+
+        pole_color = (0,255,255)
+        pygame.draw.line(self.screen,pole_color,img_coords_pole_0,img_coords_pole_1,4)
+        
+        pygame.display.flip()
+        
+    def _get_step_cost(self,state,u):
+        """ Return the cost of the current step as a function of distance to target
+        
+        """
+        idx_angle_velocity = 3
+        
+        pos = self._single_pend_top_pos(state)
+        state_target_trafo = np.append(pos,[state[idx_angle_velocity]])
+
+
+        diff_pos_vec = (self.target-state_target_trafo)[:,None]
+        cost_xy = np.dot(diff_pos_vec.T,np.dot(np.diag(self.D_cost),diff_pos_vec))
+        u_eval = u.reshape(-1,1)
+        cost_u = np.dot(u.T,np.dot(np.diag(self.R_cost),u))
+        cost = cost_xy + cost_u
+        warnings.warn("Accumulated system cost not implement! Returning 0")
+        
+        return cost
+        
+    def plot_ellipsoid_trajectory(self, p, q, vis_safety_bounds = True):
+        """ Visualize the reachability ellipsoid"""
+        raise NotImplementedError()
+
+    def _dynamics(self,t,state,action):
+        """
+        
+        """
+        dz = np.zeros((4,1))
+
+        dz[0] = state[1] #the cart pos
+        dz[1] = ( 2*self.m*self.l*state[3]**2*np.sin(state[2]) + 3*self.m*self.g*np.sin(state[2])*np.cos(state[2]) \
+               + 4*action - 4*self.b*state[1] )/( 4*(self.M+self.m)-3*self.m*np.cos(state[2])**2 );
+        dz[2] = state[3] # the angle
+        dz[3] = (-3*self.m*self.l*state[3]**2*np.sin(state[2])*np.cos(state[2]) - 6*(self.M+self.m)*self.g*np.sin(state[2]) \
+              - 6*(action-self.b*state[1])*np.cos(state[2]) )/( 4*self.l*(self.m+self.M)-3*self.m*self.l*np.cos(state[2])**2 );
+            
+        return dz    
+    
+    def random_action(self):
+        """
+
+        """           
+        if not self.current_state is None:
+            x_pos = self.current_state[0]
+            if x_pos > 0.9:
+                return np.random.rand(self.n_u)*self.u_min
+            if x_pos <0.1:
+                return np.random.rand(self.n_u)*self.u_max
+            
+        return np.random.rand(self.n_u) * (self.u_max -self.u_min) + self.u_min
+    
+    
+    def _single_pend_top_pos(self,state):
+        """
+        
+        """
+        #pos_x_y = np.zeros((2,1))
+        idx_cartpos = 0
+      
+        
+        cart_pos = [state[idx_cartpos],0.0]
+        #cart_pos = vertcat(state[idx_cartpos],0.0)
+
+        sin_ang = np.sin(state[self.idx_angles[0]])
+        cos_ang = np.cos(state[self.idx_angles[0]])
+        
+        rel_pos_pole1 = [self.l *sin_ang,-self.l *cos_ang]
+        
+        return np.add(cart_pos,rel_pos_pole1)
+    
+    def get_target(self):
+        """
+        
+        """
+        
+        return self.target
+        
+    
+    def state_trafo(self,state_obs,variance = None):
+        """ State transformation mapping from state space to
+            operational (target-) space
+        
+        """
+
+        velocity_pend = state_obs[2]
+        state_trafo = vertcat(self._single_pend_top_pos(state_obs).reshape((2,1)),velocity_pend.reshape((1,1)))
+        if variance is None:
+            return state_trafo
+        else:
+            return state_trafo,variance
+        
+    
+    def convert_coords(self,coords):
+        """
+        """
+        img_coords = [0,0]
+        img_width = self.display_width
+        img_height = self.display_height
+        img_coords[0] = float(((coords[0] - self.axis[0])/float(self.axis[1] - self.axis[0]))*float(img_width))
+        img_coords[1] = img_height - float(((coords[1] - self.axis[2])/float(self.axis[3] - self.axis[2]))*float(img_height))
+        return tuple(img_coords)
+
+
 if __name__ == "__main__":
-    pend = InvertedPendulum()
+    pend = CartPole()
     s = pend.reset()
     print(s)
-    a = pend.random_action()
-    print(a)
-    _,s_new,_ = pend.step(a)
-    print(s_new)
+
+    for i in range(200):
+        a = pend.random_action()
+        print(a)
+        _,s_new,_,_= pend.step(a)
+        pend.render()
+        print(s_new)
     
     p = np.vstack((s.reshape((1,-1)),s_new.reshape((1,-1))))
     q = .1*np.eye(2).reshape((1,-1))
     q = np.stack((q,q))
-    pend.plot_ellipsoid_trajectory(p,q,True)
+    #pend.plot_ellipsoid_trajectory(p,q,True)
         
         
         
