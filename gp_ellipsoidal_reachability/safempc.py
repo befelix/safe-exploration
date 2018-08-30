@@ -15,10 +15,18 @@ from casadi import SX, mtimes, vertcat, sum2, sqrt
 from casadi import reshape as cas_reshape
 from gp_reachability_casadi import multi_step_reachability as cas_multistep
 from gp_reachability_casadi import onestep_reachability, lin_ellipsoid_safety_distance, objective
+from uncertainty_propagation_casadi import mean_equivalent, multi_step_taylor_symbolic
 from gp_reachability import multistep_reachability
 from utils import dlqr, feedback_ctrl
 
 from ilqr_cython import CILQR
+
+ATTR_NAMES_PERF = ['type_perf_traj','n_perf','r','perf_has_fb']
+DEFAULT_OPT_PERF = {'type_perf_traj':'mean_equiv','n_perf' : 10, 'r' : 1, 'perf_has_fb' : False }
+
+ATTR_NAMES_ENV = ['l_mu','l_sigma','h_mat_safe','h_safe','lin_model','ctrl_bounds','safe_policy','h_mat_obs','h_obs' , 'dt']
+DEFAULT_OPT_ENV = {'ctrl_bounds': None,'safe_policy' : None, 'lin_model' : None, 'h_mat_obs' : None, 'h_obs':None}
+
 
 class SafeMPC:
     """ Gaussian Process MPC with safety bounds
@@ -27,10 +35,9 @@ class SafeMPC:
     
     """
     
-    def __init__(self, n_safe, n_perf, gp, l_mu, l_sigma, h_mat_safe, h_safe, wx_cost, wu_cost, dt,beta_safety = 2.5,
-                 h_mat_obs= None, h_obs = None,
+    def __init__(self, n_safe, gp, opt_env, wx_cost, wu_cost,beta_safety = 2.5,
                  rhc = True, ilqr_init = False, lin_model = None, ctrl_bounds = None,
-                 safe_policy = None):
+                 safe_policy = None, opt_perf_trajectory = None):
         """ Initialize the SafeMPC object with dynamic model information
         
         
@@ -38,7 +45,6 @@ class SafeMPC:
         self.rhc = rhc
         self.gp = gp
         self.n_safe = n_safe
-        self.n_perf = n_perf
         self.n_fail = self.n_safe #initialize s.t. there is no backup strategy
         self.n_s = self.gp.n_s
         self.n_u = self.gp.n_u
@@ -71,13 +77,6 @@ class SafeMPC:
             to be of shape n_u x 2 with i,0 lower bound and i,1 upper bound per dimension"""
             self.ctrl_bounds = ctrl_bounds
             
-        
-        self.m_safe = m_safe_mat
-        self.h_mat_safe = h_mat_safe
-        self.h_safe = h_safe
-        self.h_mat_obs = h_mat_obs
-        self.h_obs = h_obs
-        
         self.wx_cost = wx_cost
         self.wu_cost = wu_cost
         self.wx_feedback = wx_cost
@@ -90,7 +89,8 @@ class SafeMPC:
         self.verbosity = 2
         self.ilqr_init = ilqr_init
         
-        
+        ## SET ALL ATTRIBUTES FOR THE MODEL
+        self._set_attributes_from_dict(ATTR_NAMES_ENV,DEFAULT_OPT_ENV,opt_env)
         self.lin_prior = False
         self.a = np.eye(self.n_s)
         self.b = np.zeros((self.n_s,self.n_u))
@@ -111,6 +111,12 @@ class SafeMPC:
         self.ilqr_custom_c = None
         if ilqr_init:
             self.init_ilqr_initializer()
+
+
+        if self.performance_trajectory is None:
+            self.performance_trajectory = mean_equivalent
+        self._set_attributes_from_dict(ATTR_NAMES_PERF,DEFAULT_OPT_PERF,opt_perf_trajectory)
+
             
     def init_solver(self, cost_func = None):
         """ Initialize a casadi solver object with safety bounds information
@@ -124,6 +130,8 @@ class SafeMPC:
                 cost_func(p_all,k_ff_all,x_perf,u_perf)
             otherwise:
                 cost_func(p_all,k_ff_all)
+        
+
         """     
         x_cstr_scaling = 1        
         
@@ -147,27 +155,18 @@ class SafeMPC:
         g = vertcat(g,g_safe)
         lbg += lbg_safe
         ubg += ubg_safe
-        g_name += g_names_safe
-        
-        u_perf = []
-        if self.n_perf > 1:
-            u_perf = SX.sym("u_perf",(self.n_perf-1,self.n_u))
-            x_perf = p_all[0,:]
-            x_perf_new = x_perf.T
-            for i in range(self.n_perf-1):
-                u_i = u_perf[i,:].T
-                mu_pred, _ = self.gp.predict_casadi_symbolic(cas.horzcat(x_perf_new.T,u_i.T)) 
-                x_perf_new = mtimes(self.a,x_perf_new) + mtimes(self.b,u_perf[i,:].T) + mu_pred.T
-                x_perf = vertcat(x_perf,x_perf_new.T)
-                
-                if self.has_ctrl_bounds:
-                    g_u_i, lbu_i, ubu_i = self._generate_control_constraint(u_i)
-                    g = vertcat(g,g_u_i)
-                    lbg += lbu_i
-                    ubg += ubu_i
-                    g_name += ["ctrl_constr_performance_{}".format(i)]
-            u_perf = u_perf.reshape((-1,1))
-        
+        g_name += g_names_safe       
+
+
+        ## Generate performance trajectory 
+        u_perf, mu_perf, sigma_perf, g_perf,lbg_perf, ubg_perf, g_names_perf = self._generate_perf_trajectory_casadi(mu_0,u_0)
+        g += g_perf
+        lbg += lbg_perf
+        ubg += ubg_perf
+        g_name += g_names_perf
+
+        ## Generate cost function 
+        # TO-DO: wrap this in a new function
         if cost_func is None:
             cost = 0
             if self.n_perf > 1:
@@ -186,7 +185,7 @@ class SafeMPC:
                 cost = cost_func(p_0,u_0,p_all,k_ff_all,x_perf,u_perf)
             else:
                 cost = cost_func(p_0,u_0,p_all,k_ff_all)
-                
+        
         opt_vars = vertcat(u_0,u_perf,k_ff_all.reshape((-1,1)),k_fb_ctrl.reshape((-1,1)))
         opt_params = vertcat(p_0,k_fb_0.reshape((-1,1)))
         
@@ -267,6 +266,36 @@ class SafeMPC:
         
         return g,lbg,ubg,g_name
             
+    def _generate_perf_trajectory_casadi(self,mu_0,u_0):
+        """ Generate the performance trajectory vars for the casadi solver"""
+
+        if self.r > 1:
+            raise NotImplementedError("Currently we do not support coupling performance and safety trajectory for more than one step")
+
+        # we don't have a performance trajectory, so nothing to do here. Might wanna catch this even before
+        if self.n_perf <= 1: 
+            return [],[],[],[],[],[]
+
+        if self.n_perf > 1:
+            u_perf = vstack(u_0,SX.sym("u_perf",(self.n_perf-1,self.n_u)))
+
+            mu_perf_all, sigma_perf_all = self.perf_trajectory(mu_0,self.gp,u_perf,k_fb,self.a,self.b)
+        
+        if self.has_ctrl_bounds:
+            g_name = []
+            g = []
+            lbg = []
+            ubg = []
+            for i in range(self.n_perf-1):
+                g_u_i, lbu_i, ubu_i = self._generate_control_constraint(u_perf[i+1,:].T)
+                g = vertcat(g,g_u_i)
+                lbg += lbu_i
+                ubg += ubu_i
+                g_name += ["ctrl_constr_performance_{}".format(i)]
+        return 
+
+
+
     def _generate_control_constraint(self,k_ff,q = None,k_fb = None,ctrl_bounds = None):
         """ Build control constraints from state ellipsoids and linear feedback controls
         
@@ -734,6 +763,28 @@ class SafeMPC:
                 print(u_ilqr[i+1])
         return u_0,k_fb_0, k_ff_0 
         
+    def _set_attributes_from_dict(self, attrib_names, default_attribs = {}, custom_attrib = {} ):
+        """ """
+
+        for attr_name in attrib_names:
+            attr_val = default_attribs[attr_name]
+
+            if attr_name in custom_attrib:
+                attr_val = custom_attrib[attr_name]
+            elif attr_name in default_attribs:
+                attr_val = custom_attrib[attr_name]
+            else:
+                raise ValueError("Neither a custom nor a default value is given for the requried attribute {}".format(attr_name))
+
+            setattr(self,attr_name,attr_val)
+
+    def _set_perf_trajectory(self,name):
+        """ Get the peformance trajectory function from identifier"""
+        if name == 'mean_equivalent':
+            self.perf_trajectory = mean_equivalent
+        elif: name == 'taylor':
+            self.perf_trajectory = multi_step_taylor_symbolic
+
     def _get_init_controls(self,x_0,p_safe):
         """ Initialize the controls for the MPC step
         
