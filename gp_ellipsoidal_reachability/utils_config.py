@@ -7,7 +7,7 @@ Created on Tue Nov 21 09:44:58 2017
 
 from gp_models import SimpleGPModel
 from safempc import SafeMPC
-from environments import InvertedPendulum
+from environments import InvertedPendulum, CartPole
 from os.path import abspath, join, exists, dirname, basename, realpath
 from importlib import import_module
 from os import mkdir
@@ -18,9 +18,6 @@ import numpy as np
 def create_solver(conf, env, model_options = None):
     """ Create a solver from a set of options and environment information"""
     
-
-    
-
     n_safe = conf.n_safe
     n_perf = conf.n_perf
     l_mu = env.l_mu
@@ -30,8 +27,6 @@ def create_solver(conf, env, model_options = None):
     lin_model = None
     
     h_mat_safe, h_safe, h_mat_obs, h_obs = env.get_safety_constraints(normalize = True) 
-    print(h_mat_safe)
-    print(env.h_mat_safe)
     a_true,b_true = env.linearize_discretize()
     
     safe_policy = None
@@ -53,9 +48,31 @@ def create_solver(conf, env, model_options = None):
     
     dt = env.dt
     ctrl_bounds = np.hstack((np.reshape(env.u_min,(-1,1)),np.reshape(env.u_max,(-1,1))))
-    mpc_control = SafeMPC(n_safe,n_perf,gp,l_mu,l_sigm,h_mat_safe,h_safe,
-                          wx_cost,wu_cost,dt,beta_safety = conf.beta_safety,h_mat_obs = h_mat_obs,h_obs = h_obs,
-                          lin_model = lin_model,ctrl_bounds = ctrl_bounds,safe_policy=safe_policy,ilqr_init = conf.ilqr_init)
+
+    # the environment options needed for the safempc algorithm
+    env_opts_safempc = dict()
+    env_opts_safempc["l_mu"] = env.l_mu
+    env_opts_safempc["l_sigma"] = env.l_sigm   
+    env_opts_safempc["h_mat_safe"] = h_mat_safe
+    env_opts_safempc["h_safe"] = h_safe
+    env_opts_safempc["lin_model"] = lin_model
+    env_opts_safempc["ctrl_bounds"] = ctrl_bounds
+    env_opts_safempc["safe_policy"] = safe_policy
+    env_opts_safempc["h_mat_obs"] = h_mat_obs
+    env_opts_safempc["h_obs"] = h_obs
+    env_opts_safempc["dt"] = env.dt
+
+    perf_opts_safempc = dict()
+    perf_opts_safempc["type_perf_traj"] = conf.type_perf_traj
+    perf_opts_safempc["n_perf"] = conf.n_perf
+    perf_opts_safempc["r"] = conf.r
+    perf_opts_safempc["perf_has_fb"] = conf.perf_has_fb
+
+
+    mpc_control = SafeMPC(n_safe, gp, env_opts_safempc, wx_cost, wu_cost,beta_safety = conf.beta_safety,
+                 ilqr_init = conf.ilqr_init, lin_model = lin_model, ctrl_bounds = ctrl_bounds,
+                 safe_policy = safe_policy, opt_perf_trajectory = perf_opts_safempc)
+
     #mpc_control.init_solver()
     
     return mpc_control
@@ -67,6 +84,8 @@ def create_env(env_name,env_options_dict = None):
         env_options_dict = dict()
     if env_name == "InvertedPendulum":
         return InvertedPendulum(**env_options_dict)
+    elif env_name == "CartPole":
+        return CartPole(**env_options_dict)
     else:
         raise NotImplementedError("Unknown environment: {}".format(conf.env_name))
         
@@ -121,7 +140,7 @@ def loadConfig(conf_path):
     else:
         filename = basename(conf_path)
         module_name = filename.split('.')[0]
-        module_name = 'example_configs.' + module_name
+        module_name = 'scenario_configs.' + module_name
         configuration = import_module(module_name)
         conf = configuration.Config()
         #conf_dir = dirname(conf_path)
