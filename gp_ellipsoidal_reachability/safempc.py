@@ -11,11 +11,11 @@ import sys
 import scipy
 import gp_reachability
 
-from casadi import SX, mtimes, vertcat, sum2, sqrt
+from casadi import SX, mtimes, vertcat, sum2, sqrt, sum1, diag
 from casadi import reshape as cas_reshape
 from gp_reachability_casadi import multi_step_reachability as cas_multistep
 from gp_reachability_casadi import onestep_reachability, lin_ellipsoid_safety_distance, objective
-from uncertainty_propagation_casadi import mean_equivalent, multi_step_taylor_symbolic
+from uncertainty_propagation_casadi import mean_equivalent_multistep, multi_step_taylor_symbolic
 from gp_reachability import multistep_reachability
 from utils import dlqr, feedback_ctrl
 
@@ -48,27 +48,25 @@ class SafeMPC:
         self.n_fail = self.n_safe #initialize s.t. there is no backup strategy
         self.n_s = self.gp.n_s
         self.n_u = self.gp.n_u
-        self.l_mu = l_mu
-        self.l_sigma = l_sigma
-        self.dt = dt
         self.has_openloop = False
         
         self.safe_policy = safe_policy
         
-        
-        if h_mat_obs is None:
+        self._set_attributes_from_dict(ATTR_NAMES_ENV,DEFAULT_OPT_ENV,opt_env)
+
+        if self.h_mat_obs is None:
             m_obs_mat = 0
         else:
-            m_obs_mat, n_s_obs = np.shape(h_mat_obs)
+            m_obs_mat, n_s_obs = np.shape(self.h_mat_obs)
             assert n_s_obs == self.n_s, " Wrong shape of obstacle matrix"
             assert np.shape(h_obs) == (m_obs_mat,1), " Shapes of obstacle linear inequality matrix/vector must match "
         self.m_obs = m_obs_mat
         
         
-        m_safe_mat, n_s_safe = np.shape(h_mat_safe)
+        m_safe_mat, n_s_safe = np.shape(self.h_mat_safe)
         assert n_s_safe == self.n_s, " Wrong shape of safety matrix"
-        assert np.shape(h_safe) == (m_safe_mat,1), " Shapes of safety linear inequality matrix/vector must match "
-        
+        assert np.shape(self.h_safe) == (m_safe_mat,1), " Shapes of safety linear inequality matrix/vector must match "
+        self.m_safe = m_safe_mat
         
         self.has_ctrl_bounds = False        
         if not ctrl_bounds is None:
@@ -89,19 +87,25 @@ class SafeMPC:
         self.verbosity = 2
         self.ilqr_init = ilqr_init
         
-        ## SET ALL ATTRIBUTES FOR THE MODEL
-        self._set_attributes_from_dict(ATTR_NAMES_ENV,DEFAULT_OPT_ENV,opt_env)
+        ## SET ALL ATTRIBUTES FOR THE ENVIRONMENT 
+        
         self.lin_prior = False
         self.a = np.eye(self.n_s)
         self.b = np.zeros((self.n_s,self.n_u))
-        if not lin_model is None:
-            self.a,self.b = lin_model
+        if not self.lin_model is None:
+            self.a,self.b = self.lin_model
             self.lin_prior = True
             if self.safe_policy is None:
                 #no safe policy specified? Use lqr as safe policy
                 K = self.get_lqr_feedback()
                 self.safe_policy = lambda x: np.dot(K,x)
             
+
+        #if self.performance_trajectory is None:
+        #    self.performance_trajectory = mean_equivalent
+        self._set_attributes_from_dict(ATTR_NAMES_PERF,DEFAULT_OPT_PERF,opt_perf_trajectory)
+        self._set_perf_trajectory(self.type_perf_traj)
+        
         self.k_fb_all = None
         if self.safe_policy is None:
             warnings.warn("No SafePolicy!")
@@ -113,11 +117,7 @@ class SafeMPC:
             self.init_ilqr_initializer()
 
 
-        if self.performance_trajectory is None:
-            self.performance_trajectory = mean_equivalent
-        self._set_attributes_from_dict(ATTR_NAMES_PERF,DEFAULT_OPT_PERF,opt_perf_trajectory)
-
-            
+        
     def init_solver(self, cost_func = None):
         """ Initialize a casadi solver object with safety bounds information
         
@@ -157,41 +157,23 @@ class SafeMPC:
         ubg += ubg_safe
         g_name += g_names_safe       
 
-
         ## Generate performance trajectory 
-        u_perf, mu_perf, sigma_perf, g_perf,lbg_perf, ubg_perf, g_names_perf = self._generate_perf_trajectory_casadi(mu_0,u_0)
-        g += g_perf
+        k_ff_perf, k_fb_perf, mu_perf, sigma_perf, g_perf,lbg_perf, ubg_perf, g_names_perf = self._generate_perf_trajectory_casadi(p_0,u_0)
+        
+        g = vertcat(g,g_perf) 
         lbg += lbg_perf
         ubg += ubg_perf
         g_name += g_names_perf
-
-        ## Generate cost function 
-        # TO-DO: wrap this in a new function
-        if cost_func is None:
-            cost = 0
-            if self.n_perf > 1:
-                n_cost_deviation = np.minimum(self.n_perf-1,self.n_safe-1)
-                for i in range(1,n_cost_deviation):
-                    cost += mtimes(x_perf[i,:]-p_all[i,:],mtimes(.1*self.wx_cost,(x_perf[i,:]-p_all[i,:]).T))
-            #objective(x_perf,q_all,x_target,k_ff_all,self.wx_cost,self.wu_cost)
-                    
-            _,sigm = self.gp.predict_casadi_symbolic(vertcat(p_0,u_0).T)
-            cost += -sum2(sqrt(sigm))  
-            
-            self.ilqr_custom_c = (-sum2(sqrt(sigm)),p_0,u_0)
-        else:
-            
-            if self.n_perf > 1:
-                cost = cost_func(p_0,u_0,p_all,k_ff_all,x_perf,u_perf)
-            else:
-                cost = cost_func(p_0,u_0,p_all,k_ff_all)
         
-        opt_vars = vertcat(u_0,u_perf,k_ff_all.reshape((-1,1)),k_fb_ctrl.reshape((-1,1)))
+        cost = self.generate_cost_function(p_0,u_0,p_all,q_all,mu_perf, sigma_perf,k_ff_all, k_fb_ctrl, k_fb_perf = k_fb_perf, k_ff_perf = k_ff_perf, custom_cost_func = None)
+
+        opt_vars = vertcat(u_0,k_ff_perf,k_ff_all.reshape((-1,1)),k_fb_ctrl.reshape((-1,1)),k_fb_perf.reshape((-1,1)))
         opt_params = vertcat(p_0,k_fb_0.reshape((-1,1)))
         
         prob = {'f':cost,'x': opt_vars,'p':opt_params,'g':g}
+
         #opt = {'ipopt':{'hessian_approximation':'limited-memory',"max_iter":120,"expect_infeasible_problem":"yes"}} #ipopt 
-        opt = {'qpsol':'qpoases','max_iter':80,'hessian_approximation':'limited-memory'}#,"c1":5e-4} #sqpmethod #,'hessian_approximation':'limited-memory'
+        opt = {'qpsol':'qpoases','max_iter':50,'hessian_approximation':'limited-memory'}#,"c1":5e-4} #sqpmethod #,'hessian_approximation':'limited-memory'
         solver = cas.nlpsol('solver','sqpmethod',prob,opt)
         
         self.solver = solver
@@ -200,6 +182,28 @@ class SafeMPC:
         self.solver_initialized = True
         self.g_name = g_name
     
+    def generate_cost_function(self,p_0,u_0,p_all,q_all,mu_perf, sigma_perf,k_ff_all, k_fb_ctrl, k_fb_perf = None, k_ff_perf = None, custom_cost_func = None):
+        ## Generate cost function 
+        # TO-DO: wrap this in a new function
+        if custom_cost_func is None:
+            cost = 0
+            if self.n_perf > 1:
+                n_cost_deviation = np.minimum(self.n_perf-1,self.n_safe-1)
+                for i in range(1,n_cost_deviation):
+                    cost += mtimes(mu_perf[i,:]-p_all[i,:],mtimes(.1*self.wx_cost,(mu_perf[i,:]-p_all[i,:]).T))
+                    cost -= sum1(sqrt(diag(sigma_perf[i])))
+                    print("???")
+            
+                self.ilqr_custom_c = (-sum1(sqrt(sigma_perf[-1])),p_0,u_0)
+        else:
+            
+            if self.n_perf > 1:
+                cost = custom_cost_func(p_0,u_0,p_all,k_ff_all,x_perf,u_perf)
+            else:
+                cost = custom_cost_func(p_0,u_0,p_all,k_ff_all)
+
+        return cost
+
     def generate_safety_constraints(self, p_all, q_all, u_0, k_fb_0, k_fb_ctrl, k_ff_all):
         """ Generate all safety constraints
         
@@ -253,19 +257,20 @@ class SafeMPC:
                 g = vertcat(g,g_state)
                 lbg += [-cas.inf]*self.m_obs
                 ubg += [0]*self.m_obs
-                g_name += ["ellipsoid_ctrl_constraint_{}".format(i)]*self.m_obs
+                g_name += ["obstacle_avoidance_constraint{}".format(i)]*self.m_obs
             
         # terminal state constraint
         p_T = p_all[-1,:].T
         q_T = q_all[-1,:].reshape((self.n_s,self.n_s))
         g_terminal = lin_ellipsoid_safety_distance(p_T,q_T,self.h_mat_safe,self.h_safe)
+
         g = vertcat(g,g_terminal)
         g_name += ["terminal constraint"]*self.m_safe
         lbg += [-cas.inf]*self.m_safe
         ubg += [0]*self.m_safe
         
         return g,lbg,ubg,g_name
-            
+        
     def _generate_perf_trajectory_casadi(self,mu_0,u_0):
         """ Generate the performance trajectory vars for the casadi solver"""
 
@@ -274,12 +279,16 @@ class SafeMPC:
 
         # we don't have a performance trajectory, so nothing to do here. Might wanna catch this even before
         if self.n_perf <= 1: 
-            return [],[],[],[],[],[]
-
+            return np.array([]),np.array([]),np.array([]),np.array([]),np.array([]),[],[],[]
         if self.n_perf > 1:
-            u_perf = vstack(u_0,SX.sym("u_perf",(self.n_perf-1,self.n_u)))
+            k_ff_perf = SX.sym("k_ff_perf",(self.n_perf-1,self.n_u))
 
-            mu_perf_all, sigma_perf_all = self.perf_trajectory(mu_0,self.gp,u_perf,k_fb,self.a,self.b)
+            k_fb_perf = np.array([])
+            if self.perf_has_fb:
+                k_fb_perf = SX.sym("k_fb_perf",(self.n_u,self.n_s))
+
+
+            mu_perf_all, sigma_perf_all = self.perf_trajectory(mu_0,self.gp,vertcat(u_0,k_ff_perf)  ,k_fb_perf,None,self.a,self.b)
         
         if self.has_ctrl_bounds:
             g_name = []
@@ -287,14 +296,14 @@ class SafeMPC:
             lbg = []
             ubg = []
             for i in range(self.n_perf-1):
-                g_u_i, lbu_i, ubu_i = self._generate_control_constraint(u_perf[i+1,:].T)
+                g_u_i, lbu_i, ubu_i = self._generate_control_constraint(k_ff_perf[i,:].T)
                 g = vertcat(g,g_u_i)
                 lbg += lbu_i
                 ubg += ubu_i
                 g_name += ["ctrl_constr_performance_{}".format(i)]
-        return 
 
 
+        return k_ff_perf, k_fb_perf, mu_perf_all, sigma_perf_all, g,lbg, ubg, g_name
 
     def _generate_control_constraint(self,k_ff,q = None,k_fb = None,ctrl_bounds = None):
         """ Build control constraints from state ellipsoids and linear feedback controls
@@ -359,8 +368,7 @@ class SafeMPC:
         """
 
         return mtimes(self.a,state.T) + mtimes(self.b,action.T)
-
-        
+  
     def eval_prior(self, state, action):
         """ Evaluate the prior numerically 
         
@@ -531,27 +539,34 @@ class SafeMPC:
         assert self.solver_initialized, "Need to initialize the solver first!"
         
         
-        u_0, k_ff_all_0, k_fb_0, u_perf_0, k_fb_ctrl_0  = self._get_init_controls(p_0,p_safe)
+        u_0, k_ff_all_0, k_fb_0, u_perf_0, k_fb_ctrl_0, k_fb_perf_0 = self._get_init_controls(p_0,p_safe)
         
+
+        if k_fb_perf_0 is None:
+            k_fb_perf_0 = []
+        else:
+            k_fb_perf_0 = cas_reshape(k_fb_perf_0,(-1,1))
+
         if u_perf_0 is None:
             u_perf_0 = []
         else:
             u_perf_0 = cas_reshape(u_perf_0,(-1,1))
         params = np.vstack((p_0,cas_reshape(k_fb_0,(-1,1))))
         u_init = vertcat(cas_reshape(u_0,(-1,1)),u_perf_0, \
-                         cas_reshape(k_ff_all_0,(-1,1)),cas_reshape(k_fb_ctrl_0,(-1,1)))
+                         cas_reshape(k_ff_all_0,(-1,1)),cas_reshape(k_fb_ctrl_0,(-1,1)),cas_reshape(k_fb_perf_0,(-1,1)))
         
         crash = False
 
+        #sol = self.solver(x0=u_init,lbg=self.lbg,ubg=self.ubg,p=params)
         try:
             sol = self.solver(x0=u_init,lbg=self.lbg,ubg=self.ubg,p=params)
         except:
             crash = True
             warnings.warn("NLP solver crashed, solution infeasible")
             sol = None
-
+        print(sol)
+        print(sol['x'])
         return self._get_solution(p_0,sol,k_fb_0,sol_verbose,crash)
-        
         
     def _get_solution(self,x_0,sol, k_fb_0, sol_verbose = False,crashed=False,feas_tol = 1e-6):
         """ Process the solution dict of the casadi solver 
@@ -587,6 +602,8 @@ class SafeMPC:
         feasible = True
         if crashed:
             feasible = False
+            if self.verbosity > 1:
+                print("Optimization crashed, infeasible soluion!")
         else:
             g_res = np.array(sol["g"]).squeeze()
             if np.any(np.array(self.lbg) - feas_tol > g_res ) or np.any(np.array(self.ubg) + feas_tol < g_res ):      
@@ -767,8 +784,6 @@ class SafeMPC:
         """ """
 
         for attr_name in attrib_names:
-            attr_val = default_attribs[attr_name]
-
             if attr_name in custom_attrib:
                 attr_val = custom_attrib[attr_name]
             elif attr_name in default_attribs:
@@ -781,9 +796,11 @@ class SafeMPC:
     def _set_perf_trajectory(self,name):
         """ Get the peformance trajectory function from identifier"""
         if name == 'mean_equivalent':
-            self.perf_trajectory = mean_equivalent
-        elif: name == 'taylor':
+            self.perf_trajectory = mean_equivalent_multistep
+        elif name == 'taylor':
             self.perf_trajectory = multi_step_taylor_symbolic
+        else:
+            raise NotImplementedError("Unknown uncertainty propagation method")
 
     def _get_init_controls(self,x_0,p_safe):
         """ Initialize the controls for the MPC step
@@ -824,8 +841,15 @@ class SafeMPC:
                 
                 if self.n_perf > 1:                    
                     u_perf_0 = 2*np.random.randn(self.n_perf-1,self.n_u)
+
+        warnings.warn("This might be a stupid way of initializing the feedback controls of the performance trajectory!")
+
+        k_fb_perf = np.array([])
+        if self.perf_has_fb:
+            k_fb_perf_0 = np.copy(k_fb_ctrl_0)
+
                     
-        return u_0, k_ff_all_0, k_fb_0, u_perf_0, k_fb_ctrl_0 
+        return u_0, k_ff_all_0, k_fb_0, u_perf_0, k_fb_ctrl_0, k_fb_perf_0
                 
     def update_model(self, x, y, train = True, replace_old = True):
         """ Update the model of the dynamics 
@@ -893,7 +917,8 @@ class SafeMPC:
         
         c_all = lambda x,u : c(x,u), c_x(x,u), c_xx(x,u),c_u(x,u),c_uu(x,u),c_ux(x,u)
         return c_all
-        
+      
+
 class SafeMPCModelILQR:
     """ Utiliy class which creates a model for the ilqr initialization
     
