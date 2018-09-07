@@ -26,7 +26,7 @@ class Environment:
     __metaclass__ = abc.ABCMeta
     
     def __init__(self,name, n_s, n_u, dt, start_state, init_std, plant_noise,
-                 u_min, u_max, target):
+                 u_min, u_max, target,p_origin = None):
         """
         
         """
@@ -42,6 +42,9 @@ class Environment:
         self.u_max = u_max
         self.plant_noise = plant_noise
         self.target = target
+
+        if p_origin is None:
+            self.p_origin = np.zeros((n_s,))
         
     @abc.abstractmethod
     def reset(self,mean = None, std = None):
@@ -73,6 +76,11 @@ class Environment:
     def plot_ellipsoid_trajectory(self, p, q, vis_safety_bounds = True):
         """ Visualize the reachability ellipsoid"""
         pass
+
+    @abc.abstractmethod
+    def _jac_dynamics(self):
+        """ The jacobian of the dynamics """
+        pass
     
     def _sample_start_state(self, mean = None, std = None):
         """ """
@@ -85,6 +93,46 @@ class Environment:
             init_m = self.start_state
         
         return init_std*np.random.randn(self.n_s)+init_m
+
+    def linearize_discretize(self,x_center=None,u_center=None, normalize = True):
+        """ Discretize and linearize the system around an equilibrium point
+        
+        Parameters
+        ----------
+        x_center: 2x0 array[float], optional
+            The linearization center of the state. 
+            Default: the origin
+        u_center: 1x0 array[float], optional
+            The linearization center of the action
+            Default: zero
+        """
+        if x_center is None:
+            x_center = self.p_origin
+        else:
+            raise NotImplementedError("For now we only allow linearization at the origin!")
+
+        if u_center is None:
+            u_center = np.zeros((self.n_s,))
+        else:
+            raise NotImplementedError("For now we only allow linearization at the origin!")
+            
+        jac_ct = self._jac_dynamics()
+
+        A_ct = jac_ct[:,:self.n_s]
+        B_ct = jac_ct[:,self.n_s:]
+        
+        if normalize:
+            m_x = np.diag(self.norm[0])
+            m_u = np.diag(self.norm[1])
+            m_x_inv = np.diag(self.inv_norm[0])
+            m_u_inv = np.diag(self.inv_norm[1])
+            A_ct = np.linalg.multi_dot((m_x_inv,A_ct,m_x))
+            B_ct = np.linalg.multi_dot((m_x_inv,B_ct,m_u))
+        
+        ct_input = (A_ct,B_ct,np.eye(self.n_s),np.zeros((self.n_s,self.n_u)))
+        A,B,_,_,_ = cont2discrete(ct_input,self.dt)
+        
+        return A,B
         
     def get_target(self):
         """ Return the target state 
@@ -215,24 +263,18 @@ class InvertedPendulum(Environment):
         
         return dz
         
-    def _jac_dynamics(self,t,state,action):
+    def _jac_dynamics(self):
         """ Evaluate the jacobians of the system dynamics
-        
-        Parameters
-        ----------
-        t: float
-            Input Parameter required for the odesolver for time-dependent
-            odes. Has no influence in this system.
-        state: 2x1 array[float]
-            The current state of the system
-        action: 1x1 array[float]
-            The action to be applied at the current time step
             
         Returns
         -------
         jac: 2x3 array[float]
             The jacobian of the dynamics w.r.t. the state and action
+
         """
+
+        state = np.zeros((self.n_s,))
+
         inertia = self.m* self.l**2
         jac_0 = np.zeros((1,3)) #jacobian of the first equation (dz[0])
         jac_0[0,0] = self.b/ inertia # derivative w.r.t. d_theta
@@ -242,40 +284,6 @@ class InvertedPendulum(Environment):
         jac_1 = np.eye(1,3) #jacobian of the second equation
         
         return np.vstack((jac_0,jac_1))
-        
-    def linearize_discretize(self,x_center=None,u_center=None, normalize = True):
-        """ Discretize and linearize the system around an equilibrium point
-        
-        Parameters
-        ----------
-        x_center: 2x0 array[float], optional
-            The linearization center of the state. 
-            Default: the origin
-        u_center: 1x0 array[float], optional
-            The linearization center of the action
-            Default: zero
-        """
-        if x_center is None:
-            x_center = self.p_origin
-        if u_center is None:
-            u_center = np.zeros((self.n_s,))
-            
-        jac_ct = self._jac_dynamics(0,x_center,u_center)
-        A_ct = jac_ct[:,:self.n_s]
-        B_ct = jac_ct[:,self.n_s:]
-        
-        if normalize:
-            m_x = np.diag(self.norm[0])
-            m_u = np.diag(self.norm[1])
-            m_x_inv = np.diag(self.inv_norm[0])
-            m_u_inv = np.diag(self.inv_norm[1])
-            A_ct = np.linalg.multi_dot((m_x_inv,A_ct,m_x))
-            B_ct = np.linalg.multi_dot((m_x_inv,B_ct,m_u))
-        
-        ct_input = (A_ct,B_ct,np.eye(self.n_s),np.zeros((self.n_s,self.n_u)))
-        A,B,_,_,_ = cont2discrete(ct_input,self.dt)
-        
-        return A,B
         
     def normalize(self,state = None,action = None):
         """ Normalize the inputs"""
@@ -580,7 +588,7 @@ class CartPole(Environment):
     Task: swing up pendulum via the cart in order to reach a upright resting position (zero angular velocity)
 
     """
-    def __init__(self,name = 'CartPole',dt=0.01,l = 0.5,m=0.5,M=0.5,b=0.1,g=9.82,start_state = np.array([0.0,0.0,0.0,0.0]),visualize = True, init_std = 0.0):
+    def __init__(self,name = 'CartPole',dt=0.01,l = 0.5,m=0.5,M=0.5,b=0.1,g=9.82,start_state = np.array([0.0,0.0,0.0,0.0]),visualize = True, init_std = 0.0,norm_x = None, norm_u = None):
         super(CartPole,self).__init__(name,4,1,dt,start_state,init_std,np.array([0.01,0.01,0.01,0.01])**2,np.array([-10.0]),np.array([10.0]),np.array([0.0,l,0.0]))
         ns = 4 
         nu = 1
@@ -598,6 +606,9 @@ class CartPole(Environment):
         self.g = g
         self.dt = 0.05
         self.visualize = visualize
+
+        self.l_mu = np.array([.1,.05,.1,.05]) #TODO: This should be somewhere else
+        self.l_sigm = np.array([.1,.05,.1,.05])
         
         self.idx_angles = np.array([2])
         self.obs_angles_sin = np.array([3])
@@ -608,6 +619,16 @@ class CartPole(Environment):
         self.D_cost = np.array([40,80,20])
         self.R_cost = np.array([1.0])
         self.start_state = start_state
+
+        max_deg = 30
+        if norm_x is None:
+            norm_x = np.array([1,1,np.sqrt(g/l), np.deg2rad(max_deg)])
+        
+        if norm_u is None:
+            norm_u = self.u_max - self.u_min
+            
+        self.norm = [norm_x,norm_u]
+        self.inv_norm = [arr ** -1 for arr in self.norm]
 
         
         
@@ -679,6 +700,8 @@ class CartPole(Environment):
         
     def state_to_cost_space_gaussian(self,mu,sigma):
         """ """
+
+
     def render(self):
         """
         
@@ -691,7 +714,7 @@ class CartPole(Environment):
             
   
     def _init_vis(self):
-        """
+        """ 
         
         """
         screen_width=400
@@ -785,16 +808,58 @@ class CartPole(Environment):
         """
         
         """
+
+        m = self.m
+        M = self.M
+        l = self.l
+        b = self.b
+        g = self.g
+
+        det = L*(M + m*tf.square(tf.sin(theta)))
+
+        x, v, theta, omega = tuple(np.split(state,[1,2,3,4]))
+
         dz = np.zeros((4,1))
 
         dz[0] = state[1] #the cart pos
-        dz[1] = ( 2*self.m*self.l*state[3]**2*np.sin(state[2]) + 3*self.m*self.g*np.sin(state[2])*np.cos(state[2]) \
-               + 4*action - 4*self.b*state[1] )/( 4*(self.M+self.m)-3*self.m*np.cos(state[2])**2 );
+        dz[1] = (action - m*L*tf.square(omega)*np.sin(theta) - b*omega*np.cos(theta) + 0.5*m*g*L*np.sin(2*theta)) * L/det
         dz[2] = state[3] # the angle
-        dz[3] = (-3*self.m*self.l*state[3]**2*np.sin(state[2])*np.cos(state[2]) - 6*(self.M+self.m)*self.g*np.sin(state[2]) \
-              - 6*(action-self.b*state[1])*np.cos(state[2]) )/( 4*self.l*(self.m+self.M)-3*self.m*self.l*np.cos(state[2])**2 );
+        dz[3] = (action*np.cos(theta) - 0.5*m*L*tf.square(omega)*np.sin(2*theta) - b*(m + M)*omega/(m*L) + (m + M)*g*np.sin(theta)) / det
             
         return dz    
+
+    def _jac_dynamics(self):
+        """ The jacobian of the dynamics at the origin"""
+
+        m = self.m
+        M = self.M
+        l = self.l
+        b = self.b
+        g = self.g
+
+        A = np.array([[0, 1,                     0, 0                             ],
+                      [0, 0, g * m / M            , -b / (M * l) ],
+                      [0, 0, 0                    , 1                             ],
+                      [0, 0, g * (m + M) / (l * M), -b * (m + M) / (m * M * l**2)]])
+
+        
+        B = np.array([0, 1 / M, 0, 1 / (M * l)]).reshape((-1, self.n_u))
+        
+        return np.hstack((A, B))
+
+    def get_safety_constraints(self, normalize = True):
+        """ Return the safe constraints
+        
+        Parameters
+        ----------
+        normalize: boolean, optional
+            If TRUE: Returns normalized constraints
+
+        """
+        
+        raise NotImplementedError("Not implemented yet")
+            
+        return h_mat_safe,self.h_safe,self.h_mat_obs,self.h_obs
     
     def random_action(self):
         """
