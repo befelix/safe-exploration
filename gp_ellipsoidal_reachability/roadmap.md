@@ -9,6 +9,7 @@
 #### `SafeMPC`
 - [ ] performance and safety trajectory share multiple controls
 - [ ] implement kim wabersich (zeilinger) approach  
+- [ ] custom cost function
 
 #### 'GPs'
 - [ ] addition and multiplication of kernels and their casadi representations
