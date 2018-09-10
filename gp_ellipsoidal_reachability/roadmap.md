@@ -4,7 +4,7 @@
 #### `Cart_Pole System`
 - [x] dynamics
 - [ ] constraints
-- [ ] gaussian angle to gaussian cos/sin representation (see PILCO)
+- [x] gaussian angle to gaussian cos/sin representation (see PILCO)
 
 #### `SafeMPC`
 - [ ] performance and safety trajectory share multiple controls
