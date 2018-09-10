@@ -9,7 +9,7 @@ admits being use by a Casadi ( symbolic ) framework.
 @author: tkoller
 """
 
-from casadi import mtimes, eig_symbolic, fmax, norm_2, horzcat,sqrt, exp
+from casadi import mtimes, eig_symbolic, fmax, norm_2, horzcat,sqrt, exp, SX ,cos, sin
 import numpy as np
 
 
@@ -172,7 +172,7 @@ def matrix_norm_2(a_mat,x = None,n_iter = None):
     return mtimes(y.T,x)
         
     
-def trigProp(m, v, idx , a)
+def trigProp(m, v, idx , a):
     """ Exact moment-matching for trig function with Gaussian input
 
     Compute E(a*sin(x)), E(a*cos(x)), V(a*sin(x)), V(a*cos(x)) and cross-covariances
@@ -203,28 +203,30 @@ def trigProp(m, v, idx , a)
 
     v_exp_0 = exp(-v[idx,idx]/2)
 
-    m_out[0] = a*v_exp * sin(m[idx,0])
-    m_out[1] = a*v_exp * cos(m[idx,0])
+    m_sin = v_exp_0 * sin(m[idx,0])
+    m_cos = v_exp_0 * cos(m[idx,0])
 
+    m_out[0] = a*m_sin
+    m_out[1] = a*m_cos
     
-    v_exp_1 = exp(-v[idx,idx]*2)
+    v_exp_1 = exp(-2*v[idx,idx])
     e_s_sq = (1 - v_exp_1*cos(2*m[idx,0]))/2
     e_c_sq = (1 + v_exp_1*cos(2*m[idx,0]))/2
 
     e_s_times_c = v_exp_1 * sin(2*m[idx,0])/2
 
-    v_out[0,0] = e_s_sq - m_out[0]*2
-    v_out[1,1] = e_c_sq - m_out[1]*2
+    v_out[0,0] = e_s_sq - m_sin**2
+    v_out[1,1] = e_c_sq - m_cos**2
 
-    v_out[1,0] = e_s_times_c - m_out[0]*m_out[1]
+    v_out[1,0] = e_s_times_c - m_sin*m_cos
     v_out[0,1] = v_out[1,0]
 
     v_out = a**2*v_out
 
     d = np.shape(m)[0]
-    c = SX(d,2)
-    c_out[idx,0] = m_out[0]
-    c_out[idx,1] = -m_out[1]
+    c_out = SX(d,2)
+    c_out[idx,0] = m_out[1]
+    c_out[idx,1] = -m_out[0]
 
     return m_out, v_out, c_out
 

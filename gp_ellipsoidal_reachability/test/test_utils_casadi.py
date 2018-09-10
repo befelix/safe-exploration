@@ -147,4 +147,41 @@ def test_remainder_overapproximation(before_test_remainder_overapproximation):
     assert np.allclose(f_out_cas_sym_k[1],f_out_py[1]), "are the overapproximations of sigma the same"
      
     
+@pytest.fixture(params = [0])
+def before_trigProp(request):
+    """ Values are taken from PILCO implementation"""
+    m = np.array([1.4897,1.4090,1.4172])[:,None]
+    v = np.array([[1.0000,   -1.3499,    3.0349],
+                [-1.3499,    2.3484,   -4.1425],
+                [3.0349,   -4.1425,   10.2147]])
+    M = np.array([1.209074,
+    0.098270])[:,None]
+    V = np.array([[0.8053,   -0.0751],
+                [-0.0751,    1.7232]])
+    a = 2.0
+    idx = request.param
+    if idx == 0:
+        C = np.array([[   0.0983,   -1.2091],
+                    [0,         0],
+                    [0,         0]])
+
+    return m,v,idx,a,M,V,C
+
+def test_trigProp(before_trigProp):
+    m,v,idx,a,M,V,C = before_trigProp
+
+
+    m_cas = SX.sym('m',(3,1))
+    v_cas = SX.sym('v_cas',(3,3))
+
+    M_sym,V_sym,C_sym = utils_cas.trigProp(m_cas,v_cas,idx,a)
+    f = Function('trigProp',[m_cas,v_cas],[M_sym,V_sym,C_sym])
+
+    M_out,V_out,C_out = f(m,v)
+
+    a_tol= 1e-3
+    assert np.allclose(M_out,M,atol = a_tol) , 'Are the output means the same '
+    assert np.allclose(V_out,V,atol = a_tol) , 'Are the output variances the same'
+    assert np.allclose(C_out,C,atol = a_tol) , 'Are the cross-covariances the same'
+
     
