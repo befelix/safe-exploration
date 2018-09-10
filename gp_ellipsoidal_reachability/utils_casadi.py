@@ -9,7 +9,7 @@ admits being use by a Casadi ( symbolic ) framework.
 @author: tkoller
 """
 
-from casadi import mtimes, eig_symbolic, fmax, norm_2, horzcat,sqrt
+from casadi import mtimes, eig_symbolic, fmax, norm_2, horzcat,sqrt, exp
 import numpy as np
 
 
@@ -57,6 +57,7 @@ def compute_bounding_box_lagrangian(q,L,K,k,order = 2, verbose = 0):
         
     return box_lower, box_upper
     
+
 def compute_remainder_overapproximations(q,k_fb,l_mu,l_sigma):
     """ Compute symbolically the (hyper-)rectangle over-approximating the lagrangians of mu and sigma 
     
@@ -90,6 +91,8 @@ def compute_remainder_overapproximations(q,k_fb,l_mu,l_sigma):
     u_sigma = l_sigma*sqrt(r_sqr)
     
     return u_mu, u_sigma
+    
+
 def vec_max(x):
     """ Compute (symbolically) the maximum element in a vector
     
@@ -108,6 +111,7 @@ def vec_max(x):
             c = fmax(c,x[i+1])
     return c
     
+
 def matrix_norm_2_generalized(a, b_inv, x = None, n_iter = None):
     """ Get largest generalized eigenvalue of the pair inv_a^{-1},b
     
@@ -168,4 +172,60 @@ def matrix_norm_2(a_mat,x = None,n_iter = None):
     return mtimes(y.T,x)
         
     
+def trigProp(m, v, idx , a)
+    """ Exact moment-matching for trig function with Gaussian input
+
+    Compute E(a*sin(x)), E(a*cos(x)), V(a*sin(x)), V(a*cos(x)) and cross-covariances
+    for Gaussian inputs x \sim N(m_idx,v_idx) as well as input-output covariances
+    using exact moment-matching
     
+    Parameters
+    ----------
+    m : dx1 ndarray[float | casadi.Sym]
+        The mean of the input Gaussian
+    v : dxd ndarray[float | casadi.Sym]
+    idx: int
+        The index to be trigonometrically augmented
+    a: float
+        A scalar coefficient 
+
+    Returns
+    -------
+    m_out: 2x1 ndarray[float | casadi.Sym]
+        The mean of the trigonometric output
+    v_out: 2x2 ndarray[float | casadi.Sym] 
+        The variance of the trigonometric output
+    c_out: inv(v) times input-output-covariance
+
+    """
+    m_out = SX(2,1)
+    v_out = SX(2,2)
+
+    v_exp_0 = exp(-v[idx,idx]/2)
+
+    m_out[0] = a*v_exp * sin(m[idx,0])
+    m_out[1] = a*v_exp * cos(m[idx,0])
+
+    
+    v_exp_1 = exp(-v[idx,idx]*2)
+    e_s_sq = (1 - v_exp_1*cos(2*m[idx,0]))/2
+    e_c_sq = (1 + v_exp_1*cos(2*m[idx,0]))/2
+
+    e_s_times_c = v_exp_1 * sin(2*m[idx,0])/2
+
+    v_out[0,0] = e_s_sq - m_out[0]*2
+    v_out[1,1] = e_c_sq - m_out[1]*2
+
+    v_out[1,0] = e_s_times_c - m_out[0]*m_out[1]
+    v_out[0,1] = v_out[1,0]
+
+    v_out = a**2*v_out
+
+    d = np.shape(m)[0]
+    c = SX(d,2)
+    c_out[idx,0] = m_out[0]
+    c_out[idx,1] = -m_out[1]
+
+    return m_out, v_out, c_out
+
+
