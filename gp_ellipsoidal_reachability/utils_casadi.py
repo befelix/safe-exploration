@@ -9,7 +9,7 @@ admits being use by a Casadi ( symbolic ) framework.
 @author: tkoller
 """
 
-from casadi import mtimes, eig_symbolic, fmax, norm_2, horzcat,sqrt, exp, SX ,cos, sin
+from casadi import mtimes, eig_symbolic, fmax, norm_2, horzcat,sqrt, exp, SX ,cos, sin, det,inv
 import numpy as np
 
 
@@ -172,7 +172,7 @@ def matrix_norm_2(a_mat,x = None,n_iter = None):
     return mtimes(y.T,x)
         
     
-def trigProp(m, v, idx , a):
+def trig_prop(m, v, idx , a = 1.0):
     """ Exact moment-matching for trig function with Gaussian input
 
     Compute E(a*sin(x)), E(a*cos(x)), V(a*sin(x)), V(a*cos(x)) and cross-covariances
@@ -186,7 +186,7 @@ def trigProp(m, v, idx , a):
     v : dxd ndarray[float | casadi.Sym]
     idx: int
         The index to be trigonometrically augmented
-    a: float
+    a: float [optional]
         A scalar coefficient 
 
     Returns
@@ -230,4 +230,109 @@ def trigProp(m, v, idx , a):
 
     return m_out, v_out, c_out
 
+def trig_aug(m,v,idx,a = 1.0, keep_radian = False):
+    """ Augment state with sine/cosine represenation as Gaussian
 
+    Parameters
+    ----------
+    m : dx1 ndarray[float | casadi.Sym]
+        The mean of the input Gaussian
+    v : dxd ndarray[float | casadi.Sym]
+    idx: int
+        The index to be trigonometrically augmented
+    a: float [optional]
+        A scalar coefficient 
+    keep_radian: bool [optional]
+        Should the original representation (radian) of the angle be kept?
+
+
+    Returns
+    -------
+    m_out: (d+2)x1 ndarray[float | casadi.Sym]
+        The mean of the gaussian augmented with sine/cosine
+    v_out: (d+1)x(d+1) or (d+2)x(d+2) ndarray[float | casadi.Sym] 
+        The variance of the gaussian augmented with since cosine
+
+    """
+
+    m_trig, v_trig, c_trig = trigAug(m,v,idx,a)
+
+    c_s_trig = mtimes(v,c_trig)
+
+    m_aug = vertcat(m,m_trig)
+    v_aug = vertcat(horzcat(v,c_s_trig),horzcat(c_s_trig.T,v_trig))
+
+    if not keep_radian:
+        m_aug[idx] = []
+        v_aug[idx,:] = []
+        v_aug[:,idx] = []
+
+    return m_aug, v_aug
+
+
+def generic_cost(mu,sigma, u, step_cost, terminal_cost, state_trafo = None, lambd = 1.0):
+    """ Generic cost function for multi-step ahead predictions
+
+
+
+    """
+
+    raise NotImplementedError("Need docs")
+
+    if state_trafo is None:
+        state_trafo = lambda mu,sigma: mu,sigma
+
+    T,n_s = np.shape(mu)
+    _, n_u = np.shape(u)
+
+    c = 0
+    for i in range(T-1):
+        mu_i = cas_reshape(mu[i,:],(n_s,1))
+        v_i = cas_reshape(sigma[i,:],(n_s,n_s))
+        u_i = cas_reshape(u[i,:],(n_u,1))
+        c += step_cost(state_trafo(mu_i,sigma_i),u_i)
+
+    mu_T = cas_reshape(mu[-1,:],(n_s,1))
+    v_T = cas_reshape(sigma[-1,:],(n_s,n_s))
+    c += terminal_cost(state_trafo(mu_T,v_T))
+
+    return c 
+
+
+def loss_sat(m,v,z,W = None):
+    """ Saturating cost function 
+
+    Parameters
+    ----------
+    m : dx1 ndarray[float | casadi.Sym]
+        The mean of the input Gaussian
+    v : dxd ndarray[float | casadi.Sym]
+    z: dx1 ndarray[float | casadi.Sym]
+        The target-state [optional]
+    W: dxd ndarray[float | casadi.Sym]
+        The weighting matrix factor for the cost-function (scaling)
+
+    Returns
+    -------
+    L: float
+        The expected loss under the saturating cost function
+
+    Warning: Solving the Matlab system W/(eye(D)+SW) via inversion. Can be instable 
+    TO-DO: Should be fixed
+
+    """
+    D = np.shape(m)[0] 
+
+
+    if W is None:
+        W = SX.eye(D)
+
+    SW = mtimes(v,W)
+
+    G = SX.eye(D)+SW
+    inv_G = inv(G)
+    iSpW = mtimes(W,inv_G)
+
+    L = -exp(mtimes(-(m-z).T,mtimes(iSpW,(m-z)/2))) / sqrt(det(G))
+
+    return 1+L
