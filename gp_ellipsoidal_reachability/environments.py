@@ -82,6 +82,10 @@ class Environment:
         """ The jacobian of the dynamics """
         pass
     
+    def render(self):
+        """ Render the visualization """
+        print("No rendering implemented")
+
     def _sample_start_state(self, mean = None, std = None):
         """ """
         init_std = self.init_std
@@ -195,7 +199,7 @@ class InvertedPendulum(Environment):
         self.l_mu = np.array([0.1,.05]) #TODO: This should be somewhere else
         self.l_sigm = np.array([0.1,.05])
         self.target = target
-       
+        self.target_ilqr = start_state
         self.verbosity = verbosity
         
         max_deg = 30
@@ -542,7 +546,7 @@ class InvertedPendulum(Environment):
         self.h_safe = np.vstack((h_0_vec,h_1_vec,h_2_vec))
         self.h_mat_obs = None#p.asarray([[0.,1.],[0.,-1.]])
         self.h_obs = None #np.array([.6,.6]).reshape(2,1)
-        
+
         #arrange the corner points such that it can be ploted via a line plot
         self.corners_polygon = np.array([[-max_dtheta,max_rad],\
                                             [max_dtheta,0.0 ],\
@@ -588,7 +592,7 @@ class CartPole(Environment):
     Task: swing up pendulum via the cart in order to reach a upright resting position (zero angular velocity)
 
     """
-    def __init__(self,name = 'CartPole',dt=0.01,l = 0.5,m=0.5,M=0.5,b=0.1,g=9.82,start_state = np.array([0.0,0.0,0.0,0.0]),visualize = True, init_std = 0.0,norm_x = None, norm_u = None):
+    def __init__(self,name = 'CartPole',dt=0.01,l = 0.5,m=0.5,M=0.5,b=0.1,g=9.82,start_state = np.array([0.0,0.0,np.pi,0.0]),visualize = True, init_std = 0.0,norm_x = None, norm_u = None,verbosity = 1):
         super(CartPole,self).__init__(name,4,1,dt,start_state,init_std,np.array([0.01,0.01,0.01,0.01])**2,np.array([-10.0]),np.array([10.0]),np.array([0.0,l,0.0]))
         ns = 4 
         nu = 1
@@ -613,10 +617,12 @@ class CartPole(Environment):
         self.idx_angles = np.array([2])
         self.obs_angles_sin = np.array([3])
         self.obs_angles_cos = np.array([4])
+
+        self.target_ilqr = start_state
         
         self.delay = 20.0 #fps
         
-        self.D_cost = np.array([40,80,20])
+        self.D_cost = np.array([40,20,40])
         self.R_cost = np.array([1.0])
         self.start_state = start_state
 
@@ -629,6 +635,8 @@ class CartPole(Environment):
             
         self.norm = [norm_x,norm_u]
         self.inv_norm = [arr ** -1 for arr in self.norm]
+
+        self._init_safety_constraints()
 
         
         
@@ -651,11 +659,6 @@ class CartPole(Environment):
             noise += np.random.randn(self.n_s)*np.sqrt(self.plant_noise)
         
         obs += noise
-        angi = self.idx_angles
-        obs_ang = [np.sin(obs[angi[0]]),np.cos(obs[angi[0]])]
-        
-        obs = np.delete(obs,self.idx_angles)
-        obs = np.append(obs,obs_ang)
         
         return obs
         
@@ -698,10 +701,6 @@ class CartPole(Environment):
         if self.odesolver.successful():
             return action,new_state_obs,new_state_noise_obs,done
         
-    def state_to_cost_space_gaussian(self,mu,sigma):
-        """ """
-
-
     def render(self):
         """
         
@@ -790,7 +789,7 @@ class CartPole(Environment):
         pos = self._single_pend_top_pos(state)
         state_target_trafo = np.append(pos,[state[idx_angle_velocity]])
 
-
+        print(state_target_trafo)
         diff_pos_vec = (self.target-state_target_trafo)[:,None]
         cost_xy = np.dot(diff_pos_vec.T,np.dot(np.diag(self.D_cost),diff_pos_vec))
         u_eval = u.reshape(-1,1)
@@ -815,16 +814,16 @@ class CartPole(Environment):
         b = self.b
         g = self.g
 
-        det = L*(M + m*tf.square(tf.sin(theta)))
+        x, v, theta, omega = tuple(np.split(state,[1,2,3]))
 
-        x, v, theta, omega = tuple(np.split(state,[1,2,3,4]))
+        det = l*(M + m*np.sin(theta)**2)
 
         dz = np.zeros((4,1))
 
         dz[0] = state[1] #the cart pos
-        dz[1] = (action - m*L*tf.square(omega)*np.sin(theta) - b*omega*np.cos(theta) + 0.5*m*g*L*np.sin(2*theta)) * L/det
+        dz[1] = (action - m*l*np.square(omega)*np.sin(theta) - b*omega*np.cos(theta) + 0.5*m*g*l*np.sin(2*theta)) * l/det
         dz[2] = state[3] # the angle
-        dz[3] = (action*np.cos(theta) - 0.5*m*L*tf.square(omega)*np.sin(2*theta) - b*(m + M)*omega/(m*L) + (m + M)*g*np.sin(theta)) / det
+        dz[3] = (action*np.cos(theta) - 0.5*m*l*np.square(omega)*np.sin(2*theta) - b*(m + M)*omega/(m*l) + (m + M)*g*np.sin(theta)) / det
             
         return dz    
 
@@ -847,6 +846,47 @@ class CartPole(Environment):
         
         return np.hstack((A, B))
 
+    def _init_safety_constraints(self):
+        """ Get state and safety constraints
+        
+        We define the state constraints as:
+            x_0 - 3*x_1 <= 1
+            x_0 - 3*x_1 >= -1
+            x_1 <= max_rad
+            x_1 >= -max_rad
+        """
+        
+        max_deg = 15
+        max_dtheta = .5
+        
+        max_rad = np.deg2rad(max_deg)
+        
+        # -max_dtheta <dtheta <= max_dtheta
+        h_0_mat = np.asarray([[0.,0.,0.,1.],[0.,0.,0.,-1.]])       
+        h_0_vec = np.array([max_dtheta,max_dtheta])[:,None]
+        
+        #  (1/.4)*dtheta + (2/.26)*theta <= 1
+        h_1_mat = np.asarray([0.,0.,2./max_rad,1./max_rad])[None,:]
+        h_1_vec = np.asarray([1.])[:,None]
+        
+        #  (1/.4)*dtheta + (2/.26)*theta  >= -1
+        h_2_mat = -h_1_mat
+        h_2_vec = h_1_vec        
+        
+        #normalize safety bounds
+        self.h_mat_safe = np.vstack((h_0_mat,h_1_mat,h_2_mat))
+        self.h_safe = np.vstack((h_0_vec,h_1_vec,h_2_vec))
+        self.h_mat_obs = None#p.asarray([[0.,1.],[0.,-1.]])
+        self.h_obs = None #np.array([.6,.6]).reshape(2,1)
+        
+        #arrange the corner points such that it can be ploted via a line plot
+        self.corners_polygon = np.array([[-max_dtheta,max_rad],\
+                                            [max_dtheta,0.0 ],\
+                                            [max_dtheta,-max_rad],\
+                                            [ -max_dtheta,0.0],\
+                                            [-max_dtheta,max_rad]])
+                                           
+
     def get_safety_constraints(self, normalize = True):
         """ Return the safe constraints
         
@@ -856,10 +896,15 @@ class CartPole(Environment):
             If TRUE: Returns normalized constraints
 
         """
-        
-        raise NotImplementedError("Not implemented yet")
-            
-        return h_mat_safe,self.h_safe,self.h_mat_obs,self.h_obs
+        h_mat_safe = self.h_mat_safe
+        h_mat_obs = self.h_mat_obs
+        if normalize:
+            m_x= np.diag(self.norm[0])
+            h_mat_safe = np.dot(h_mat_safe,m_x)
+            if not self.h_mat_obs is None:
+                h_mat_obs = np.dot(h_mat_obs,m_x)
+
+        return h_mat_safe,self.h_safe,h_mat_obs,self.h_obs
     
     def random_action(self):
         """
