@@ -25,7 +25,7 @@ def create_solver(conf, env, model_options = None):
     wx_cost = conf.lqr_wx_cost
     wu_cost = conf.lqr_wu_cost
     lin_model = None
-    
+
     h_mat_safe, h_safe, h_mat_obs, h_obs = env.get_safety_constraints(normalize = True) 
     a_true,b_true = env.linearize_discretize()
     
@@ -72,8 +72,6 @@ def create_solver(conf, env, model_options = None):
     mpc_control = SafeMPC(n_safe, gp, env_opts_safempc, wx_cost, wu_cost,beta_safety = conf.beta_safety,
                  ilqr_init = conf.ilqr_init, lin_model = lin_model, ctrl_bounds = ctrl_bounds,
                  safe_policy = safe_policy, opt_perf_trajectory = perf_opts_safempc)
-
-    #mpc_control.init_solver()
     
     return mpc_control
     
