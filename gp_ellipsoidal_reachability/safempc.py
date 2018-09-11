@@ -22,7 +22,7 @@ from utils import dlqr, feedback_ctrl
 from ilqr_cython import CILQR
 
 ATTR_NAMES_PERF = ['type_perf_traj','n_perf','r','perf_has_fb']
-DEFAULT_OPT_PERF = {'type_perf_traj':'mean_equiv','n_perf' : 10, 'r' : 1, 'perf_has_fb' : False }
+DEFAULT_OPT_PERF = {'type_perf_traj':'mean_equivalent','n_perf' : 10, 'r' : 1, 'perf_has_fb' : True }
 
 ATTR_NAMES_ENV = ['l_mu','l_sigma','h_mat_safe','h_safe','lin_model','ctrl_bounds','safe_policy','h_mat_obs','h_obs' , 'dt']
 DEFAULT_OPT_ENV = {'ctrl_bounds': None,'safe_policy' : None, 'lin_model' : None, 'h_mat_obs' : None, 'h_obs':None}
@@ -192,13 +192,12 @@ class SafeMPC:
                 for i in range(1,n_cost_deviation):
                     cost += mtimes(mu_perf[i,:]-p_all[i,:],mtimes(.1*self.wx_cost,(mu_perf[i,:]-p_all[i,:]).T))
                     cost -= sum1(sqrt(diag(sigma_perf[i])))
-                    print("???")
             
                 self.ilqr_custom_c = (-sum1(sqrt(sigma_perf[-1])),p_0,u_0)
         else:
-            
+
             if self.n_perf > 1:
-                cost = custom_cost_func(p_0,u_0,p_all,k_ff_all,x_perf,u_perf)
+                cost = custom_cost_func(p_0,u_0,p_all,q_all,mu_perf,sigma_perf,k_ff_all,k_fb_ctrl,k_fb_perf,k_ff_perf)
             else:
                 cost = custom_cost_func(p_0,u_0,p_all,k_ff_all)
 
@@ -286,8 +285,7 @@ class SafeMPC:
             k_fb_perf = np.array([])
             if self.perf_has_fb:
                 k_fb_perf = SX.sym("k_fb_perf",(self.n_u,self.n_s))
-
-
+                
             mu_perf_all, sigma_perf_all = self.perf_trajectory(mu_0,self.gp,vertcat(u_0,k_ff_perf)  ,k_fb_perf,None,self.a,self.b)
         
         if self.has_ctrl_bounds:
@@ -560,12 +558,13 @@ class SafeMPC:
         #sol = self.solver(x0=u_init,lbg=self.lbg,ubg=self.ubg,p=params)
         try:
             sol = self.solver(x0=u_init,lbg=self.lbg,ubg=self.ubg,p=params)
+            print(sol)
+            print(sol['x'])
         except:
             crash = True
             warnings.warn("NLP solver crashed, solution infeasible")
             sol = None
-        print(sol)
-        print(sol['x'])
+        
         return self._get_solution(p_0,sol,k_fb_0,sol_verbose,crash)
         
     def _get_solution(self,x_0,sol, k_fb_0, sol_verbose = False,crashed=False,feas_tol = 1e-6):
