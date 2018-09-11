@@ -821,9 +821,9 @@ class CartPole(Environment):
         dz = np.zeros((4,1))
 
         dz[0] = state[1] #the cart pos
-        dz[1] = (action - m*l*np.square(omega)*np.sin(theta) - b*omega*np.cos(theta) + 0.5*m*g*l*np.sin(2*theta)) * l/det
+        dz[1] = (action + m*l*np.square(omega)*np.sin(theta) + b*omega*np.cos(theta) + 0.5*m*g*l*np.sin(2*theta)) * l/det
         dz[2] = state[3] # the angle
-        dz[3] = (action*np.cos(theta) - 0.5*m*l*np.square(omega)*np.sin(2*theta) - b*(m + M)*omega/(m*l) + (m + M)*g*np.sin(theta)) / det
+        dz[3] = (-action*np.cos(theta) - 0.5*m*l*np.square(omega)*np.sin(2*theta) - b*(m + M)*omega/(m*l) - (m + M)*g*np.sin(theta)) / det
             
         return dz    
 
@@ -837,12 +837,12 @@ class CartPole(Environment):
         g = self.g
 
         A = np.array([[0, 1,                     0, 0                             ],
-                      [0, 0, g * m / M            , -b / (M * l) ],
+                      [0, 0, g * m / M            , +b / (M * l) ],
                       [0, 0, 0                    , 1                             ],
-                      [0, 0, g * (m + M) / (l * M), -b * (m + M) / (m * M * l**2)]])
+                      [0, 0, g * (m + M) / (l * M), +b * (m + M) / (m * M * l**2)]])
 
         
-        B = np.array([0, 1 / M, 0, 1 / (M * l)]).reshape((-1, self.n_u))
+        B = np.array([0, 1 / M, 0, -1 / (M * l)]).reshape((-1, self.n_u))
         
         return np.hstack((A, B))
 
