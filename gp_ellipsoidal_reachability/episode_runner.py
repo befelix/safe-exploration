@@ -110,6 +110,14 @@ def do_rollout(env, n_steps, solver = None, relative_dynamics = False,
         
         action,next_state,observation,done = env.step(action)
 
+
+        if verbosity > 0:
+            print("\n==== Applied action at time step {} ====".format(i))
+            print(action)
+            print("\n==== Next state ====")
+            print(next_state)
+            print("==========================\n")
+
         if render:
             env.render()
         
