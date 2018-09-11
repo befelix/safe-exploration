@@ -174,7 +174,7 @@ def test_trigProp(before_trigProp):
     m_cas = SX.sym('m',(3,1))
     v_cas = SX.sym('v_cas',(3,3))
 
-    M_sym,V_sym,C_sym = utils_cas.trigProp(m_cas,v_cas,idx,a)
+    M_sym,V_sym,C_sym = utils_cas.trig_prop(m_cas,v_cas,idx,a)
     f = Function('trigProp',[m_cas,v_cas],[M_sym,V_sym,C_sym])
 
     M_out,V_out,C_out = f(m,v)
@@ -185,3 +185,35 @@ def test_trigProp(before_trigProp):
     assert np.allclose(C_out,C,atol = a_tol) , 'Are the cross-covariances the same'
 
     
+
+@pytest.fixture(params = [0])
+def before_loss_sat(request):
+    """ Values are taken from PILCO implementation"""
+    
+    v = np.array([[    1.0000,   -0.7873, 0.8884],
+                  [-0.7873,    2.8698,   -2.3027],
+                  [0.8884,   -2.3027,    2.9317]])
+
+    W = np.diag([2.6715,0.7925,2.7172])
+
+    z = np.array([1.6302,0.4889,1.0347])[:,None]
+
+    m = np.array([  0.7269,-0.3034,0.2939])[:,None]
+
+    L = 0.9324
+    return m,v,W,z, L 
+
+
+def test_loss_sat(before_loss_sat):
+    """ Does saturating cost function return same as Matlab implementation?"""
+    m,v,W,z, L = before_loss_sat
+
+
+
+    m_cas = SX.sym('m',(3,1))
+    v_cas = SX.sym('v_cas',(3,3))
+
+    L_sym = utils_cas.loss_sat(m_cas,v_cas,z,W)
+    f = Function('loss_sat',[m_cas,v_cas],[L_sym])
+    L_out = f(m,v)
+    assert np.allclose(L,L_out,atol = 1e-3), "Are the losses the same?"
