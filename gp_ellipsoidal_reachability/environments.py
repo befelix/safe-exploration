@@ -592,7 +592,7 @@ class CartPole(Environment):
     Task: swing up pendulum via the cart in order to reach a upright resting position (zero angular velocity)
 
     """
-    def __init__(self,name = 'CartPole',dt=0.01,l = 0.5,m=0.5,M=0.5,b=0.1,g=9.82,start_state = np.array([0.0,0.0,np.pi,0.0]),visualize = True, init_std = 0.0,norm_x = None, norm_u = None,verbosity = 1):
+    def __init__(self,name = 'CartPole',dt=0.01,l = 0.5,m=0.5,M=0.5,b=0.1,g=9.82,start_state = np.array([0.0,0.0,0.0,0.0]),visualize = True, init_std = 0.0,norm_x = None, norm_u = None,verbosity = 1):
         super(CartPole,self).__init__(name,4,1,dt,start_state,init_std,np.array([0.01,0.01,0.01,0.01])**2,np.array([-10.0]),np.array([10.0]),np.array([0.0,l,0.0]))
         ns = 4 
         nu = 1
@@ -649,7 +649,6 @@ class CartPole(Environment):
         """ Represent the angles via sine/cosine components
         
         
-        Mind the NEGATIVE cos representation
         """
         
         obs = np.copy(state)
@@ -820,10 +819,11 @@ class CartPole(Environment):
 
         dz = np.zeros((4,1))
 
+
         dz[0] = state[1] #the cart pos
         dz[1] = (action + m*l*np.square(omega)*np.sin(theta) + b*omega*np.cos(theta) + 0.5*m*g*l*np.sin(2*theta)) * l/det
         dz[2] = state[3] # the angle
-        dz[3] = (-action*np.cos(theta) - 0.5*m*l*np.square(omega)*np.sin(2*theta) - b*(m + M)*omega/(m*l) - (m + M)*g*np.sin(theta)) / det
+        dz[3] = (-action*np.cos(theta) - 0.5*m*l*np.square(omega)*np.sin(2*theta) - b*(m + M)*omega/(m*l) +  (m + M)*g*np.sin(theta)) / det
             
         return dz    
 
@@ -837,12 +837,12 @@ class CartPole(Environment):
         g = self.g
 
         A = np.array([[0, 1,                     0, 0                             ],
-                      [0, 0, g * m / M            , +b / (M * l) ],
+                      [0, 0,l* g * m / M            , b / M ],
                       [0, 0, 0                    , 1                             ],
-                      [0, 0, g * (m + M) / (l * M), +b * (m + M) / (m * M * l**2)]])
+                      [0, 0, g * (m + M) / (l * M), -b * (m + M) / (m * M * l**2)]])
 
         
-        B = np.array([0, 1 / M, 0, -1 / (M * l)]).reshape((-1, self.n_u))
+        B = np.array([0, 1. / M, 0, -1 / (M * l)]).reshape((-1, self.n_u))
         
         return np.hstack((A, B))
 
@@ -934,7 +934,7 @@ class CartPole(Environment):
         sin_ang = np.sin(state[self.idx_angles[0]])
         cos_ang = np.cos(state[self.idx_angles[0]])
         
-        rel_pos_pole1 = [self.l *sin_ang,-self.l *cos_ang]
+        rel_pos_pole1 = [self.l *sin_ang,self.l *cos_ang]
         
         return np.add(cart_pos,rel_pos_pole1)
     
