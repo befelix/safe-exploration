@@ -28,35 +28,39 @@ def run_episodic(conf):
     if conf.n_scenarios > 1:
         raise NotImplementedError("For now we don't support multiple experiments!")
 
-    X,y, S,z  = do_rollout(env, conf.n_steps_init,plot_trajectory=conf.plot_trajectory)
+    X,y, S,z  = do_rollout(env, conf.n_steps_init,plot_trajectory=conf.plot_trajectory,render = conf.render)
     for i in range(1,conf.n_rollouts_init):
-        xx,yy, ss,zz  = do_rollout(env, conf.n_steps_init,plot_trajectory=conf.plot_trajectory)
+        xx,yy, ss,zz  = do_rollout(env, conf.n_steps_init,plot_trajectory=conf.plot_trajectory,render = conf.render)
         X = np.vstack((X,xx))
         y = np.vstack((y,yy))
         S = np.vstack((S,ss))
         z = np.vstack((z,zz))
         
-    solver = create_solver(conf,env)
     
     for i in range(conf.n_ep):
-        
-        solver.update_model(S,y)
-        xx, yy, ss,zz = do_rollout(env, conf.n_steps, solver = solver,plot_ellipsoids = conf.plot_ellipsoids)
+        if i ==0:
+            solver = create_solver(conf,env)
+            solver.update_model(S,y)
+            solver.init_solver(conf.cost_func)
+        else:
+            solver.update_model(S,y)
+
+        xx, yy, ss,zz = do_rollout(env, conf.n_steps, solver = solver,plot_ellipsoids = conf.plot_ellipsoids,plot_trajectory=conf.plot_trajectory,render = conf.render)
         
         X = np.vstack((X,xx))
         y = np.vstack((y,yy))
         S = np.vstack((S,ss))
         z = np.vstack((z,zz))
         
-    if not conf.data_savename is None:
-        savepath_data = "{}/{}".format(conf.save_path,conf.data_savename)
+    if not conf.data_savepath is None:
+        savepath_data = "{}/{}".format(conf.save_path,conf.data_savepath)
         np.savez(savepath_data,X=X,y=y,S=S,z = z)
         
         
 def do_rollout(env, n_steps, solver = None, relative_dynamics = False,
                plot_trajectory = True, 
                verbosity = 1,sampling_verification = False,
-               plot_ellipsoids = False,
+               plot_ellipsoids = False,render = False,
                check_system_safety = False, savedir_trajectory_plots = None): #safedir_trajectory_plots = None
     """ Perform a rollout on the system
     
@@ -65,15 +69,15 @@ def do_rollout(env, n_steps, solver = None, relative_dynamics = False,
     
     state = env.reset()
     old_observation = state #assume noiseless initial observation
-    target = env.get_target()
-    n_successful = 0
+    
     xx = np.zeros((1,env.n_s+env.n_u))
     ss = np.zeros((1,env.n_s+env.n_u))
     zz = np.zeros((1,env.n_s))
     yy= np.zeros((1,env.n_s))
     obs = state
     
-    
+    n_successful = 0
+
     if plot_trajectory:
         fig, ax = env.plot_safety_bounds()
         
@@ -97,8 +101,7 @@ def do_rollout(env, n_steps, solver = None, relative_dynamics = False,
             action = env.random_action()
         else:
             t_start_solver = time.time()
-            p_safe = np.array([0.0,0.0])
-            action, safety_fail = solver.get_action(state,target,p_safe)#,lqr_only = True)
+            action, safety_fail = solver.get_action(state,env.target_ilqr)#,lqr_only = True)
             t_end_solver = time.time()
             t_solver = t_end_solver - t_start_solver
             
@@ -106,6 +109,9 @@ def do_rollout(env, n_steps, solver = None, relative_dynamics = False,
                 print("total time solver in ms: {}".format(t_solver))
         
         action,next_state,observation,done = env.step(action)
+
+        if render:
+            env.render()
         
         ## Plot the trajectory planned by the MPC solver        
         if plot_trajectory:
@@ -160,6 +166,7 @@ def do_rollout(env, n_steps, solver = None, relative_dynamics = False,
 
         state_action = np.hstack((old_observation,action))
         state_action_noiseless = np.hstack((state,action))
+        print(np.shape(state_action))
         xx = np.vstack((xx,state_action))
         ss = np.vstack((ss,state_action_noiseless))
         obs = np.vstack((obs,observation))
