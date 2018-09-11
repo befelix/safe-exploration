@@ -178,7 +178,7 @@ def mean_equivalent_multistep(mu_0,gp,k_ff, k_fb,sigma_0 = None, a=None,b=None):
     n_s = np.shape(mu_0)[0]
     T, n_u = np.shape(k_ff)
 
-    mu_new, sigma_new = one_step_mean_equivalent(mu_0,gp,k_ff[0,:].reshape((n_u,1)),a,b)
+    mu_new, sigma_new = one_step_mean_equivalent(mu_0,gp,k_ff[0,:].reshape((n_u,1)),None,None,a,b)
     mu_all = mu_new.T
     sigma_all = sigma_new.reshape((1,n_s*n_s))
 
@@ -187,7 +187,7 @@ def mean_equivalent_multistep(mu_0,gp,k_ff, k_fb,sigma_0 = None, a=None,b=None):
         sigma_old = sigma_new
         k_ff_i = k_ff[i+1,:].reshape((n_u,1))
 
-        mu_new, sigma_new = one_step_mean_equivalent(mu_old,gp,k_ff_i,sigma_old,a,b)
+        mu_new, sigma_new = one_step_mean_equivalent(mu_old,gp,k_ff_i,sigma_old,k_fb,a,b)
 
         mu_all = vertcat(mu_all,mu_new.T)
         sigma_all = vertcat(sigma_all,sigma_new.reshape((1,n_s*n_s)))
@@ -244,6 +244,7 @@ def one_step_mean_equivalent(mu_x,gp, k_ff, sigma_x = None, k_fb = None, a = Non
 
     
     ## Compute taylor approximation of the posterior 
+    print(np.shape(k_fb))
     sigma_u = mtimes(k_fb,mtimes(sigma_x,k_fb.T)) #covariance of control input
     sigma_xu = mtimes(sigma_x,k_fb.T) #cross-covariance between state and controls
 
