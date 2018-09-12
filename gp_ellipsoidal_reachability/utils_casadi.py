@@ -9,7 +9,8 @@ admits being use by a Casadi ( symbolic ) framework.
 @author: tkoller
 """
 
-from casadi import mtimes, eig_symbolic, fmax, norm_2, horzcat,sqrt, exp, SX ,cos, sin, det,inv
+from casadi import mtimes, eig_symbolic, fmax, norm_2, horzcat,sqrt, exp, SX ,cos, sin, det,inv,vertcat,horzcat
+from casadi import reshape as cas_reshape
 import numpy as np
 
 
@@ -254,18 +255,23 @@ def trig_aug(m,v,idx,a = 1.0, keep_radian = False):
         The variance of the gaussian augmented with since cosine
 
     """
+    d,_ = np.shape(v)
 
-    m_trig, v_trig, c_trig = trigAug(m,v,idx,a)
+    m_trig, v_trig, c_trig = trig_prop(m,v,idx,a)
 
     c_s_trig = mtimes(v,c_trig)
 
     m_aug = vertcat(m,m_trig)
     v_aug = vertcat(horzcat(v,c_s_trig),horzcat(c_s_trig.T,v_trig))
 
-    if not keep_radian:
-        m_aug[idx] = []
-        v_aug[idx,:] = []
-        v_aug[:,idx] = []
+    if keep_radian:
+        m_aug = vertcat(m,m_trig)
+        v_aug = vertcat(horzcat(v,c_s_trig),horzcat(c_s_trig.T,v_trig))
+    else:
+        m_aug = vertcat(m_aug[:idx],m_aug[idx+1:])
+        v_aug = vertcat(horzcat(v_aug[:idx,:idx],v_aug[:idx,idx+1:]),
+                        horzcat(v_aug[idx+1:,:idx],v_aug[idx+1:,idx+1:]))
+
 
     return m_aug, v_aug
 
@@ -276,9 +282,6 @@ def generic_cost(mu,sigma, u, step_cost, terminal_cost, state_trafo = None, lamb
 
 
     """
-
-    raise NotImplementedError("Need docs")
-
     if state_trafo is None:
         state_trafo = lambda mu,sigma: mu,sigma
 
@@ -290,11 +293,14 @@ def generic_cost(mu,sigma, u, step_cost, terminal_cost, state_trafo = None, lamb
         mu_i = cas_reshape(mu[i,:],(n_s,1))
         v_i = cas_reshape(sigma[i,:],(n_s,n_s))
         u_i = cas_reshape(u[i,:],(n_u,1))
-        c += step_cost(state_trafo(mu_i,sigma_i),u_i)
+
+        mu_i,v_i = state_trafo(mu_i,v_i)
+        c += step_cost(mu_i,v_i,u_i)
 
     mu_T = cas_reshape(mu[-1,:],(n_s,1))
     v_T = cas_reshape(sigma[-1,:],(n_s,n_s))
-    c += terminal_cost(state_trafo(mu_T,v_T))
+    mu_T,v_T = state_trafo(mu_T,v_T)
+    c += terminal_cost(mu_T,v_T)
 
     return c 
 
