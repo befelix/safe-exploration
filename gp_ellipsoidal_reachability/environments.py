@@ -524,8 +524,8 @@ class InvertedPendulum(Environment):
             x_1 >= -max_rad
         """
         
-        max_deg = 15
-        max_dtheta = .5
+        max_deg = 20
+        max_dtheta = .15
         
         max_rad = np.deg2rad(max_deg)
         
@@ -611,8 +611,8 @@ class CartPole(Environment):
         self.dt = 0.05
         self.visualize = visualize
 
-        self.l_mu = np.array([.1,.05,.1,.05]) #TODO: This should be somewhere else
-        self.l_sigm = np.array([.1,.05,.1,.05])
+        self.l_mu = np.array([.01,.05,.01,.05]) #TODO: This should be somewhere else
+        self.l_sigm = np.array([.01,.05,.01,.05])
         
         self.idx_angles = np.array([2])
         self.obs_angles_sin = np.array([3])
@@ -731,7 +731,7 @@ class CartPole(Environment):
         
     def _sample_start_state(self,mean = None, std = None):
         #return np.array([0.0,0.0,0.0,0.0])#np.zeros((self.ns,))
-        init_std = 0.01
+        init_std = self.init_std
         if not std is None:
             init_std = std
             
@@ -839,7 +839,7 @@ class CartPole(Environment):
         A = np.array([[0, 1,                     0, 0                             ],
                       [0, 0,l* g * m / M            , b / M ],
                       [0, 0, 0                    , 1                             ],
-                      [0, 0, g * (m + M) / (l * M), -b * (m + M) / (m * M * l**2)]])
+                      [0, 0,g  * (m + M) / (l * M), -b * (m + M) / (m * M * l**2)]])
 
         
         B = np.array([0, 1. / M, 0, -1 / (M * l)]).reshape((-1, self.n_u))
@@ -856,7 +856,7 @@ class CartPole(Environment):
             x_1 >= -max_rad
         """
         
-        max_deg = 15
+        max_deg = 10
         max_dtheta = .5
         
         max_rad = np.deg2rad(max_deg)
