@@ -12,12 +12,9 @@
 - [ ] performance and safety trajectory share multiple controls
 - [ ] implement kim wabersich (zeilinger) approach 
 - [x] custom cost function
-- [x] fix issues with feasbility
+- [ ] fix issues with feasbility
 
 #### 'GPs'
 - [ ] Make it possible to exclude state space dims for inputs of the dynamics (important for cart-pole)
 - [ ] addition and multiplication of kernels and their casadi representations
 - [ ] kernel and hyperparameter specification in config instead of GP class
-
-
-
