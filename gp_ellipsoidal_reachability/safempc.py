@@ -108,9 +108,7 @@ class SafeMPC:
         
         self.k_fb_all = None
         if self.safe_policy is None:
-            warnings.warn("No SafePolicy!")
-        if self.gp.gp_trained:
-            self.init_solver()     
+            warnings.warn("No SafePolicy!")   
             
         self.ilqr_custom_c = None
         if ilqr_init:
@@ -149,6 +147,7 @@ class SafeMPC:
         
         k_fb_0 = SX.sym("base feedback matrices",(self.n_safe-1,self.n_s*self.n_u))
         
+
         p_all, q_all = cas_multistep(p_0,u_0,k_fb_0,k_fb_ctrl,k_ff_all,self.gp,self.l_mu,self.l_sigma,self.beta_safety,self.a,self.b)
         
         g_safe, lbg_safe,ubg_safe, g_names_safe = self.generate_safety_constraints(p_all,q_all,u_0,k_fb_0,k_fb_ctrl,k_ff_all)
@@ -160,29 +159,43 @@ class SafeMPC:
         ## Generate performance trajectory 
         k_ff_perf, k_fb_perf, mu_perf, sigma_perf, g_perf,lbg_perf, ubg_perf, g_names_perf = self._generate_perf_trajectory_casadi(p_0,u_0)
         
+        k_fb_perf_combined = k_fb_perf
+        if self.n_safe > 1 and self.perf_has_fb:
+            k_fb_perf_combined = k_fb_perf + cas_reshape(k_fb_0[0,:],(self.n_u,self.n_s))
+
+        k_fb_safe_combined = k_fb_0 
+        ## TO-DO: This doesn't work... why?
+        #for i in range(self.n_safe-1):
+        #    k_fb_safe_combined[i] += k_fb_ctrl
+
         g = vertcat(g,g_perf) 
         lbg += lbg_perf
         ubg += ubg_perf
         g_name += g_names_perf
         
-        cost = self.generate_cost_function(p_0,u_0,p_all,q_all,mu_perf, sigma_perf,k_ff_all, k_fb_ctrl, k_fb_perf = k_fb_perf, k_ff_perf = k_ff_perf, custom_cost_func = None)
+        cost = self.generate_cost_function(p_0,u_0,p_all,q_all,mu_perf, sigma_perf,k_ff_all, k_fb_safe_combined, k_fb_perf = k_fb_perf_combined, k_ff_perf = k_ff_perf, custom_cost_func = cost_func)
+        
+
 
         opt_vars = vertcat(u_0,k_ff_perf,k_ff_all.reshape((-1,1)),k_fb_ctrl.reshape((-1,1)),k_fb_perf.reshape((-1,1)))
         opt_params = vertcat(p_0,k_fb_0.reshape((-1,1)))
         
         prob = {'f':cost,'x': opt_vars,'p':opt_params,'g':g}
 
-        #opt = {'ipopt':{'hessian_approximation':'limited-memory',"max_iter":120,"expect_infeasible_problem":"yes"}} #ipopt 
-        opt = {'qpsol':'qpoases','max_iter':50,'hessian_approximation':'limited-memory'}#,"c1":5e-4} #sqpmethod #,'hessian_approximation':'limited-memory'
+
+        #opt = {'ipopt':{'hessian_approximation':'limited-memory',"max_iter":500,"expect_infeasible_problem":"yes"}} #ipopt 
+        opt = {'qpsol':'qpoases','max_iter':30,'hessian_approximation':'limited-memory'}#,"c1":5e-4} #sqpmethod #,'hessian_approximation':'limited-memory'
+        #solver = cas.nlpsol('solver','ipopt',prob,opt)
         solver = cas.nlpsol('solver','sqpmethod',prob,opt)
         
         self.solver = solver
         self.lbg = lbg
         self.ubg = ubg
         self.solver_initialized = True
+        self.g = g
         self.g_name = g_name
     
-    def generate_cost_function(self,p_0,u_0,p_all,q_all,mu_perf, sigma_perf,k_ff_all, k_fb_ctrl, k_fb_perf = None, k_ff_perf = None, custom_cost_func = None):
+    def generate_cost_function(self,p_0,u_0,p_all,q_all,mu_perf, sigma_perf,k_ff_all, k_fb_safe_combined, k_fb_perf = None, k_ff_perf = None, custom_cost_func = None):
         ## Generate cost function 
         # TO-DO: wrap this in a new function
         if custom_cost_func is None:
@@ -191,13 +204,18 @@ class SafeMPC:
                 n_cost_deviation = np.minimum(self.n_perf-1,self.n_safe-1)
                 for i in range(1,n_cost_deviation):
                     cost += mtimes(mu_perf[i,:]-p_all[i,:],mtimes(.1*self.wx_cost,(mu_perf[i,:]-p_all[i,:]).T))
+                    
+                for i in range(self.n_perf):
                     cost -= sum1(sqrt(diag(sigma_perf[i])))
-            
+            else:
+                cost -= sum1(sqrt(diag(cas_reshape(q_all[0,:],(self.n_s,self.n_s)))))
+
+            self.ilqr_custom_c = None
+            if self.n_safe > 1:
                 self.ilqr_custom_c = (-sum1(sqrt(sigma_perf[-1])),p_0,u_0)
         else:
-
             if self.n_perf > 1:
-                cost = custom_cost_func(p_0,u_0,p_all,q_all,mu_perf,sigma_perf,k_ff_all,k_fb_ctrl,k_fb_perf,k_ff_perf)
+                cost = custom_cost_func(p_0,u_0,p_all,q_all,mu_perf,sigma_perf,k_ff_all,k_fb_safe_combined,k_fb_perf,k_ff_perf)
             else:
                 cost = custom_cost_func(p_0,u_0,p_all,k_ff_all)
 
@@ -262,7 +280,6 @@ class SafeMPC:
         p_T = p_all[-1,:].T
         q_T = q_all[-1,:].reshape((self.n_s,self.n_s))
         g_terminal = lin_ellipsoid_safety_distance(p_T,q_T,self.h_mat_safe,self.h_safe)
-
         g = vertcat(g,g_terminal)
         g_name += ["terminal constraint"]*self.m_safe
         lbg += [-cas.inf]*self.m_safe
@@ -283,7 +300,7 @@ class SafeMPC:
             k_ff_perf = SX.sym("k_ff_perf",(self.n_perf-1,self.n_u))
 
             k_fb_perf = np.array([])
-            if self.perf_has_fb:
+            if self.perf_has_fb and self.n_perf > 1:
                 k_fb_perf = SX.sym("k_fb_perf",(self.n_u,self.n_s))
                 
             mu_perf_all, sigma_perf_all = self.perf_trajectory(mu_0,self.gp,vertcat(u_0,k_ff_perf)  ,k_fb_perf,None,self.a,self.b)
@@ -550,20 +567,22 @@ class SafeMPC:
         else:
             u_perf_0 = cas_reshape(u_perf_0,(-1,1))
         params = np.vstack((p_0,cas_reshape(k_fb_0,(-1,1))))
+
         u_init = vertcat(cas_reshape(u_0,(-1,1)),u_perf_0, \
                          cas_reshape(k_ff_all_0,(-1,1)),cas_reshape(k_fb_ctrl_0,(-1,1)),cas_reshape(k_fb_perf_0,(-1,1)))
-        
         crash = False
-
         #sol = self.solver(x0=u_init,lbg=self.lbg,ubg=self.ubg,p=params)
         try:
             sol = self.solver(x0=u_init,lbg=self.lbg,ubg=self.ubg,p=params)
+            # TO-DO: This is ugly
             print(sol)
             print(sol['x'])
+            print(self.solver.stats())
         except:
             crash = True
             warnings.warn("NLP solver crashed, solution infeasible")
             sol = None
+        
         
         return self._get_solution(p_0,sol,k_fb_0,sol_verbose,crash)
         
@@ -660,6 +679,9 @@ class SafeMPC:
                 self.k_ff_all = k_ff_all
                 self.u_perf_all = u_perf_all
                 self.p_ctrl = p_ctrl
+
+            if self.verbosity > 1:
+                self.eval_safety_constraints(p_ctrl,q_all)
                 
         else:
             if self.verbosity > 1:
@@ -688,6 +710,22 @@ class SafeMPC:
             
         return u_apply, success
         
+
+    def eval_safety_constraints(self,p_all,q_all,terminal_only = True):
+        """ Evaluate the safety constraints """
+
+        p_cas = SX.sym('p',(self.n_s,self.n_u))
+        q_cas = SX.sym('q',(self.n_s,self.n_s))
+        g_val_term_cas = lin_ellipsoid_safety_distance(p_cas,q_cas,self.h_mat_safe,self.h_safe)
+        g_term_cas = cas.Function("g_term",[p_cas,q_cas],[g_val_term_cas])
+
+        print("\n===== Evaluated terminal constraint values =====")
+        print(g_term_cas(p_all[-1,:,None],cas_reshape(q_all[-1,:],(self.n_s,self.n_s))))
+        print("\n===== ===== ===== ===== ===== ===== ===== =====")
+
+        if not terminal_only:
+            raise NotImplementedError("Still need to eval the intermediate safety constraint vals")
+
     def get_old_solution(self, x, k = None, get_ctrl_traj = False):
         """ Shift previously obtained solutions in time and return solution to be applied
         

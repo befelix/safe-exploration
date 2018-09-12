@@ -11,10 +11,11 @@
 #### `SafeMPC`
 - [ ] performance and safety trajectory share multiple controls
 - [ ] implement kim wabersich (zeilinger) approach 
-- [ ] custom cost function
+- [x] custom cost function
 
 
 #### 'GPs'
+- [ ] Make it possible to exclude state space dims for inputs of the dynamics (important for cart-pole)
 - [ ] addition and multiplication of kernels and their casadi representations
 - [ ] kernel and hyperparameter specification in config instead of GP class
 
