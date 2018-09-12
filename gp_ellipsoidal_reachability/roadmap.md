@@ -12,7 +12,7 @@
 - [ ] performance and safety trajectory share multiple controls
 - [ ] implement kim wabersich (zeilinger) approach 
 - [x] custom cost function
-
+- [x] fix issues with feasbility
 
 #### 'GPs'
 - [ ] Make it possible to exclude state space dims for inputs of the dynamics (important for cart-pole)
