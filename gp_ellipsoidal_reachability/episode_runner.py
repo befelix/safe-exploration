@@ -41,7 +41,7 @@ def run_episodic(conf):
         if i ==0:
             solver = create_solver(conf,env)
             solver.update_model(S,y)
-            solver.init_solver(conf.cost_func)
+            solver.init_solver(conf.cost)
         else:
             solver.update_model(S,y)
 
