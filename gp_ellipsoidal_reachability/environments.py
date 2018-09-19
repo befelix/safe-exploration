@@ -6,6 +6,7 @@ Created on Mon Sep 25 17:16:45 2017
 """
 import abc
 import numpy as np
+from numpy.matlib import repmat
 import warnings
 from utils_visualization import plot_ellipsoid_2D
 from scipy.integrate import ode,odeint
@@ -26,7 +27,7 @@ class Environment:
     __metaclass__ = abc.ABCMeta
     
     def __init__(self,name, n_s, n_u, dt, start_state, init_std, plant_noise,
-                 u_min, u_max, target,p_origin = None):
+                 u_min, u_max, target, verbosity = 0, p_origin = None):
         """
         
         """
@@ -41,7 +42,9 @@ class Environment:
         self.u_min = u_min
         self.u_max = u_max
         self.plant_noise = plant_noise
-        self.target = target
+        self.target = target        
+        self.verbosity = verbosity
+
 
         if p_origin is None:
             self.p_origin = np.zeros((n_s,))
@@ -63,7 +66,7 @@ class Environment:
         pass
      
     @abc.abstractmethod
-    def state_to_obs(self,current_state = None):
+    def state_to_obs(self,current_state = None, add_noise = False):
         """ Transform the dynamics state to the state to be observed """
         pass
     
@@ -82,11 +85,16 @@ class Environment:
         """ The jacobian of the dynamics """
         pass
     
+    @abc.abstractmethod
+    def _check_constraints(self,state = None):
+        """ Check the constraints """
+        pass
+
     def render(self):
         """ Render the visualization """
         print("No rendering implemented")
 
-    def _sample_start_state(self, mean = None, std = None):
+    def _sample_start_state(self, mean = None, std = None, n_samples = 1):
         """ """
         init_std = self.init_std
         if not std is None:
@@ -96,7 +104,43 @@ class Environment:
         if init_m is None:
             init_m = self.start_state
         
-        return init_std*np.random.randn(self.n_s)+init_m
+        samples = repmat(init_std,n_samples,1)*np.random.randn(n_samples,self.n_s)+ repmat(init_m,n_samples,1)
+        return samples.T.squeeze()
+
+    def normalize(self,state = None,action = None):
+        """ Normalize the inputs"""
+        if not state is None:
+            state = self.inv_norm[0]*state
+            
+        if not action is None:
+            action = self.inv_norm[1]*action
+            
+        return state, action
+        
+    def unnormalize(self,state = None, action = None):
+        """ Unnormalize the inputs"""
+        if not state is None:
+            state = self.norm[0]*state
+            
+        if not action is None:
+            action = self.norm[1]*action
+            
+        return state, action
+        
+    def simulate_onestep(self, state, action):
+        """ """
+        
+        one_step_dyn = lambda s,t,a: self._dynamics(t,s,a).squeeze()
+        
+        
+        #unnormalize state and action
+        state = state*self.norm[0]
+        action = action * self.norm[1]
+
+        sol = odeint(one_step_dyn,state,np.array([0.0,self.dt]),args=tuple(action))
+        next_state = sol[1,:]
+        
+        return self.state_to_obs(next_state),self.state_to_obs(next_state,True)
 
     def linearize_discretize(self,x_center=None,u_center=None, normalize = True):
         """ Discretize and linearize the system around an equilibrium point
@@ -137,6 +181,41 @@ class Environment:
         A,B,_,_,_ = cont2discrete(ct_input,self.dt)
         
         return A,B
+
+    def step(self, action):
+        """ Apply action to system and output current state and other information.
+        
+        Parameters
+        ----------
+        action: n_u x 0 1darray[float]
+            The normalized(!) action
+        """ 
+        
+        action_clipped = np.clip(np.nan_to_num(action),self.u_min,self.u_max) #clip to normalized max action
+        action = self.norm[1] * action_clipped #unnormalize
+        
+        self.odesolver.set_f_params(action)
+        old_state = np.copy(self.current_state)
+        self.current_state = self.odesolver.integrate(self.odesolver.t+self.dt) 
+        
+        self.iteration += 1
+        done = not self._check_constraints()
+        
+        new_state_noise_obs = self.state_to_obs(np.copy(self.current_state),add_noise=True)
+        new_state_obs = self.state_to_obs(np.copy(self.current_state))
+        
+        if self.odesolver.successful():
+            
+            if self.verbosity>0:
+                print("\n===Old state:")
+                print(old_state)
+                print("===Action:")
+                print(action)
+                print("===Next state:")
+                print(self.current_state)
+            
+            return action_clipped,new_state_obs,new_state_noise_obs,done
+        raise ValueError("Odesolver failed!")
         
     def get_target(self):
         """ Return the target state 
@@ -189,7 +268,7 @@ class InvertedPendulum(Environment):
         target: 2x0 1darray[float], optional
             The target state
         """
-        super(InvertedPendulum,self).__init__(name,2,1,dt,start_state,init_std,plant_noise,u_min,u_max,target)
+        super(InvertedPendulum,self).__init__(name,2,1,dt,start_state,init_std,plant_noise,u_min,u_max,target,verbosity)
         self.odesolver = ode(self._dynamics)
         self.l = l
         self.m = m
@@ -200,7 +279,7 @@ class InvertedPendulum(Environment):
         self.l_sigm = np.array([0.1,.05])
         self.target = target
         self.target_ilqr = start_state
-        self.verbosity = verbosity
+
         
         max_deg = 30
         if norm_x is None:
@@ -224,23 +303,22 @@ class InvertedPendulum(Environment):
         self.odesolver.set_initial_value(self.current_state,0.0)
         
         return self.state_to_obs(self.current_state)
-        
-    def simulate_onestep(self, state, action):
-        """ """
-        
-        one_step_dyn = lambda s,t,a: self._dynamics(t,s,a).squeeze()
-        
-        
-        #unnormalize state and action
-        state = state*self.norm[0]
-        action = action * self.norm[1]
 
-        sol = odeint(one_step_dyn,state,np.array([0.0,self.dt]),args=tuple(action))
-        next_state = sol[1,:]
-        
-        return self.state_to_obs(next_state),self.state_to_obs(next_state,True)
-        
-        
+    def _check_constraints(self,state = None):
+        """ Check the state constraints
+
+        Parameters
+        ----------
+        state: ndarray[float], optional 
+            Some (unnormalized) state or the current state
+
+        Returns:
+        --------
+        sat: bool
+            Returns 'True' if the constraints are satisfied, 'False' otherwise
+        """        
+        return True
+
     def _dynamics(self, t, state, action):
         """ Evaluate the system dynamics 
         
@@ -288,26 +366,6 @@ class InvertedPendulum(Environment):
         jac_1 = np.eye(1,3) #jacobian of the second equation
         
         return np.vstack((jac_0,jac_1))
-        
-    def normalize(self,state = None,action = None):
-        """ Normalize the inputs"""
-        if not state is None:
-            state = self.inv_norm[0]*state
-            
-        if not action is None:
-            action = self.inv_norm[1]*action
-            
-        return state, action
-        
-    def unnormalize(self,state = None, action = None):
-        """ Unnormalize the inputs"""
-        if not state is None:
-            state = self.norm[0]*state
-            
-        if not action is None:
-            action = self.norm[1]*action
-            
-        return state, action
         
     def state_to_obs(self, state = None, add_noise = False):
         """ Transform the dynamics state to the state to be observed
@@ -467,40 +525,6 @@ class InvertedPendulum(Environment):
                
         return p_safe, width_safe, height_safe
         
-    def step(self, action):
-        """ Apply action to system and output current state and other information.
-        
-        Parameters
-        ----------
-        action: n_u x 0 1darray[float]
-            The normalized(!) action
-        """ 
-        
-        action_clipped = np.clip(np.nan_to_num(action),self.u_min,self.u_max) #clip to normalized max action
-        action = self.norm[1] * action_clipped #unnormalize
-        
-        self.odesolver.set_f_params(action)
-        old_state = np.copy(self.current_state)
-        self.current_state = self.odesolver.integrate(self.odesolver.t+self.dt) 
-        
-        self.iteration += 1
-        done = False
-        
-        new_state_noise_obs = self.state_to_obs(np.copy(self.current_state),add_noise=True)
-        new_state_obs = self.state_to_obs(np.copy(self.current_state))
-        
-        if self.odesolver.successful():
-            
-            if self.verbosity>0:
-                print("\n===Old state:")
-                print(old_state)
-                print("===Action:")
-                print(action)
-                print("===Next state:")
-                print(self.current_state)
-            
-            return action_clipped,new_state_obs,new_state_noise_obs,done
-        raise ValueError("Odesolver failed!")
         
     def random_action(self):
         """ Apply a random action to the system 
@@ -593,7 +617,7 @@ class CartPole(Environment):
 
     """
     def __init__(self,name = 'CartPole',dt=0.01,l = 0.5,m=0.5,M=0.5,b=0.1,g=9.82,start_state = np.array([0.0,0.0,0.0,0.0]),visualize = True, init_std = 0.0,norm_x = None, norm_u = None,verbosity = 1):
-        super(CartPole,self).__init__(name,4,1,dt,start_state,init_std,np.array([0.01,0.01,0.01,0.01])**2,np.array([-10.0]),np.array([10.0]),np.array([0.0,l,0.0]))
+        super(CartPole,self).__init__(name,4,1,dt,start_state,init_std,np.array([0.01,0.01,0.01,0.01])**2,np.array([-10.0]),np.array([10.0]),np.array([0.0,l,0.0]),verbosity)
         ns = 4 
         nu = 1
 
@@ -673,32 +697,26 @@ class CartPole(Environment):
         
         return self.state_to_obs(self.current_state)
     
-    
-    
-    def step(self,action):
-        """
-        
-        
-        """
-        action = np.clip(np.nan_to_num(action),self.u_min,self.u_max)
-        print(action)
-        self.odesolver.set_f_params(action)
-        
-        self.current_state = self.odesolver.integrate(self.odesolver.t+self.dt) + np.random.randn(self.ns_ode)*np.sqrt(self.plant_noise)
-        self.iteration += 1
-        
-        done = False
-        if self.current_state[0] < -3 or self.current_state[0] > 3:
-            done = True
+    def _check_constraints(self,state = None):
+        """ Check the state constraints
 
-        
-        new_state_noise_obs = self.state_to_obs(np.copy(self.current_state),add_noise=True)
-        new_state_obs = self.state_to_obs(np.copy(self.current_state))
-        
-        cc = self._get_step_cost(self.current_state,action)
-        
-        if self.odesolver.successful():
-            return action,new_state_obs,new_state_noise_obs,done
+        Parameters
+        ----------
+        state: ndarray[float], optional 
+            Some (unnormalized) state or the current state
+
+        Returns:
+        --------
+        sat: bool
+            Returns 'true' if the constraints are satisfied, 'false' otherwise
+        """
+
+        if state is None:
+            state = self.current_state
+
+        sat = state[0] < 3 and state[0] >-3
+
+        return sat
         
     def render(self):
         """
@@ -727,19 +745,6 @@ class CartPole(Environment):
         self.clock = pygame.time.Clock()
         
         self._vis_initialized = True
-        
-        
-    def _sample_start_state(self,mean = None, std = None):
-        #return np.array([0.0,0.0,0.0,0.0])#np.zeros((self.ns,))
-        init_std = self.init_std
-        if not std is None:
-            init_std = std
-            
-        init_m = mean
-        if init_m is None:
-            init_m = self.start_state
-        
-        return init_std*np.random.randn(4)+init_m
         
     def _draw_cartpole(self):
         """ Draw the screen for the cart pole environment
@@ -856,8 +861,8 @@ class CartPole(Environment):
             x_1 >= -max_rad
         """
         
-        max_deg = 10
-        max_dtheta = .5
+        max_deg = 25
+        max_dtheta = 1.5
         
         max_rad = np.deg2rad(max_deg)
         
