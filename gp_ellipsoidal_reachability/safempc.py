@@ -183,10 +183,10 @@ class SafeMPC:
         prob = {'f':cost,'x': opt_vars,'p':opt_params,'g':g}
 
 
-        #opt = {'ipopt':{'hessian_approximation':'limited-memory',"max_iter":500,"expect_infeasible_problem":"yes"}} #ipopt 
-        opt = {'qpsol':'qpoases','max_iter':30,'hessian_approximation':'limited-memory'}#,"c1":5e-4} #sqpmethod #,'hessian_approximation':'limited-memory'
-        #solver = cas.nlpsol('solver','ipopt',prob,opt)
-        solver = cas.nlpsol('solver','sqpmethod',prob,opt)
+        opt = {'ipopt':{'hessian_approximation':'exact',"max_iter":200,"expect_infeasible_problem":"no","bound_frac":0.4,"start_with_resto":"no","required_infeasibility_reduction":0.85}} #ipopt 
+        #opt = {'qpsol':'qpoases','max_iter':30,'hessian_approximation':'limited-memory'}#,"c1":5e-4} #sqpmethod #,'hessian_approximation':'limited-memory'
+        solver = cas.nlpsol('solver','ipopt',prob,opt)
+        #solver = cas.nlpsol('solver','sqpmethod',prob,opt)
         
         self.solver = solver
         self.lbg = lbg
@@ -566,18 +566,20 @@ class SafeMPC:
             u_perf_0 = []
         else:
             u_perf_0 = cas_reshape(u_perf_0,(-1,1))
-        params = np.vstack((p_0,cas_reshape(k_fb_0,(-1,1))))
+
+        params = np.vstack((p_0,np.reshape(k_fb_0,(-1,1))))
 
         u_init = vertcat(cas_reshape(u_0,(-1,1)),u_perf_0, \
                          cas_reshape(k_ff_all_0,(-1,1)),cas_reshape(k_fb_ctrl_0,(-1,1)),cas_reshape(k_fb_perf_0,(-1,1)))
+
         crash = False
         #sol = self.solver(x0=u_init,lbg=self.lbg,ubg=self.ubg,p=params)
         try:
             sol = self.solver(x0=u_init,lbg=self.lbg,ubg=self.ubg,p=params)
             # TO-DO: This is ugly
-            print(sol)
-            print(sol['x'])
-            print(self.solver.stats())
+            #print(sol)
+            #print(sol['x'])
+            #print(self.solver.stats())
         except:
             crash = True
             warnings.warn("NLP solver crashed, solution infeasible")
@@ -624,19 +626,21 @@ class SafeMPC:
                 print("Optimization crashed, infeasible soluion!")
         else:
             g_res = np.array(sol["g"]).squeeze()
+
+            # This is not sufficient, since casadi gives out wrong feasibility values
             if np.any(np.array(self.lbg) - feas_tol > g_res ) or np.any(np.array(self.ubg) + feas_tol < g_res ):      
                 feasible = False
                 
-            if self.verbosity > 1:
-                print("\n=== Constraint values:")
-                for i in range(len(g_res)):
-                    print(" constraint: {}, lbg: {}, g: {}, ubg: {} ".format(self.g_name[i],self.lbg[i],g_res[i],self.ubg[i]))
-                print("\n")
+            #if self.verbosity > 1:
+            #    print("\n=== Constraint values:")
+            #    for i in range(len(g_res)):
+            #        print(" constraint: {}, lbg: {}, g: {}, ubg: {} ".format(self.g_name[i],self.lbg[i],g_res[i],self.ubg[i]))
+            #    print("\n")
             
-            if self.verbosity > 0:
-                print("===== SOLUTION FEASIBLE: {} ========".format(feasible))
+            #if self.verbosity > 0:
+            #    print("===== SOLUTION FEASIBLE: {} ========".format(feasible))
             
-        if feasible:
+        
             self.n_fail = 0
             x_opt = sol["x"]
             self.has_openloop = True
@@ -680,10 +684,10 @@ class SafeMPC:
                 self.u_perf_all = u_perf_all
                 self.p_ctrl = p_ctrl
 
-            if self.verbosity > 1:
-                self.eval_safety_constraints(p_ctrl,q_all)
+            
+            feasible, _ =  self.eval_safety_constraints(p_ctrl,q_all)
                 
-        else:
+        if not feasible:
             if self.verbosity > 1:
                 print("Infeasible solution!")
             
@@ -711,7 +715,7 @@ class SafeMPC:
         return u_apply, success
         
 
-    def eval_safety_constraints(self,p_all,q_all,terminal_only = True):
+    def eval_safety_constraints(self,p_all,q_all,ubg_term = 0., lbg_term = -np.inf,terminal_only = True):
         """ Evaluate the safety constraints """
 
         p_cas = SX.sym('p',(self.n_s,self.n_u))
@@ -719,12 +723,22 @@ class SafeMPC:
         g_val_term_cas = lin_ellipsoid_safety_distance(p_cas,q_cas,self.h_mat_safe,self.h_safe)
         g_term_cas = cas.Function("g_term",[p_cas,q_cas],[g_val_term_cas])
 
-        print("\n===== Evaluated terminal constraint values =====")
-        print(g_term_cas(p_all[-1,:,None],cas_reshape(q_all[-1,:],(self.n_s,self.n_s))))
-        print("\n===== ===== ===== ===== ===== ===== ===== =====")
+        g_term_val = g_term_cas(p_all[-1,:,None],cas_reshape(q_all[-1,:],(self.n_s,self.n_s)))
 
+        feasible_term = np.all(lbg_term < g_term_val) and np.all(g_term_val < ubg_term)
+        
+
+        feasible = feasible_term
         if not terminal_only:
             raise NotImplementedError("Still need to eval the intermediate safety constraint vals")
+
+
+        if self.verbosity > 1:
+            print("\n===== Evaluated terminal constraint values: FEASIBLE = {} =====".format(feasible))
+            print(g_term_val)
+            print("\n===== ===== ===== ===== ===== ===== ===== =====")
+
+        return feasible, g_term_val 
 
     def get_old_solution(self, x, k = None, get_ctrl_traj = False):
         """ Shift previously obtained solutions in time and return solution to be applied
