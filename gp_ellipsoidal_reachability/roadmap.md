@@ -16,7 +16,7 @@
 - [ ] fix issues with feasbility / change settings to reduce primal infeasibility fast, always return feasible solution if one was found
 
 #### `episode_runner`
-- [ ] Allow for option to sample starting points inside safeset which map back into safeset
+- [x] Allow for option to sample starting points inside safeset which map back into safeset
 
 #### 'GPs'
 - [ ] Make it possible to exclude state space dims for inputs of the dynamics (important for cart-pole)
