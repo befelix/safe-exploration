@@ -10,6 +10,7 @@ from safempc import SafeMPC
 from gp_models import SimpleGPModel
 from utils_config import create_solver, create_env
 from collections import namedtuple
+from utils import sample_inside_polytope 
 
 import numpy as np
 import warnings
@@ -20,41 +21,32 @@ import copy
 import utils_ellipsoid
 
 
-def run_episodic(conf):
+def run_episodic(conf,relative_dynamics):
     """ Run episode setting """
+
+    warnings.warn("Need to check relative dynamics")
         
     env = create_env(conf.env_name,conf.env_options)
 
-    if conf.n_scenarios > 1:
-        raise NotImplementedError("For now we don't support multiple experiments!")
-
-    X,y, S,z  = do_rollout(env, conf.n_steps_init,plot_trajectory=conf.plot_trajectory,render = conf.render)
-    for i in range(1,conf.n_rollouts_init):
-        xx,yy, ss,zz  = do_rollout(env, conf.n_steps_init,plot_trajectory=conf.plot_trajectory,render = conf.render)
-        X = np.vstack((X,xx))
-        y = np.vstack((y,yy))
-        S = np.vstack((S,ss))
-        z = np.vstack((z,zz))
-        
+    X,y = generate_initial_samples(env,conf,relative_dynamics)
     
     for i in range(conf.n_ep):
         if i ==0:
             solver = create_solver(conf,env)
-            solver.update_model(S,y)
+            solver.update_model(X,y)
             solver.init_solver(conf.cost)
         else:
-            solver.update_model(S,y)
+            solver.update_model(X,y)
 
-        xx, yy, ss,zz = do_rollout(env, conf.n_steps, solver = solver,plot_ellipsoids = conf.plot_ellipsoids,plot_trajectory=conf.plot_trajectory,render = conf.render)
+        xx, yy = do_rollout(env, conf.n_steps, solver = solver,plot_ellipsoids = conf.plot_ellipsoids,plot_trajectory=conf.plot_trajectory,render = conf.render)
         
         X = np.vstack((X,xx))
         y = np.vstack((y,yy))
-        S = np.vstack((S,ss))
-        z = np.vstack((z,zz))
+
         
     if not conf.data_savepath is None:
         savepath_data = "{}/{}".format(conf.save_path,conf.data_savepath)
-        np.savez(savepath_data,X=X,y=y,S=S,z = z)
+        np.savez(savepath_data,X=X,y=y)
         
         
 def do_rollout(env, n_steps, solver = None, relative_dynamics = False,
@@ -68,12 +60,10 @@ def do_rollout(env, n_steps, solver = None, relative_dynamics = False,
     """
     
     state = env.reset()
-    old_observation = state #assume noiseless initial observation
     
     xx = np.zeros((1,env.n_s+env.n_u))
-    ss = np.zeros((1,env.n_s+env.n_u))
-    zz = np.zeros((1,env.n_s))
     yy= np.zeros((1,env.n_s))
+
     obs = state
     
     n_successful = 0
@@ -98,9 +88,10 @@ def do_rollout(env, n_steps, solver = None, relative_dynamics = False,
         k_ff = None
             
         if solver is None:
-            action = env.random_action()
+            action = .2 * env.random_action()
         else:
             t_start_solver = time.time()
+            print(np.shape(state))
             action, safety_fail = solver.get_action(state,env.target_ilqr)#,lqr_only = True)
             t_end_solver = time.time()
             t_solver = t_end_solver - t_start_solver
@@ -172,35 +163,28 @@ def do_rollout(env, n_steps, solver = None, relative_dynamics = False,
         if done:
             break
 
-        state_action = np.hstack((old_observation,action))
-        state_action_noiseless = np.hstack((state,action))
-        print(np.shape(state_action))
+
+        state_action = np.hstack((state,action))
         xx = np.vstack((xx,state_action))
-        ss = np.vstack((ss,state_action_noiseless))
-        obs = np.vstack((obs,observation))
+
         if relative_dynamics:
-            yy = np.vstack((yy,observation - old_observation))
-            zz = np.vstack((zz,observation - state))
+            yy = np.vstack((zz,observation - state))
             
         else:
             yy = np.vstack((yy,observation))
-            zz = np.vstack((zz,observation))
+
             
         n_successful += 1
         state = next_state
-        old_observation = observation
         
     if n_successful == 0:
         warnings.warn("Agent survived 0 steps, cannot collect data")
         xx = []
         yy = []
-        ss = []
-        zz = []
     else:
         xx = xx[1:,:]
         yy = yy[1:,:]
-        ss = ss[1:,:]
-        zz = zz[1:,:]
+
         
     print("Agent survived {} steps".format(n_successful))
     if verbosity >0:
@@ -209,9 +193,82 @@ def do_rollout(env, n_steps, solver = None, relative_dynamics = False,
         if check_system_safety and n_test_safety > 0:
             print("\n======= percentage system steps inside safety bounds =======")
             print(float(n_inside)/n_test_safety)
-    return xx,yy,ss,zz
+    return xx,yy
     
 
+def generate_initial_samples(env,conf,relative_dynamics):
+
+    if conf.init_mode == "random_rollouts":
+        X,y = do_rollout(env, conf.n_steps_init,plot_trajectory=conf.plot_trajectory,render = conf.render)
+        for i in range(1,conf.n_rollouts_init):
+            xx,yy  = do_rollout(env, conf.n_steps_init,plot_trajectory=conf.plot_trajectory,render = conf.render)
+            X = np.vstack((X,xx))
+            y = np.vstack((y,yy))
+
+    elif conf.init_mode == "safe_samples":
+        solver = create_solver(conf,env)
+
+        n_samples = conf.n_safe_samples
+        n_max = conf.c_max_probing_init*n_samples
+        n_max_next_state = conf.c_max_probing_next_state *n_samples 
+
+        states_probing = env._sample_start_state(n_samples = n_max).T
+
+
+        h_mat_safe, h_safe,_,_ = env.get_safety_constraints(normalize = True)
+
+        bool_mask_inside = np.argwhere(sample_inside_polytope(states_probing,solver.h_mat_safe,solver.h_safe))
+        states_probing_inside = states_probing[bool_mask_inside,:]
+
+        n_inside_first = np.shape(states_probing_inside)[0]
+
+        i = 0
+        cont = True
+
+        X = np.zeros((1,env.n_s+env.n_u))
+        y = np.zeros((1,env.n_s))
+
+        n_success = 0
+        while cont:
+            state = states_probing_inside[i,:]
+            action = solver.safe_policy(state.T)
+            next_state, next_observation = env.simulate_onestep(state.squeeze(),action)
+
+            
+
+            if sample_inside_polytope(next_state[None,:],h_mat_safe,h_safe):
+                state_action = np.hstack((state.squeeze(),action.squeeze()))
+                X = np.vstack((X,state_action))
+
+                if relative_dynamics:
+                    y = np.vstack((y,next_observation - state))
+                    
+                else:
+                    y = np.vstack((y,next_observation))
+                n_success += 1
+
+            i += 1
+
+            if i >= n_inside_first  or n_success >= n_samples:
+                cont = False
+
+
+
+        if conf.verbose > 1:
+            print("==== Safety controller evaluation ====")
+            print("Ratio sample / inside safe set: {} / {}".format(n_inside_first,n_max))
+            print("Ratio next state inside safe set / intial state in safe set: {} / {}".format(n_success,n_inside_first))
+
+
+        X = X[1:,:]
+        y = y[1:,:]
+
+        return X,y
+
+    else:
+        raise NotImplementedError("Unknown option initialization mode: {}".format(conf.init_mode))
+
+    return S,X,y,z
     
 if __name__ == "__main__":
     env_options = namedtuple('conf',['env_name'])
