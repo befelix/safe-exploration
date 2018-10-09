@@ -51,7 +51,9 @@ class SafeMPC:
         self.has_openloop = False
         
         self.safe_policy = safe_policy
-        
+
+        self.cost_func = None #This is updated wheenver the solver is newly initialized (possibly again with None)
+
         self._set_attributes_from_dict(ATTR_NAMES_ENV,DEFAULT_OPT_ENV,opt_env)
 
         if self.h_mat_obs is None:
@@ -131,6 +133,8 @@ class SafeMPC:
         
 
         """     
+        self.cost_func = cost_func
+
         x_cstr_scaling = 1        
         
         k_fb_ctrl = SX.sym("feedback controls", (1,self.n_s*self.n_u))
@@ -183,7 +187,7 @@ class SafeMPC:
         prob = {'f':cost,'x': opt_vars,'p':opt_params,'g':g}
 
 
-        opt = {'ipopt':{'hessian_approximation':'exact',"max_iter":200,"expect_infeasible_problem":"no","bound_frac":0.4,"start_with_resto":"no","required_infeasibility_reduction":0.85}} #ipopt 
+        opt = {'error_on_fail':False,'ipopt':{'hessian_approximation':'exact',"max_iter":100,"expect_infeasible_problem":"no","bound_frac":0.2,"start_with_resto":"no","required_infeasibility_reduction":0.85}} #ipopt 
         #opt = {'qpsol':'qpoases','max_iter':30,'hessian_approximation':'limited-memory'}#,"c1":5e-4} #sqpmethod #,'hessian_approximation':'limited-memory'
         solver = cas.nlpsol('solver','ipopt',prob,opt)
         #solver = cas.nlpsol('solver','sqpmethod',prob,opt)
@@ -425,6 +429,9 @@ class SafeMPC:
             k_lqr,_,_ = dlqr(a,b,q,r)
             k_fb = -k_lqr
         else:
+
+            raise NotImplementedError("There definitely is a bug here!")
+
             z = np.hstack((x_0.T,u_0.T))
             jac_mu = self.gp.predictive_gradients(z)
             mu_new,_ = self.gp.predict(z)
@@ -485,7 +492,8 @@ class SafeMPC:
             for i in range(T):
                 k_fb[i] = k_tmp
         _,_,p_all, q_all = multistep_reachability(x_0[:,None],self.gp,k_fb,k_ff,
-                                              self.l_mu,self.l_sigma,c_safety = self.beta_safety, verbose=0,a =self.a,b=self.b)
+                                              self.l_mu,self.l_sigma,c_safety = self.beta_safety, verbose=self.verbosity,a =self.a,b=self.b)
+
     
         if get_controls:
             return p_all, q_all, k_fb, k_ff
@@ -641,7 +649,7 @@ class SafeMPC:
             #    print("===== SOLUTION FEASIBLE: {} ========".format(feasible))
             
         
-            self.n_fail = 0
+            
             x_opt = sol["x"]
             self.has_openloop = True
             
@@ -686,7 +694,10 @@ class SafeMPC:
 
             
             feasible, _ =  self.eval_safety_constraints(p_ctrl,q_all)
-                
+        
+        if feasible:
+            self.n_fail = 0
+
         if not feasible:
             if self.verbosity > 1:
                 print("Infeasible solution!")
@@ -699,10 +710,14 @@ class SafeMPC:
             
             if self.n_fail >= self.n_safe:
                 ## Too many infeasible solutions -> switch to safe controller
+                if self.verbosity > 1:
+                    print("Too many infeasible solutions -> switch to safe controller")
                 u_apply = self.safe_policy(x_0)
                 k_ff_all = u_apply
             else:
                 ## can apply previous solution
+                if self.verbosity > 1:
+                    print("Switching to previous solution, n_fail = {}, n_safe = {}".format(self.n_fail,self.n_safe))
                 if sol_verbose:
                     u_apply,k_fb_apply, k_ff_all, p_ctrl = self.get_old_solution(x_0, get_ctrl_traj = True)
                 else:
@@ -803,6 +818,7 @@ class SafeMPC:
         ilqr_initializer = self.ilqr_initializer
         ilqr_initializer.cost.x_target = p_safe
         ilqr_initializer.cost.x_safe = p_safe
+
         if self.rhc and self.n_fail == 0:
             u_old = self.k_ff_all
             u_0 = np.vstack((u_old[1:],np.zeros((1,self.n_u))))
@@ -918,7 +934,7 @@ class SafeMPC:
         y_prior = self.eval_prior(x_s,x_u)
         
         self.gp.update_model(x,y-y_prior,train,replace_old)
-        self.init_solver()
+        self.init_solver(self.cost_func)
     
     def init_ilqr_initializer(self):
         """ Initialize the iLQR method to get initial values for the NLP method """
