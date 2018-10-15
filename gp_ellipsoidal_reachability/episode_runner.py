@@ -21,22 +21,19 @@ import copy
 import utils_ellipsoid
 
 
-def run_episodic(conf,relative_dynamics):
+def run_episodic(conf,solver):
     """ Run episode setting """
 
     warnings.warn("Need to check relative dynamics")
         
     env = create_env(conf.env_name,conf.env_options)
 
-    X,y = generate_initial_samples(env,conf,relative_dynamics)
+    X,y = generate_initial_samples(env,conf,conf.relative_dynamics)
     
     for i in range(conf.n_ep):
+        solver.update_model(X,y,opt_hyp = conf.train_gp,reinitialize_solver = False)
         if i ==0:
-            solver = create_solver(conf,env)
-            solver.update_model(X,y)
             solver.init_solver(conf.cost)
-        else:
-            solver.update_model(X,y)
 
         xx, yy = do_rollout(env, conf.n_steps, solver = solver,plot_ellipsoids = conf.plot_ellipsoids,plot_trajectory=conf.plot_trajectory,render = conf.render)
         
@@ -46,7 +43,9 @@ def run_episodic(conf,relative_dynamics):
         
     if not conf.data_savepath is None:
         savepath_data = "{}/{}".format(conf.save_path,conf.data_savepath)
-        np.savez(savepath_data,X=X,y=y)
+        print(conf.lin_prior)
+        a,b = solver.lin_model
+        np.savez(savepath_data,X=X,y=y,a = a,b=b)
         
         
 def do_rollout(env, n_steps, solver = None, relative_dynamics = False,
@@ -88,11 +87,11 @@ def do_rollout(env, n_steps, solver = None, relative_dynamics = False,
         k_ff = None
             
         if solver is None:
-            action = .2 * env.random_action()
+            action = env.random_action()
         else:
             t_start_solver = time.time()
             print(np.shape(state))
-            action, safety_fail = solver.get_action(state,env.target_ilqr)#,lqr_only = True)
+            action, safety_fail = solver.get_action(state,env.target_ilqr,lqr_only = False)#,lqr_only = True)
             t_end_solver = time.time()
             t_solver = t_end_solver - t_start_solver
             
@@ -103,9 +102,9 @@ def do_rollout(env, n_steps, solver = None, relative_dynamics = False,
 
 
         if verbosity > 0:
-            print("\n==== Applied action at time step {} ====".format(i))
+            print("\n==== Applied normalized action at time step {} ====".format(i))
             print(action)
-            print("\n==== Next state ====")
+            print("\n==== Next state (normalized) ====")
             print(next_state)
             print("==========================\n")
 
@@ -168,7 +167,7 @@ def do_rollout(env, n_steps, solver = None, relative_dynamics = False,
         xx = np.vstack((xx,state_action))
 
         if relative_dynamics:
-            yy = np.vstack((zz,observation - state))
+            yy = np.vstack((xx,observation - state))
             
         else:
             yy = np.vstack((yy,observation))
@@ -188,8 +187,8 @@ def do_rollout(env, n_steps, solver = None, relative_dynamics = False,
         
     print("Agent survived {} steps".format(n_successful))
     if verbosity >0:
-        print("========== State Trajectory ===========")
-        print(obs)
+        print("========== State/Action Trajectory ===========")
+        print(xx)
         if check_system_safety and n_test_safety > 0:
             print("\n======= percentage system steps inside safety bounds =======")
             print(float(n_inside)/n_test_safety)
@@ -239,7 +238,6 @@ def generate_initial_samples(env,conf,relative_dynamics):
             if sample_inside_polytope(next_state[None,:],h_mat_safe,h_safe):
                 state_action = np.hstack((state.squeeze(),action.squeeze()))
                 X = np.vstack((X,state_action))
-
                 if relative_dynamics:
                     y = np.vstack((y,next_observation - state))
                     
@@ -257,8 +255,8 @@ def generate_initial_samples(env,conf,relative_dynamics):
         if conf.verbose > 1:
             print("==== Safety controller evaluation ====")
             print("Ratio sample / inside safe set: {} / {}".format(n_inside_first,n_max))
-            print("Ratio next state inside safe set / intial state in safe set: {} / {}".format(n_success,n_inside_first))
-
+            print("Ratio next state inside safe set / intial state in safe set: {} / {}".format(n_success,i))
+        #sys.exit(0)
 
         X = X[1:,:]
         y = y[1:,:]
@@ -268,7 +266,7 @@ def generate_initial_samples(env,conf,relative_dynamics):
     else:
         raise NotImplementedError("Unknown option initialization mode: {}".format(conf.init_mode))
 
-    return S,X,y,z
+    return X,y
     
 if __name__ == "__main__":
     env_options = namedtuple('conf',['env_name'])
