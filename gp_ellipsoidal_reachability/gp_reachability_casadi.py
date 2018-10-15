@@ -15,7 +15,7 @@ from utils_ellipsoid_casadi import sum_two_ellipsoids, ellipsoid_from_rectangle
 import warnings
 
 def onestep_reachability(p_center,gp,k_ff,l_mu,l_sigma,
-                         q_shape = None,k_fb = None, c_safety = 1., a = None, b = None):
+                         q_shape = None,k_fb = None, c_safety = 1., a = None, b = None,t_z_gp = None):
     """ Overapproximate the reachable set of states under affine control law
     
     given a system of the form:
@@ -24,7 +24,7 @@ def onestep_reachability(p_center,gp,k_ff,l_mu,l_sigma,
     we approximate the reachset of a set of inputs x_t \in \epsilon(p,Q)
     describing an ellipsoid with center p and shape matrix Q
     under the control low u_t = Kx_t + k 
-    
+
     Parameters
     ----------
         p_center: n_s x 1 array[float]     
@@ -55,6 +55,10 @@ def onestep_reachability(p_center,gp,k_ff,l_mu,l_sigma,
     """         
     n_s = np.shape(p_center)[0]
     n_u = np.shape(k_ff)[0]
+
+    if t_z_gp is None:
+        t_z_gp = SX.eye(n_s)
+
     
     if a is None:
         a = SX.eye(n_s)
@@ -65,6 +69,8 @@ def onestep_reachability(p_center,gp,k_ff,l_mu,l_sigma,
         u_p = k_ff
 
         z_bar = vertcat(p_center,u_p)
+        z_bar = vertcat(mtimes(t_z_gp,p_center),u_p)
+
         mu_new, pred_var = gp.predict_casadi_symbolic(z_bar.T)
         
         p_lin = mtimes(a,p_center) + mtimes(b,u_p)
@@ -79,13 +85,16 @@ def onestep_reachability(p_center,gp,k_ff,l_mu,l_sigma,
         ## compute the linearization centers
         x_bar = p_center   # center of the state ellipsoid
         u_bar = k_ff   # u_bar = K*(u_bar-u_bar) + k = k
-        z_bar = vertcat(x_bar,u_bar)
+        z_bar = vertcat(mtimes(t_z_gp,x_bar),u_bar)
         
         ##compute the zero and first order matrices
         mu_0, sigm_0, jac_mu = gp.predict_casadi_symbolic(z_bar.T,True)
-                   
-        a_mu = jac_mu[:,:n_s]
-        b_mu = jac_mu[:,n_s:]
+                 
+        n_x_in = np.shape(t_z_gp)[0]
+
+        a_mu = jac_mu[:,:n_x_in]
+        a_mu = mtimes(a_mu,t_z_gp)
+        b_mu = jac_mu[:,n_x_in:]
          
         ## reach set of the affine terms
         H = a + a_mu + mtimes(b_mu+b,k_fb)
@@ -112,7 +121,7 @@ def onestep_reachability(p_center,gp,k_ff,l_mu,l_sigma,
         
         return p_1,q_1
         
-def multi_step_reachability(p_0,u_0,k_fb_0,k_fb_ctrl,k_ff,gp,l_mu,l_sigm,c_safety = 1.,a=None,b=None):
+def multi_step_reachability(p_0,u_0,k_fb_0,k_fb_ctrl,k_ff,gp,l_mu,l_sigm,c_safety = 1.,a=None,b=None,t_z_gp = None):
     """ Generate trajectory of reachset by iteratively computing the one-step reachability
     
     Parameters
@@ -141,11 +150,15 @@ def multi_step_reachability(p_0,u_0,k_fb_0,k_fb_ctrl,k_ff,gp,l_mu,l_sigm,c_safet
     b: n_s x n_u ndarray[float]
         The B matrix of the linear model Ax + Bu
     
+    Returns
+    -------
+    p_all
+    q_all
     """
     n_u,n_s = np.shape(k_fb_ctrl)
     n_fb = np.shape(k_fb_0)[0]
     
-    p_new, q_new = onestep_reachability(p_0,gp,u_0,l_mu,l_sigm,None,None,c_safety,a,b)
+    p_new, q_new = onestep_reachability(p_0,gp,u_0,l_mu,l_sigm,None,None,c_safety,a,b,t_z_gp)
         
     p_all = p_new.T
     q_all = q_new.reshape((1,n_s*n_s))
@@ -156,7 +169,7 @@ def multi_step_reachability(p_0,u_0,k_fb_0,k_fb_ctrl,k_ff,gp,l_mu,l_sigm,c_safet
         k_ff_i = k_ff[i,:].reshape((n_u,1))
         k_fb_i = (k_fb_0[i] + k_fb_ctrl).reshape((n_u,n_s))
         
-        p_new, q_new = onestep_reachability(p_old,gp,k_ff_i,l_mu,l_sigm,q_old,k_fb_i,c_safety,a,b) 
+        p_new, q_new = onestep_reachability(p_old,gp,k_ff_i,l_mu,l_sigm,q_old,k_fb_i,c_safety,a,b,t_z_gp) 
         
         p_all = vertcat(p_all,p_new.T)
         q_all = vertcat(q_all,q_new.reshape((1,n_s*n_s)))
@@ -206,6 +219,7 @@ def objective(p_all,q_all,p_target,k_ff_all,wx_cost,wu_cost,q_target=None):
     #    c += mtimes(mtimes(k_ff_all[i,:],wu_cost),k_ff_all[i,:].T)
     c = mtimes(mtimes(p_all[0,:]-p_target.T,wx_cost),p_all[0,:].T-p_target)    
     return c 
+    
     
 if __name__ == "__main__":
     p = SX.sym("p",(3,1))
