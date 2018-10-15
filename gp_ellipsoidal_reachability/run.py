@@ -34,9 +34,9 @@ def run_scenario(args):
     config_path = args.scenario_config
     conf = loadConfig(config_path)
 
-    
     env = create_env(conf.env_name,conf.env_options)
     gp_model_options = get_model_options_from_conf(conf,env)
+
     safempc = create_solver(conf,env,gp_model_options)
     
     task = conf.task
@@ -44,7 +44,7 @@ def run_scenario(args):
         run_exploration(env,safempc,conf,conf.static_exploration,conf.n_iterations,
                         conf.n_restarts_optimizer,conf.visualize,conf.save_vis,conf.save_path)
     elif task == "episode_setting":
-        run_episodic(conf,env)
+        run_episodic(conf,safempc)
         
     elif task == "uncertainty_propagation":
         run_uncertainty_propagation(env,safempc,conf)
