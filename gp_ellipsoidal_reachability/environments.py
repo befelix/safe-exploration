@@ -194,6 +194,9 @@ class Environment:
         action_clipped = np.clip(np.nan_to_num(action),self.u_min,self.u_max) #clip to normalized max action
         action = self.norm[1] * action_clipped #unnormalize
         
+        print("ACTIOOOOOOON UNNORMALIZED")
+        print(action)
+
         self.odesolver.set_f_params(action)
         old_state = np.copy(self.current_state)
         self.current_state = self.odesolver.integrate(self.odesolver.t+self.dt) 
@@ -207,11 +210,11 @@ class Environment:
         if self.odesolver.successful():
             
             if self.verbosity>0:
-                print("\n===Old state:")
+                print("\n===Old state unnormalized:")
                 print(old_state)
-                print("===Action:")
+                print("===Action unnormalized:")
                 print(action)
-                print("===Next state:")
+                print("===Next state unnormalized:")
                 print(self.current_state)
             
             return action_clipped,new_state_obs,new_state_noise_obs,done
@@ -548,8 +551,9 @@ class InvertedPendulum(Environment):
             x_1 >= -max_rad
         """
         
-        max_deg = 20
-        max_dtheta = .15
+        max_dx = 2.0
+        max_deg = 30
+        max_dtheta = 1.5
         
         max_rad = np.deg2rad(max_deg)
         
@@ -635,8 +639,8 @@ class CartPole(Environment):
         self.dt = 0.05
         self.visualize = visualize
 
-        self.l_mu = np.array([.01,.05,.01,.05]) #TODO: This should be somewhere else
-        self.l_sigm = np.array([.01,.05,.01,.05])
+        self.l_mu = np.array([.05,.05,.05,.05]) #TODO: This should be somewhere else
+        self.l_sigm = np.array([.05,.05,.05,.05])
         
         self.idx_angles = np.array([2])
         self.obs_angles_sin = np.array([3])
@@ -650,7 +654,7 @@ class CartPole(Environment):
         self.R_cost = np.array([1.0])
         self.start_state = start_state
 
-        max_deg = 30
+        max_deg = 25
         if norm_x is None:
             norm_x = np.array([1,1,np.sqrt(g/l), np.deg2rad(max_deg)])
         
@@ -682,6 +686,8 @@ class CartPole(Environment):
             noise += np.random.randn(self.n_s)*np.sqrt(self.plant_noise)
         
         obs += noise
+        obs = obs * self.inv_norm[0]
+
         
         return obs
         
@@ -855,32 +861,52 @@ class CartPole(Environment):
         """ Get state and safety constraints
         
         We define the state constraints as:
-            x_0 - 3*x_1 <= 1
-            x_0 - 3*x_1 >= -1
-            x_1 <= max_rad
-            x_1 >= -max_rad
+
+            x_2 - 3*x_3 <= 1
+            x_2 - 3*x_3 >= -1
+            x_3 <= max_rad
+            x_3 >= -max_rad
+
         """
         
         max_deg = 25
         max_dtheta = 1.5
+        max_dx = 3.
         
         max_rad = np.deg2rad(max_deg)
         
+
+
+
         # -max_dtheta <dtheta <= max_dtheta
-        h_0_mat = np.asarray([[0.,0.,0.,1.],[0.,0.,0.,-1.]])       
-        h_0_vec = np.array([max_dtheta,max_dtheta])[:,None]
+        h_0_mat = np.asarray([0.,0.,7.25,1.])[None,:]
+        #h_0_mat = np.asarray([0.,0.,4,1.])[None,:]
+        h_0_vec = np.array([1.])[:,None]
+
+        h_1_mat = -h_0_mat
+        h_1_vec = h_0_vec
         
         #  (1/.4)*dtheta + (2/.26)*theta <= 1
-        h_1_mat = np.asarray([0.,0.,2./max_rad,1./max_rad])[None,:]
-        h_1_vec = np.asarray([1.])[:,None]
+        h_2_mat = np.asarray([0.,0.,-1.25,-1.])[None,:]
+        #h_2_mat = np.asarray([0.,0.,-0.5,-1.])[None,:]
+        h_2_vec = np.asarray([1.])[:,None]
         
         #  (1/.4)*dtheta + (2/.26)*theta  >= -1
-        h_2_mat = -h_1_mat
-        h_2_vec = h_1_vec        
+        h_3_mat = -h_2_mat
+        h_3_vec = h_2_vec    
+
+        # d_x <= max_dx
+        h_4_mat = np.asarray([0.,1.,0.,0.])[None,:]
+        h_4_vec = np.array([max_dx])[:,None]
+
+        # d_x >= -max_dx
+        h_5_mat = -h_4_mat
+        h_5_vec = h_4_vec
+    
         
         #normalize safety bounds
-        self.h_mat_safe = np.vstack((h_0_mat,h_1_mat,h_2_mat))
-        self.h_safe = np.vstack((h_0_vec,h_1_vec,h_2_vec))
+        self.h_mat_safe = np.vstack((h_0_mat,h_1_mat,h_2_mat,h_3_mat,h_4_mat,h_5_mat))
+        self.h_safe = np.vstack((h_0_vec,h_1_vec,h_2_vec,h_3_vec,h_4_vec,h_5_vec))
         self.h_mat_obs = None#p.asarray([[0.,1.],[0.,-1.]])
         self.h_obs = None #np.array([.6,.6]).reshape(2,1)
         
