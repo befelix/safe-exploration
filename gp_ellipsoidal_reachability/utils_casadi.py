@@ -137,7 +137,7 @@ def matrix_norm_2_generalized(a, b_inv, x = None, n_iter = None):
         x /= norm_2(x)
         
     if n_iter is None:
-        n_iter = 2*n
+        n_iter = n**2
         
     y = mtimes(b_inv,mtimes(a,x))
     for i in range(n_iter):
@@ -162,7 +162,7 @@ def matrix_norm_2(a_mat,x = None,n_iter = None):
         x /= norm_2(x)
         
     if n_iter is None:
-        n_iter = 2*n
+        n_iter = n**2
     
     y = mtimes(a_mat,x)
     
@@ -304,6 +304,20 @@ def generic_cost(mu,sigma, u, step_cost, terminal_cost, state_trafo = None, lamb
 
     return c 
 
+def cost_dev_safe_perf(m_safe,m_perf,W = None):
+    """ quadratic cost function on the deviation between safety and performance traejctory"""
+    
+    n_safe, n_s = np.shape(m_safe)
+    n_perf, _ = np.shape(m_safe)
+
+    cost = 0
+    if W is None:
+        W = 2*np.eye(n_s)
+    n_cost_deviation = np.minimum(n_safe,n_perf)
+    for i in range(1,n_cost_deviation):
+        cost += mtimes(m_perf[i,:]-m_safe[i,:],mtimes(W,(m_perf[i,:]-m_safe[i,:]).T))
+
+    return cost
 
 def loss_sat(m,v,z,W = None):
     """ Saturating cost function 
@@ -342,3 +356,31 @@ def loss_sat(m,v,z,W = None):
     L = -exp(mtimes(-(m-z).T,mtimes(iSpW,(m-z)/2))) / sqrt(det(G))
 
     return 1+L
+
+def loss_quadratic(m,v,z,W = None):
+    """ Quadratic cost function 
+
+    Simple quadratic loss with W as weight matrix, ignoring variance
+    Parameters
+    ----------
+    m : dx1 ndarray[float | casadi.Sym]
+        The mean of the input Gaussian
+    v : dxd ndarray[float | casadi.Sym]
+    z: dx1 ndarray[float | casadi.Sym]
+        The target-state [optional]
+    W: dxd ndarray[float | casadi.Sym]
+        The weighting matrix factor for the cost-function (scaling)
+
+    Returns
+    -------
+    L: float
+        The quadratic loss 
+    """
+    
+    D = np.shape(m)[0] 
+
+
+    if W is None:
+        W = SX.eye(D)
+
+    return mtimes((m-z).T,mtimes(W,m-z))
