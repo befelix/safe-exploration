@@ -10,7 +10,7 @@ from casadi import *
 
 
 
-def one_step_taylor(mu_x,gp, k_ff, sigma_x = None, k_fb = None, a = None, b = None):
+def one_step_taylor(mu_x,gp, k_ff, sigma_x = None, k_fb = None, a = None, b = None, a_gp_inp_x = None):
     """ One-step uncertainty propagation via first-order taylor approximation
 
     Parameters
@@ -40,7 +40,12 @@ def one_step_taylor(mu_x,gp, k_ff, sigma_x = None, k_fb = None, a = None, b = No
     n_u = np.shape(k_ff)[0]
 
     u_p = k_ff
-    z_bar = vertcat(mu_x,u_p)
+    if a_gp_inp_x is None:
+        a_gp_inp_x = SX.eye(n_s)
+
+    n_gp_in,_ = np.shape(a_gp_inp_x)
+
+    z_bar = vertcat(mtimes(a_gp_inp_x,mu_x),u_p)
     if a is None: 
         a = SX.eye(n_s)
         b = SX.zeros(n_s,n_u)
@@ -57,6 +62,7 @@ def one_step_taylor(mu_x,gp, k_ff, sigma_x = None, k_fb = None, a = None, b = No
     mu_g, sigma_g, jac_mu = gp.predict_casadi_symbolic(z_bar.T,True)
 
 
+    jac_mu = horzcat(mtimes(jac_mu[:,:n_gp_in],a_gp_inp_x),jac_mu[:,n_gp_in:])
     ## Compute taylor approximation of the posterior 
     sigma_u = mtimes(k_fb,mtimes(sigma_x,k_fb.T)) #covariance of control input
     sigma_xu = mtimes(sigma_x,k_fb.T) #cross-covariance between state and controls
@@ -88,7 +94,7 @@ def one_step_taylor(mu_x,gp, k_ff, sigma_x = None, k_fb = None, a = None, b = No
     return mu_new , sigma_new
 
 
-def multi_step_taylor_symbolic(mu_0, gp, k_ff, k_fb , sigma_0 = None, a = None, b = None):
+def multi_step_taylor_symbolic(mu_0, gp, k_ff, k_fb , sigma_0 = None, a = None, b = None, a_gp_inp_x = None):
     """ Multi step ahead predictions of the taylor uncertainty propagation
 
 
@@ -126,7 +132,7 @@ def multi_step_taylor_symbolic(mu_0, gp, k_ff, k_fb , sigma_0 = None, a = None, 
     n_s = np.shape(mu_0)[0]
     T, n_u = np.shape(k_ff)
 
-    mu_new, sigma_new = one_step_taylor(mu_0,gp,k_ff[0,:].reshape((n_u,1)),None,None,a,b)
+    mu_new, sigma_new = one_step_taylor(mu_0,gp,k_ff[0,:].reshape((n_u,1)),None,None,a,b,a_gp_inp_x)
     mu_all = mu_new.T
     sigma_all = sigma_new.reshape((1,n_s*n_s))
 
@@ -135,7 +141,7 @@ def multi_step_taylor_symbolic(mu_0, gp, k_ff, k_fb , sigma_0 = None, a = None, 
         sigma_old = sigma_new
         k_ff_i = k_ff[i+1,:].reshape((n_u,1))
 
-        mu_new, sigma_new = one_step_taylor(mu_old,gp,k_ff_i,sigma_old,k_fb,a,b)
+        mu_new, sigma_new = one_step_taylor(mu_old,gp,k_ff_i,sigma_old,k_fb[i],a,b,a_gp_inp_x)
 
 
         mu_all = vertcat(mu_all,mu_new.T)
@@ -144,7 +150,7 @@ def multi_step_taylor_symbolic(mu_0, gp, k_ff, k_fb , sigma_0 = None, a = None, 
     return mu_all, sigma_all 
     
 
-def mean_equivalent_multistep(mu_0,gp,k_ff, k_fb,sigma_0 = None, a=None,b=None):
+def mean_equivalent_multistep(mu_0,gp,k_ff, k_fb,sigma_0 = None, a=None,b=None,a_gp_inp_x = None):
     """ Compute the simple 'mean-equivalent' uncertainty propagation with GPs
 
     Parameters
@@ -178,7 +184,7 @@ def mean_equivalent_multistep(mu_0,gp,k_ff, k_fb,sigma_0 = None, a=None,b=None):
     n_s = np.shape(mu_0)[0]
     T, n_u = np.shape(k_ff)
 
-    mu_new, sigma_new = one_step_mean_equivalent(mu_0,gp,k_ff[0,:].reshape((n_u,1)),None,None,a,b)
+    mu_new, sigma_new = one_step_mean_equivalent(mu_0,gp,k_ff[0,:].reshape((n_u,1)),None,None,a,b,a_gp_inp_x)
     mu_all = mu_new.T
     sigma_all = sigma_new.reshape((1,n_s*n_s))
 
@@ -187,15 +193,15 @@ def mean_equivalent_multistep(mu_0,gp,k_ff, k_fb,sigma_0 = None, a=None,b=None):
         sigma_old = sigma_new
         k_ff_i = k_ff[i+1,:].reshape((n_u,1))
 
-        mu_new, sigma_new = one_step_mean_equivalent(mu_old,gp,k_ff_i,sigma_old,k_fb,a,b)
+        mu_new, sigma_new = one_step_mean_equivalent(mu_old,gp,k_ff_i,sigma_old,k_fb[i],a,b,a_gp_inp_x)
 
         mu_all = vertcat(mu_all,mu_new.T)
         sigma_all = vertcat(sigma_all,sigma_new.reshape((1,n_s*n_s)))
 
-    return mu_all, sigma_all 
+    return mu_all, sigma_all, sigma_new 
     
 
-def one_step_mean_equivalent(mu_x,gp, k_ff, sigma_x = None, k_fb = None, a = None, b = None):
+def one_step_mean_equivalent(mu_x,gp, k_ff, sigma_x = None, k_fb = None, a = None, b = None, a_gp_inp_x = None):
     """ One-step uncertainty propagation via first-order taylor approximation
 
     Parameters
@@ -225,7 +231,7 @@ def one_step_mean_equivalent(mu_x,gp, k_ff, sigma_x = None, k_fb = None, a = Non
     n_u = np.shape(k_ff)[0]
 
     u_p = k_ff
-    z_bar = vertcat(mu_x,u_p)
+    z_bar = vertcat(mtimes(a_gp_inp_x,mu_x),u_p)
     if a is None: 
         a = SX.eye(n_s)
         b = SX.zeros(n_s,n_u)
@@ -239,7 +245,7 @@ def one_step_mean_equivalent(mu_x,gp, k_ff, sigma_x = None, k_fb = None, a = Non
         return mu_new, diag(pred_var)
 
 
-    mu_g, sigma_g, jac_mu = gp.predict_casadi_symbolic(z_bar.T,True)
+    mu_g, sigma_g  = gp.predict_casadi_symbolic(z_bar.T,False)
 
 
     
