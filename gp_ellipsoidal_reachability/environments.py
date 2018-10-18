@@ -26,7 +26,7 @@ class Environment:
     """
     __metaclass__ = abc.ABCMeta
     
-    def __init__(self,name, n_s, n_u, dt, start_state, init_std, plant_noise,
+    def __init__(self,name, n_s, n_u, dt, init_m,init_std, plant_noise,
                  u_min, u_max, target, verbosity = 0, p_origin = None):
         """
         
@@ -35,10 +35,10 @@ class Environment:
         self.n_s = n_s
         self.n_u = n_u
         self.dt = dt
-        self.start_state = start_state
         self.is_initialized = False
         self.iteration = 0
         self.init_std = init_std
+        self.init_m = init_m
         self.u_min = u_min
         self.u_max = u_max
         self.plant_noise = plant_noise
@@ -102,7 +102,7 @@ class Environment:
             
         init_m = mean
         if init_m is None:
-            init_m = self.start_state
+            init_m = self.init_m
         
         samples = repmat(init_std,n_samples,1)*np.random.randn(n_samples,self.n_s)+ repmat(init_m,n_samples,1)
         return samples.T.squeeze()
@@ -242,7 +242,7 @@ class InvertedPendulum(Environment):
     TODO: Need to define a safety/fail criterion
     """
     def __init__(self,name = "InvertedPendulum", l = .5, m = .15, g = 9.82, b = 0.,
-                 dt = .05, start_state = [0,0], init_std = .01, plant_noise = np.array([0.001,0.001])**2,
+                 dt = .05, init_m = 0., init_std = .01, plant_noise = np.array([0.001,0.001])**2,
                  u_min = np.array([-1.]), u_max = np.array([1.]),target = np.array([0.0,0.0]),
                  verbosity = 1, norm_x = None, norm_u = None):
         """
@@ -258,7 +258,7 @@ class InvertedPendulum(Environment):
             The gravitation constant
         b: float, optional
             The friction coefficient of the system
-        start_state: 2x0 1darray[float], optional 
+        init_m: 2x0 1darray[float], optional 
             The initial state mean
         init_std: float, optional
             The standard deviation of the start state sample distribution.
@@ -271,7 +271,7 @@ class InvertedPendulum(Environment):
         target: 2x0 1darray[float], optional
             The target state
         """
-        super(InvertedPendulum,self).__init__(name,2,1,dt,start_state,init_std,plant_noise,u_min,u_max,target,verbosity)
+        super(InvertedPendulum,self).__init__(name,2,1,dt,init_m,init_std,plant_noise,u_min,u_max,target,verbosity)
         self.odesolver = ode(self._dynamics)
         self.l = l
         self.m = m
@@ -281,7 +281,7 @@ class InvertedPendulum(Environment):
         self.l_mu = np.array([0.1,.05]) #TODO: This should be somewhere else
         self.l_sigm = np.array([0.1,.05])
         self.target = target
-        self.target_ilqr = start_state
+        self.target_ilqr = init_m
 
         
         max_deg = 30
@@ -620,8 +620,8 @@ class CartPole(Environment):
     Task: swing up pendulum via the cart in order to reach a upright resting position (zero angular velocity)
 
     """
-    def __init__(self,name = 'CartPole',dt=0.01,l = 0.5,m=0.5,M=0.5,b=0.1,g=9.82,start_state = np.array([0.0,0.0,0.0,0.0]),visualize = True, init_std = 0.0,norm_x = None, norm_u = None,verbosity = 1):
-        super(CartPole,self).__init__(name,4,1,dt,start_state,init_std,np.array([0.01,0.01,0.01,0.01])**2,np.array([-10.0]),np.array([10.0]),np.array([0.0,l,0.0]),verbosity)
+    def __init__(self,name = 'CartPole',dt=0.01,l = 0.5,m=0.5,M=0.5,b=0.1,g=9.82,init_m = np.array([0.0,0.0,0.0,0.0]),visualize = True, init_std = 0.0,norm_x = None, norm_u = None,verbosity = 1):
+        super(CartPole,self).__init__(name,4,1,dt,init_m,init_std,np.array([0.01,0.01,0.01,0.01])**2,np.array([-10.0]),np.array([10.0]),np.array([0.0,l,0.0]),verbosity)
         ns = 4 
         nu = 1
 
@@ -646,13 +646,12 @@ class CartPole(Environment):
         self.obs_angles_sin = np.array([3])
         self.obs_angles_cos = np.array([4])
 
-        self.target_ilqr = start_state
+        self.target_ilqr = init_m
         
         self.delay = 20.0 #fps
         
         self.D_cost = np.array([40,20,40])
         self.R_cost = np.array([1.0])
-        self.start_state = start_state
 
         max_deg = 25
         if norm_x is None:
@@ -872,12 +871,13 @@ class CartPole(Environment):
         max_deg = 25
         max_dtheta = 1.5
         max_dx = 3.
+        max_x_safe = 2.0
         
         max_rad = np.deg2rad(max_deg)
         
 
 
-
+        ## Safety constraints
         # -max_dtheta <dtheta <= max_dtheta
         h_0_mat = np.asarray([0.,0.,7.25,1.])[None,:]
         #h_0_mat = np.asarray([0.,0.,4,1.])[None,:]
@@ -896,19 +896,47 @@ class CartPole(Environment):
         h_3_vec = h_2_vec    
 
         # d_x <= max_dx
-        h_4_mat = np.asarray([0.,1.,0.,0.])[None,:]
+        h_4_mat = np.array([0.,1.,0.,0.])[None,:]
         h_4_vec = np.array([max_dx])[:,None]
 
         # d_x >= -max_dx
         h_5_mat = -h_4_mat
         h_5_vec = h_4_vec
-    
+
+        # x <= max_x_safe
+        h_6_mat = np.array([1.,0.,0.,0.])[None,:]
+        h_6_vec = np.array([max_x_safe])[None,:]
+
+        #x >= -max_x_safe
+        h_7_mat = -h_6_mat
+        h_7_vec = h_6_vec
         
         #normalize safety bounds
-        self.h_mat_safe = np.vstack((h_0_mat,h_1_mat,h_2_mat,h_3_mat,h_4_mat,h_5_mat))
-        self.h_safe = np.vstack((h_0_vec,h_1_vec,h_2_vec,h_3_vec,h_4_vec,h_5_vec))
-        self.h_mat_obs = None#p.asarray([[0.,1.],[0.,-1.]])
-        self.h_obs = None #np.array([.6,.6]).reshape(2,1)
+        self.h_mat_safe = np.vstack((h_0_mat,h_1_mat,h_2_mat,h_3_mat,h_4_mat,h_5_mat,h_6_mat,h_7_mat))
+        self.h_safe = np.vstack((h_0_vec,h_1_vec,h_2_vec,h_3_vec,h_4_vec,h_5_vec,h_6_vec,h_7_vec))
+        
+        ## Obstacle
+
+        max_x_obs = 2.5
+        max_theta_obs = 90
+        max_theta_obs = np.deg2rad(max_theta_obs)
+
+        h_0_mat = np.array([1.,0.,0.,0.])[None,:]
+        h_0_vec = np.array([max_x_obs])[None,:]
+
+        #x >= -max_x_safe
+        h_1_mat = -h_0_mat
+        h_1_vec = h_0_vec
+
+        h_2_mat = np.array([0.,0.,1.,0.])[None,:]
+        h_2_vec = np.array([max_theta_obs])[None,:]
+
+        h_3_mat = -h_2_mat
+        h_3_vec = h_2_vec
+
+
+        self.h_mat_obs = np.vstack((h_0_mat,h_1_mat,h_2_mat,h_3_mat))#p.asarray([[0.,1.],[0.,-1.]])
+        self.h_obs = np.vstack((h_0_vec,h_1_vec,h_2_vec,h_3_vec)) #np.array([.6,.6]).reshape(2,1)
         
         #arrange the corner points such that it can be ploted via a line plot
         self.corners_polygon = np.array([[-max_dtheta,max_rad],\

@@ -21,51 +21,66 @@ import copy
 import utils_ellipsoid
 
 
-def run_episodic(conf,solver):
+def run_episodic(conf,solver,safe_policy):
     """ Run episode setting """
 
     warnings.warn("Need to check relative dynamics")
-        
-    env = create_env(conf.env_name,conf.env_options)
-
-    X,y = generate_initial_samples(env,conf,conf.relative_dynamics)
     
-    for i in range(conf.n_ep):
-        solver.update_model(X,y,opt_hyp = conf.train_gp,reinitialize_solver = False)
-        if i ==0:
-            solver.init_solver(conf.cost)
 
-        xx, yy = do_rollout(env, conf.n_steps, solver = solver,plot_ellipsoids = conf.plot_ellipsoids,plot_trajectory=conf.plot_trajectory,render = conf.render)
+    X_all = []
+    y_all = [] 
+    cc_all = []
+    safe_rollout_success_all = []
+    for k in range(conf.n_scenarios):
+        env = create_env(conf.env_name,conf.env_options)
+
+        X,y = generate_initial_samples(env,conf,conf.relative_dynamics,solver,safe_policy)
         
-        X = np.vstack((X,xx))
-        y = np.vstack((y,yy))
+        X_list = [X]
+        y_list = [y]
+        for i in range(conf.n_ep):
+            solver.update_model(X,y,opt_hyp = conf.train_gp,reinitialize_solver = False)
+            if i ==0:
+                solver.init_solver(conf.cost)
 
+            xx, yy, cc, safe_rollout_success = do_rollout(env, conf.n_steps, cost = conf.rl_immediate_cost, solver = solver,plot_ellipsoids = conf.plot_ellipsoids,plot_trajectory=conf.plot_trajectory,render = conf.render)
+            
+            X = np.vstack((X,xx))
+            y = np.vstack((y,yy))
+
+            X_list += [xx]
+            y_list += [yy]
+            cc_all += [cc]
+            safe_rollout_success_all += [safe_rollout_success]
         
     if not conf.data_savepath is None:
         savepath_data = "{}/{}".format(conf.save_path,conf.data_savepath)
         print(conf.lin_prior)
         a,b = solver.lin_model
-        np.savez(savepath_data,X=X,y=y,a = a,b=b)
+        np.savez(savepath_data,X=X,y=y,a = a,b=b, init_mode = conf.init_mode)
         
         
-def do_rollout(env, n_steps, solver = None, relative_dynamics = False,
+def do_rollout(env, n_steps, solver = None, relative_dynamics = False, cost = None,
                plot_trajectory = True, 
                verbosity = 1,sampling_verification = False,
                plot_ellipsoids = False,render = False,
-               check_system_safety = False, savedir_trajectory_plots = None): #safedir_trajectory_plots = None
+               check_system_safety = False, savedir_trajectory_plots = None, mean = None, std = None): #safedir_trajectory_plots = None
     """ Perform a rollout on the system
     
     TODO: measurement noise, x0_sigm?
     """
     
-    state = env.reset()
+    state = env.reset(mean,std)
     
     xx = np.zeros((1,env.n_s+env.n_u))
     yy= np.zeros((1,env.n_s))
 
     obs = state
     
+    cc = []
+
     n_successful = 0
+    safe_rollout = True
 
     if plot_trajectory:
         fig, ax = env.plot_safety_bounds()
@@ -90,8 +105,7 @@ def do_rollout(env, n_steps, solver = None, relative_dynamics = False,
             action = env.random_action()
         else:
             t_start_solver = time.time()
-            print(np.shape(state))
-            action, safety_fail = solver.get_action(state,env.target_ilqr,lqr_only = False)#,lqr_only = True)
+            action, safety_fail = solver.get_action(state)#,lqr_only = True)
             t_end_solver = time.time()
             t_solver = t_end_solver - t_start_solver
             
@@ -100,7 +114,11 @@ def do_rollout(env, n_steps, solver = None, relative_dynamics = False,
         
         action,next_state,observation,done = env.step(action)
 
-
+        if not cost is None:
+            c = [cost(next_state)]
+            cc += c
+            if verbosity > 0:
+                print("Immediate cost for current step: {}".format(c))
         if verbosity > 0:
             print("\n==== Applied normalized action at time step {} ====".format(i))
             print(action)
@@ -160,7 +178,7 @@ def do_rollout(env, n_steps, solver = None, relative_dynamics = False,
                     #print(q_traj[2].reshape((env.n_s,env.n_s)))
         #system failed
         if done:
-            break
+            safe_rollout = False
 
 
         state_action = np.hstack((state,action))
@@ -192,26 +210,30 @@ def do_rollout(env, n_steps, solver = None, relative_dynamics = False,
         if check_system_safety and n_test_safety > 0:
             print("\n======= percentage system steps inside safety bounds =======")
             print(float(n_inside)/n_test_safety)
-    return xx,yy
+    return xx,yy, cc, safe_rollout
     
 
-def generate_initial_samples(env,conf,relative_dynamics):
+def generate_initial_samples(env,conf,relative_dynamics,solver,safe_policy):
+
+    std = conf.init_std_initial_data 
+    mean = conf.init_m_initial_data
 
     if conf.init_mode == "random_rollouts":
-        X,y = do_rollout(env, conf.n_steps_init,plot_trajectory=conf.plot_trajectory,render = conf.render)
+        
+
+        X,y,_,_ = do_rollout(env, conf.n_steps_init,plot_trajectory=conf.plot_trajectory,render = conf.render,mean = mean, std = std)
         for i in range(1,conf.n_rollouts_init):
-            xx,yy  = do_rollout(env, conf.n_steps_init,plot_trajectory=conf.plot_trajectory,render = conf.render)
+            xx,yy, _,_ = do_rollout(env, conf.n_steps_init,plot_trajectory=conf.plot_trajectory,render = conf.render)
             X = np.vstack((X,xx))
             y = np.vstack((y,yy))
 
     elif conf.init_mode == "safe_samples":
-        solver = create_solver(conf,env)
 
         n_samples = conf.n_safe_samples
         n_max = conf.c_max_probing_init*n_samples
         n_max_next_state = conf.c_max_probing_next_state *n_samples 
 
-        states_probing = env._sample_start_state(n_samples = n_max).T
+        states_probing = env._sample_start_state(n_samples = n_max,mean= mean,std= std).T
 
 
         h_mat_safe, h_safe,_,_ = env.get_safety_constraints(normalize = True)
@@ -230,7 +252,7 @@ def generate_initial_samples(env,conf,relative_dynamics):
         n_success = 0
         while cont:
             state = states_probing_inside[i,:]
-            action = solver.safe_policy(state.T)
+            action = safe_policy(state.T)
             next_state, next_observation = env.simulate_onestep(state.squeeze(),action)
 
             
@@ -260,6 +282,9 @@ def generate_initial_samples(env,conf,relative_dynamics):
 
         X = X[1:,:]
         y = y[1:,:]
+        print("initial training data")
+        print(X)
+        print(y)
 
         return X,y
 
