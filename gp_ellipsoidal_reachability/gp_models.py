@@ -173,7 +173,7 @@ class SimpleGPModel():
             y_z = y_train
 
         if self.do_sparse_gp:
-            n_beta = self.m
+            n_beta = np.minimum(self.m,n_data)
         else:
             n_beta = n_data
 
@@ -197,7 +197,7 @@ class SimpleGPModel():
             if opt_hyp:
                 model_gp.optimize(max_iters = 1000,messages=True)
 
-
+            print(kern)
             post = model_gp.posterior
             inv_K[i] = post.woodbury_inv
             beta[:,i] = post.woodbury_vector.reshape(-1,)
@@ -240,24 +240,25 @@ class SimpleGPModel():
             self.train(x_new,y_new,self.m,opt_hyp = opt_hyp)
         else:
             n_data = np.shape(x_new)[0]
-            inv_K = [None]*self.n_s
+            inv_K = [None]*self.n_s_out
             if self.m is None:
                 n_beta = n_data 
                 Z = x_new
                 y_z = y_new
             else:
-                n_beta = self.m
-                if n_data < m:
+                
+                if n_data < self.m:
                     warnings.warn("""The desired number of datapoints is not available. Dataset consist of {}
                            Datapoints! """.format(n_data))
                     Z = x_new
                     y_z = y_new
+                    n_beta = n_data
                 else:
-                    idx = np.random.choice(n_data,size=m,replace = False)
+                    idx = np.random.choice(n_data,size=self.m,replace = False)
                     Z = x_new[idx,:]
                     y_z = y_new[idx,:]
-                    n_beta = m
-
+                    n_beta = self.m
+            
             beta = np.empty((n_beta,self.n_s_out))
 
 
