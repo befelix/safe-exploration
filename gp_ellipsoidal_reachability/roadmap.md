@@ -6,14 +6,14 @@
 - [x] constraints
 - [x] gaussian angle to gaussian cos/sin representation (see PILCO)
 - [x] Find stabilizing LQR setting
-- [ ] Check dynamics (might be wrong right now)
+- [x] Check dynamics (might be wrong right now)
 - [x] Fix and test normalization
 
 #### `InvertedPendulum`
-- [ ] Adjust to changes made in interface 
+- [x] Adjust to changes made in interface 
 
 #### `Static/Dynamic Exploration`
-- [ ] Fix bugs
+- [x] Fix bugs
 
 #### `SafeMPC`
 - [x] performance and safety trajectory share multiple controls
