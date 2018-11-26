@@ -21,7 +21,7 @@ import copy
 import utils_ellipsoid
 
 
-def run_episodic(conf,solver,safe_policy):
+def run_episodic(conf):
     """ Run episode setting """
 
     warnings.warn("Need to check relative dynamics")
@@ -30,41 +30,79 @@ def run_episodic(conf,solver,safe_policy):
     X_all = []
     y_all = [] 
     cc_all = []
-    safe_rollout_success_all = []
+    exit_codes_all = []
+    safety_failure_all = []
     for k in range(conf.n_scenarios):
+        
         env = create_env(conf.env_name,conf.env_options)
+        solver, safe_policy = create_solver(conf,env)
 
         X,y = generate_initial_samples(env,conf,conf.relative_dynamics,solver,safe_policy)
         
         X_list = [X]
         y_list = [y]
+        exit_codes_k = []
+        safety_failure_k = []
+        cc_k = []
         for i in range(conf.n_ep):
+
             solver.update_model(X,y,opt_hyp = conf.train_gp,reinitialize_solver = False)
+
             if i ==0:
                 solver.init_solver(conf.cost)
 
-            xx, yy, cc, safe_rollout_success = do_rollout(env, conf.n_steps, cost = conf.rl_immediate_cost, solver = solver,plot_ellipsoids = conf.plot_ellipsoids,plot_trajectory=conf.plot_trajectory,render = conf.render)
+            xx, yy, cc, exit_codes_i, safety_failure = do_rollout(env, conf.n_steps, cost = conf.rl_immediate_cost, 
+                                            solver = solver,plot_ellipsoids = conf.plot_ellipsoids,
+                                            plot_trajectory=conf.plot_trajectory,render = conf.render, obs_frequency = conf.obs_frequency)
             
             X = np.vstack((X,xx))
             y = np.vstack((y,yy))
 
             X_list += [xx]
             y_list += [yy]
-            cc_all += [cc]
-            safe_rollout_success_all += [safe_rollout_success]
-        
+            cc_k += [cc]
+            exit_codes_k += [exit_codes_i]
+            safety_failure_k += [safety_failure]
+
+        exit_codes_all += [exit_codes_k]
+        safety_failure_all += [safety_failure_k]
+        cc_all += [cc_k]
+        X_all += [X_list]
+        y_all += [y_list]
+      
     if not conf.data_savepath is None:
         savepath_data = "{}/{}".format(conf.save_path,conf.data_savepath)
-        print(conf.lin_prior)
         a,b = solver.lin_model
         np.savez(savepath_data,X=X,y=y,a = a,b=b, init_mode = conf.init_mode)
+
+    if conf.save_results:
+        save_name_results = conf.save_name_results
+        if save_name_results is None:
+            save_name_results = "results_episode"
+
+        savepath_results  = conf.save_path +"/"+save_name_results
+
+        results_dict = dict()
+        results_dict["cc_all"] = cc_all
+        results_dict["X_all"] = X_all
+        results_dict["y_all"] = y_all
+        results_dict["exit_codes"] = exit_codes_all
+        results_dict["safety_failure_all"] = safety_failure_all
+        print(savepath_results)
+        
+        np.save(savepath_results,results_dict)
+        
+        ## TO-DO: may wanna do this aswell
+        #gp_dict = gp.to_dict()
+        #save_data_gp_path = "{}/res_gp".format(save_path)
+        #np.save(save_data_gp_path,gp_dict)
         
         
 def do_rollout(env, n_steps, solver = None, relative_dynamics = False, cost = None,
                plot_trajectory = True, 
                verbosity = 1,sampling_verification = False,
                plot_ellipsoids = False,render = False,
-               check_system_safety = False, savedir_trajectory_plots = None, mean = None, std = None): #safedir_trajectory_plots = None
+               check_system_safety = False, savedir_trajectory_plots = None, mean = None, std = None, obs_frequency = 1): #safedir_trajectory_plots = None
     """ Perform a rollout on the system
     
     TODO: measurement noise, x0_sigm?
@@ -74,13 +112,14 @@ def do_rollout(env, n_steps, solver = None, relative_dynamics = False, cost = No
     
     xx = np.zeros((1,env.n_s+env.n_u))
     yy= np.zeros((1,env.n_s))
+    exit_codes = np.zeros((1,1))
 
     obs = state
     
     cc = []
 
     n_successful = 0
-    safe_rollout = True
+    safety_failure = False
 
     if plot_trajectory:
         fig, ax = env.plot_safety_bounds()
@@ -103,9 +142,10 @@ def do_rollout(env, n_steps, solver = None, relative_dynamics = False, cost = No
             
         if solver is None:
             action = env.random_action()
+            exit_code = 5
         else:
             t_start_solver = time.time()
-            action, safety_fail = solver.get_action(state)#,lqr_only = True)
+            action, exit_code = solver.get_action(state)#,lqr_only = True)
             t_end_solver = time.time()
             t_solver = t_end_solver - t_start_solver
             
@@ -177,8 +217,7 @@ def do_rollout(env, n_steps, solver = None, relative_dynamics = False, cost = No
                     print("\n==== Next state inside uncertainty ellipsoid:{} ====\n".format(bool_inside))
                     #print(q_traj[2].reshape((env.n_s,env.n_s)))
         #system failed
-        if done:
-            safe_rollout = False
+        
 
 
         state_action = np.hstack((state,action))
@@ -190,17 +229,30 @@ def do_rollout(env, n_steps, solver = None, relative_dynamics = False, cost = No
         else:
             yy = np.vstack((yy,observation))
 
-            
+
+        
+        exit_codes = np.vstack((exit_codes,exit_code))
         n_successful += 1
         state = next_state
+
+        if done:
+            safety_failure = True
+            break
         
     if n_successful == 0:
         warnings.warn("Agent survived 0 steps, cannot collect data")
         xx = []
         yy = []
+        exit_codes = []
+        cc = []
     else:
-        xx = xx[1:,:]
-        yy = yy[1:,:]
+
+        xx = xx[1:-1:obs_frequency,:]
+        yy = yy[1:-1:obs_frequency,:]
+
+        exit_codes = exit_codes[1:,:]
+
+
 
         
     print("Agent survived {} steps".format(n_successful))
@@ -210,7 +262,7 @@ def do_rollout(env, n_steps, solver = None, relative_dynamics = False, cost = No
         if check_system_safety and n_test_safety > 0:
             print("\n======= percentage system steps inside safety bounds =======")
             print(float(n_inside)/n_test_safety)
-    return xx,yy, cc, safe_rollout
+    return xx,yy, cc, exit_codes, safety_failure
     
 
 def generate_initial_samples(env,conf,relative_dynamics,solver,safe_policy):
@@ -221,9 +273,9 @@ def generate_initial_samples(env,conf,relative_dynamics,solver,safe_policy):
     if conf.init_mode == "random_rollouts":
         
 
-        X,y,_,_ = do_rollout(env, conf.n_steps_init,plot_trajectory=conf.plot_trajectory,render = conf.render,mean = mean, std = std)
+        X, y, _, _, _ = do_rollout(env, conf.n_steps_init,plot_trajectory=conf.plot_trajectory,render = conf.render,mean = mean, std = std)
         for i in range(1,conf.n_rollouts_init):
-            xx,yy, _,_ = do_rollout(env, conf.n_steps_init,plot_trajectory=conf.plot_trajectory,render = conf.render)
+            xx,yy, _,_,_ = do_rollout(env, conf.n_steps_init,plot_trajectory=conf.plot_trajectory,render = conf.render)
             X = np.vstack((X,xx))
             y = np.vstack((y,yy))
 
