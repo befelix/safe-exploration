@@ -8,10 +8,12 @@ Created on Tue Nov 14 10:08:45 2017
 @author: tkoller
 """
 
-from casadi import *
-from casadi.tools import *
+import casadi as cas
+import numpy as np
+from casadi import sum1,sum2,SX, vertcat,horzcat,mtimes
 from casadi import reshape as cas_reshape
-from gp_reachability_casadi import multi_step_reachability, onestep_reachability
+from gp_reachability_casadi import multi_step_reachability as cas_multistep
+from gp_reachability_casadi import onestep_reachability, lin_ellipsoid_safety_distance, objective
 
 class StaticMPCExplorationOracle:
     """ Oracle which finds informative samples
@@ -36,8 +38,25 @@ class StaticMPCExplorationOracle:
         self.n_s = safempc.n_s 
         self.n_u = safempc.n_u
         self.T = safempc.n_safe
+        self.gp = safempc.gp
+        self.l_mu = safempc.l_mu
+        self.l_sigma = safempc.l_sigma
+        self.beta_safety = safempc.beta_safety
+        self.a = safempc.a
+        self.b = safempc.b
+        self.lin_trafo_gp_input = safempc.lin_trafo_gp_input
+        self.ctrl_bounds = safempc.ctrl_bounds
+        self.has_ctrl_bounds = safempc.has_ctrl_bounds
+        self.h_mat_safe = safempc.h_mat_safe
+        self.h_mat_obs = safempc.h_mat_obs
+        self.h_safe = safempc.h_safe
+        self.h_obs = safempc.h_obs
+        self.m_obs = safempc.m_obs
+        self.m_safe = safempc.m_safe
+
+        self.init_solver()
         
-    def init_solver(self,T = None):
+    def init_solver(self,cost_func = None):
         """ Generate the exloration NLP in casadi
         
         Parameters
@@ -46,63 +65,168 @@ class StaticMPCExplorationOracle:
             the safempc horizon
         
         """
-        if T is None:
-            T = self.T
+
+        u_0 = SX.sym("init_control",(self.n_u,1))
+        k_ff_all = SX.sym("feed-forward control",(self.T-1,self.n_u))
+        g = []
+        lbg = []
+        ubg = []
+        g_name = []
+        
+        p_0 = SX.sym("initial state",(self.n_s,1))
+        
+        k_fb_0 = SX.sym("base feedback matrices",(self.T-1,self.n_s*self.n_u))
+        
+        k_fb_safe_ctrl = SX.zeros(self.n_u,self.n_s)
+        p_all, q_all, gp_sigma_pred_safe_all = cas_multistep(p_0,u_0,k_fb_0,k_fb_safe_ctrl,k_ff_all,self.gp,self.l_mu,self.l_sigma,self.beta_safety,self.a,self.b,self.lin_trafo_gp_input)
+        
+        ##generate open_loop trajectory function [vertcat(x_0,u_0)],[f_x])
+        self.f_multistep_eval = cas.Function("safe_multistep",[p_0,u_0,k_fb_0,k_ff_all],[p_all, q_all])
+
+        g_safe, lbg_safe,ubg_safe, g_names_safe = self.generate_safety_constraints(p_all,q_all,u_0,k_fb_0,k_fb_safe_ctrl,k_ff_all)
+        g = vertcat(g,g_safe)
+        lbg += lbg_safe
+        ubg += ubg_safe
+        g_name += g_names_safe       
+
+        if cost_func is None:
+            cost = -sum1(sum2(gp_sigma_pred_safe_all))
         else:
-            self.T = T
+            cost = cost_func(p_all,q_all,gp_sigma_pred_safe_all,u_0,k_ff_all)
+
+        opt_vars = vertcat(p_0,u_0,k_ff_all.reshape((-1,1)))
+        opt_params = vertcat(k_fb_0.reshape((-1,1)))
         
-        x_0 = SX.sym("x_0",(self.n_s,1))
-        u_0 = SX.sym("u_0",(self.n_u,1))
-        gp = self.safempc.gp
-        l_mu = self.safempc.l_mu
-        l_sigma = self.safempc.l_sigma
-        beta_safety = self.safempc.beta_safety
-        a = self.safempc.a
-        b = self.safempc.b
-        
-        if T > 1:
-            k_fb_0 = SX.sym("k_fb_0",(T-1,self.n_s*self.n_u))        
-            k_ff = SX.sym("k_ff",(T-1,self.n_u))
-            k_fb_ctrl = SX.sym("k_fb_ctrl",(self.n_u,self.n_s))
-            
-            p_all, q_all = multi_step_reachability(x_0,u_0,k_fb_0,k_fb_ctrl,
-                                                   k_ff,gp,l_mu,l_sigma,beta_safety,a,b)
-            
-            ## generate constraints
-            g_safe, lbg_safe, ubg_safe, _ = self.safempc.generate_safety_constraints(p_all,q_all,u_0,
-                                                                                k_fb_0,k_fb_ctrl,k_ff)
-                                                                                
-            #stack variables and parameters
-            opt_vars = vertcat(x_0,u_0,k_ff.reshape((-1,1)),k_fb_ctrl.reshape((-1,1)))
-            opt_params = vertcat(k_fb_0.reshape((-1,1)))
-        else:
-            p_new ,q_new = onestep_reachability(x_0,gp,u_0,l_mu,l_sigma,a=a,b=b,c_safety = beta_safety)
-            g_safe, lbg_safe, ubg_safe, _ = self.safempc.generate_safety_constraints(p_new.T,q_new.reshape((1,self.n_s*self.n_s)),u_0,
-                                                                                None,None,None)
-            opt_vars = vertcat(x_0,u_0)
-            opt_params = []
-        g = g_safe
-        lbg = lbg_safe
-        ubg = ubg_safe
-        
-        ## generate the exploration objective function
-        _,sigm = gp.predict_casadi_symbolic(vertcat(x_0,u_0).T)
-        c = -sum2(sqrt(sigm)) 
-        
-        prob = {'f':c,'x': opt_vars,'p':opt_params,'g':g}
-        opt = {'ipopt':{'hessian_approximation':'limited-memory',"max_iter":80,"expect_infeasible_problem":"yes"}} #ipopt 
-       
-        solver = nlpsol("solver","ipopt",prob,opt)
-        
-        self.solver = solver
+        prob = {'f':cost,'x': opt_vars,'p':opt_params,'g':g}
+
+
+        opt = {'error_on_fail':False,'ipopt':{'hessian_approximation':'exact',"max_iter":120,"expect_infeasible_problem":"no", \
+        'acceptable_tol':1e-4,"acceptable_constr_viol_tol":1e-5,"bound_frac":0.5,"start_with_resto":"no","required_infeasibility_reduction":0.85,"acceptable_iter":8}} #ipopt 
+        #opt = {'qpsol':'qpoases','max_iter':120,'hessian_approximation':'exact'}#,"c1":5e-4} #sqpmethod #,'hessian_approximation':'limited-memory'
+        #opt = {'max_iter':120,'qpsol':'qpoases'}
+
+        self.solver = cas.nlpsol('solver','ipopt',prob,opt)
+
         self.lbg = lbg
         self.ubg = ubg
-        self.T = T
+
+    def generate_safety_constraints(self, p_all, q_all, u_0, k_fb_0, k_fb_ctrl, k_ff_all):
+        """ Generate all safety constraints
+        
+        Parameters
+        ----------
+        p_all:
+        q_all:
+        k_fb_0:
+        k_fb_ctrl:
+        k_ff:
+        ctrl_bounds:
+        
+        Returns
+        -------
+        g: list[casadi.SX]
+        lbg: list[casadi.SX]
+        ubg: list[casadi.SX]
+        """
+        g = []
+        lbg = []
+        ubg = []
+        g_name = []
+        
+        H = np.shape(p_all)[0]
+        # control constraints
+        if self.has_ctrl_bounds:
+            g_u_0, lbg_u_0, ubg_u_0 = self._generate_control_constraint(u_0)
+            g = vertcat(g,g_u_0)
+            lbg+= lbg_u_0
+            ubg+= ubg_u_0
+            g_name += ["u_0_ctrl_constraint"]
+            
+            for i in range(H-1):
+                p_i = p_all[i,:].T
+                q_i = q_all[i,:].reshape((self.n_s,self.n_s))
+                k_ff_i = k_ff_all[i,:].reshape((self.n_u,1))
+                k_fb_i = (k_fb_0[i] + k_fb_ctrl).reshape((self.n_u,self.n_s))
+                
+                g_u_i, lbg_u_i, ubg_u_i = self._generate_control_constraint(k_ff_i,q_i,k_fb_i)
+                g = vertcat(g,g_u_i)
+                lbg+= lbg_u_i
+                ubg+= ubg_u_i
+                g_name += ["ellipsoid_ctrl_constraint_{}".format(i)]*len(lbg_u_i)
+            
+        # intermediate state constraints
+        if not self.h_mat_obs is None:
+            for i in range(H-1):
+                p_i = p_all[i,:].T
+                q_i = q_all[i,:].reshape((self.n_s,self.n_s))
+                g_state = lin_ellipsoid_safety_distance(p_i,q_i,self.h_mat_obs,self.h_obs)
+                g = vertcat(g,g_state)
+                lbg += [-cas.inf]*self.m_obs
+                ubg += [0]*self.m_obs
+                g_name += ["obstacle_avoidance_constraint{}".format(i)]*self.m_obs
+            
+        # terminal state constraint
+        p_T = p_all[-1,:].T
+        q_T = q_all[-1,:].reshape((self.n_s,self.n_s))
+        g_terminal = lin_ellipsoid_safety_distance(p_T,q_T,self.h_mat_safe,self.h_safe)
+        g = vertcat(g,g_terminal)
+        g_name += ["terminal constraint"]*self.m_safe
+        lbg += [-cas.inf]*self.m_safe
+        ubg += [0]*self.m_safe
+        
+        return g,lbg,ubg,g_name
+
+    def _generate_control_constraint(self,k_ff,q = None,k_fb = None,ctrl_bounds = None):
+        """ Build control constraints from state ellipsoids and linear feedback controls
+        
+        k_ff: n_u x 1 ndarray[casadi.SX]
+            The feed-forward control gain
+        q: n_s x n_s ndarray[casadi.SX]
+            The shape matrix of the state ellipsoid
+        k_fb: n_u x n_s ndarray[casadi.SX]
+            The feedback gain
+        ctrl_bounds: n_u x 2 ndarray[float], optional
+        
+        Returns
+        -------
+        g: 2*n_u x 1 ndarray[casadi.SX]
+            The control constraints (symbollicaly) evaluated at the current
+            state/controls
+        lbg: 2*n_u x 0 list[float]
+            Lower bounds for the control constraints
+        ubg: 2*n_u x 0 list[float]
+            Upper bounds for the control constraints
+        """        
+        if ctrl_bounds is None:
+            if not self.has_ctrl_bounds:
+                raise ValueError("""Either ctrl_bounds has to be specified or 
+                the objects' ctrl_bounds has to be specified """)
+            ctrl_bounds = self.ctrl_bounds
+        
+        #no feedback term. Reduces to simple feed-forward control bounds
+        
+        n_u,_ = np.shape(ctrl_bounds)
+        u_min = ctrl_bounds[:,0]
+        u_max = ctrl_bounds[:,1]
+        
+        if k_fb is None:
+            return k_ff, u_min.tolist(), u_max.tolist()
+            
+        h_vec = np.vstack((u_max[:,None],-u_min[:,None]))
+        h_mat = np.vstack((np.eye(n_u),-np.eye(n_u)))
+        
+        p_u = k_ff
+        q_u = mtimes(k_fb,mtimes(q,k_fb.T))
+        
+        g = lin_ellipsoid_safety_distance(p_u,q_u,h_mat,h_vec)
+        
+        return g, [-cas.inf]*2*n_u, [0]*2*n_u
+
         
     def find_max_variance(self, x_0, n_restarts = 1,ilqr_init = False, 
                           sample_mean = None, 
                           sample_var = None, 
-                          verbosity = 1, beta_safety = None):
+                          verbosity = 2, beta_safety = None):
         """ Find the most informative sample in the space constrained by the mpc structure
         
         Parameters
@@ -124,9 +248,6 @@ class StaticMPCExplorationOracle:
                 
         """
         
-        if ilqr_init:
-            self.safempc.init_ilqr_initializer()
-        
         sigma_best = 0
         x_best = None
         u_best = None
@@ -136,17 +257,18 @@ class StaticMPCExplorationOracle:
             x_0 = self.env._sample_start_state(sample_mean,sample_var)[:,None] # sample initial state
             
             if self.T > 1:
-                if ilqr_init:
-                    u_0, k_fb_0, k_ff_0 = self.safempc.init_ilqr(x_0,self.env.p_origin)
-                    k_fb_ctrl_0 = np.zeros((self.n_s*self.n_u,1))
-                    k_fb_0 = cas_reshape(k_fb_0,(-1,1))
-                else:
-                    u_0 = self.env.random_action()[:,None]
-                    k_fb_0 = np.zeros(((self.T-1)*self.n_s*self.n_u,1))
-                    k_ff_0 = np.zeros(((self.T-1)*self.n_u,1))
-                    k_fb_ctrl_0 = np.random.rand(self.n_u*self.n_s,1)
-                params_0 = k_fb_0
-                vars_0 = np.vstack((x_0,u_0,k_ff_0,k_fb_ctrl_0)) 
+                u_0 = self.env.random_action()[:,None]
+                
+                k_fb_lqr = self.safempc.get_lqr_feedback()
+                k_fb_0 = np.zeros((self.T-1,self.n_s*self.n_u))
+                k_ff_0 = np.zeros((self.T-1,self.n_u))
+                for j in range(self.T-1):
+                    k_ff_0[j,:] = self.env.random_action()
+                    k_fb_0[j,:] = cas_reshape(k_fb_lqr,(1,-1))
+
+
+                params_0 = cas_reshape(k_fb_0,(-1,1))
+                vars_0 = np.vstack((x_0,u_0,cas_reshape(k_ff_0,(-1,1))))
             else:
                 u_0 = self.env.random_action()[:,None]
                 params_0 = []
@@ -156,8 +278,10 @@ class StaticMPCExplorationOracle:
             
             f_opt = sol["f"]
             sigm_i = -float(f_opt)
+
             if sigm_i > sigma_best: # check if solution would improve upon current best
                 g_sol = np.array(sol["g"]).squeeze()
+
                 if self._is_feasible(g_sol, np.array(self.lbg), np.array(self.ubg)): #check if solution is feasible
                     w_sol = sol["x"]
                     x_best = np.array(w_sol[:self.n_s])
@@ -166,13 +290,17 @@ class StaticMPCExplorationOracle:
 
                     z_i = np.vstack((x_best,u_best)).T
                     if verbosity > 0:
-                        print("new optimal sigma found at iteration {}".format(i))
-                        
+                        print("New optimal sigma found at iteration {}".format(i))
+                        if verbosity > 1:
+                            print("New feasible solution with sigma sum {} found".format(str(sigm_i)))
+
         return x_best, u_best
         
     def update_model(self,x,y,train = False,replace_old = False):
         """ Simple wrapper around the update_model function of SafeMPC"""
         self.safempc.update_model(x,y,train,replace_old)
+        self.gp = self.safempc.gp
+        self.init_solver()
         
     def get_information_gain(self):
         return self.safempc.gp.information_gain()
@@ -192,22 +320,20 @@ class DynamicMPCExplorationOracle:
         self.env = env
         self.n_s = safempc.n_s 
         self.n_u = safempc.n_u
-        self.T = safempc.n_safe
-        
-    def init_solver(self):
-        """ """
-        
+        self.n_safe = safempc.n_safe
+        self.n_perf = safempc.n_perf
+
+        ## 
         cost = None
         self.safempc.init_solver(cost)
         
-        
     def find_max_variance(self,x_0,sol_verbose = False):
-        
         if sol_verbose:
-            u_apply, feasible, safe_ctrl_applied ,k_fb, k_ff,p_ctrl,q_all = self.safempc.get_action(x_0,self.env.p_origin,sol_verbose = True)
+            u_apply, feasible, safe_ctrl_applied ,k_fb, k_ff,p_ctrl,q_all = self.safempc.get_action(x_0,sol_verbose = True)
+
             return x_0[:,None], u_apply, feasible,safe_ctrl_applied,k_fb, k_ff, p_ctrl,q_all
         else:
-            u_apply, _ = self.safempc.get_action(x_0,self.env.p_origin)
+            u_apply, _ = self.safempc.get_action(x_0)
             return x_0[:,None], u_apply[:,None]
         
     def update_model(self,x,y,train = False,replace_old = False):
