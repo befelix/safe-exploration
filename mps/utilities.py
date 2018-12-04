@@ -1,4 +1,4 @@
-"""General utilities for pytorch"""
+"""General utilities for pytorch."""
 
 
 import torch

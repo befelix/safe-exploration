@@ -9,7 +9,10 @@ setup(
     packages=find_packages(exclude=['docs']),
     install_requires=['numpy>=1.0,<2',
                       'gpytorch>=0.1.0rc5'],
-    extras_require={'test': ['pytest>=4,<5']},
+    extras_require={'test': ['pytest>=4,<5',
+                             'flake8==3.6.0',
+                             'pydocstyle==3.0.0',
+                             'pytest_cov>=2.0']},
     classifiers=[
         # How mature is this project? Common values are
         #   3 - Alpha
