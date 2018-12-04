@@ -28,6 +28,10 @@ class IndependentGPs(object):
     def __init__(self, *models):
         self.models = models
 
+    def __getitem__(self, key):
+        """Access the models by index."""
+        return self.models[key]
+
     def __getattr__(self, item):
         """Attempt to take missing attributes taken from the models."""
         items = [getattr(model, item) for model in self.models]
