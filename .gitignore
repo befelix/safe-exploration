@@ -1,0 +1,12 @@
+*.pyc
+.idea
+.ipynb_checkpoints
+.coverage
+.cache
+*.egg-info
+__pycache__
+docs/_build
+*.swp
+*.DS_Store
+.pytest_cache
+
