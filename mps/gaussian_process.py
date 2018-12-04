@@ -28,6 +28,10 @@ class IndependentGPs(object):
     def __init__(self, *models):
         self.models = models
 
+    @property
+    def output_dim(self):
+        return len(self.models)
+
     def __getitem__(self, key):
         """Access the models by index."""
         return self.models[key]
