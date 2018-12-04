@@ -1,5 +1,6 @@
 """General utilities for pytorch."""
 
+import itertools
 
 import torch
 from torch.autograd.gradcheck import zero_gradients
@@ -27,24 +28,26 @@ def compute_jacobian(f, x):
     """
     assert x.requires_grad, 'Gradients of x must be required.'
 
-    if f.dim() > 1:
-        f = f.squeeze(-1)
-
-    num_classes = len(f)
+    # Default to standard gradient in the 0d case
+    if f.dim() == 0:
+        zero_gradients(x)
+        f.backward()
+        return x.grad
 
     # Initialize outputs
-    jacobian = torch.zeros(num_classes, len(x))
-    grad_output = torch.zeros(num_classes)
+    jacobian = torch.zeros(f.shape + x.shape)
+    grad_output = torch.zeros(*f.shape)
 
     if x.is_cuda:
         grad_output = grad_output.cuda()
         jacobian = jacobian.cuda()
 
-    for i in range(num_classes):
+    # Iterate over all elements in f
+    for index in itertools.product(*map(range, f.shape)):
         zero_gradients(x)
-        grad_output[i] = 1
+        grad_output[index] = 1
         f.backward(grad_output, retain_graph=True)
-        jacobian[i] = x.grad.data.squeeze(-1)
-        grad_output[i] = 0
+        jacobian[index] = x.grad.data
+        grad_output[index] = 0
 
     return jacobian
