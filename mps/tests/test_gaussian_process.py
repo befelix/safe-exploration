@@ -138,6 +138,6 @@ def test_multi_output_gp():
     optimizer = torch.optim.Adam([{'params': gp.parameters()}], lr=0.1)
     mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, gp)
     optimizer.zero_grad()
-    loss = -mll(gp(train_x), train_y).sum()
+    loss = gp.loss(mll)
     loss.backward()
     optimizer.step()

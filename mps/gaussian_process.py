@@ -111,6 +111,16 @@ class MultiOutputGP(gpytorch.models.ExactGP):
         """Return the batch size of the model."""
         return self.kernel.batch_size
 
+    def loss(self, mml):
+        """Return the negative log-likelihood of the model.
+
+        Parameters
+        ----------
+        mml : marginal log likelihood
+        """
+        output = super().__call__(*self.train_inputs)
+        return -mml(output, self.train_targets).sum()
+
     def __call__(self, *args, **kwargs):
         """Evaluate the underlying batch_mode model."""
         args = [arg.unsqueeze(-1) if arg.ndimension() == 1 else arg for arg in args]
