@@ -2,67 +2,122 @@
 
 
 import torch
+from torch.nn import ModuleList
+import gpytorch
+from gpytorch.distributions import MultivariateNormal
 
 
-__all__ = ['IndependentGPs']
+__all__ = ['BatchMean', 'BatchKernel', 'MultiOutputGP']
 
 
-class MultiOutputMultivariateNormal(object):
-    """A combination of multiple MultivariateNormal distributions."""
+class BatchMean(gpytorch.means.Mean):
+    """Combine different mean functions across batches.
 
-    def __init__(self, outputs):
-        self.outputs = outputs
+    Parameters
+    ----------
+    base_means : list
+        List of mean functions used for each batch.
+    """
 
-    @property
-    def mean(self):
-        return torch.stack([output.mean for output in self.outputs], dim=1)
+    def __init__(self, base_means):
+        super(BatchMean, self).__init__()
 
-    @property
-    def variance(self):
-        return torch.stack([output.variance for output in self.outputs], dim=1)
-
-
-class IndependentGPs(object):
-    """Combine multiple independent GPs to a multi-output GP."""
-
-    def __init__(self, *models):
-        self.models = models
+        self.base_means = ModuleList(base_means)
 
     @property
-    def output_dim(self):
-        return len(self.models)
+    def batch_size(self):
+        """Return the batch_size of the underlying model."""
+        return len(self.base_kernels)
 
-    def __getitem__(self, key):
-        """Access the models by index."""
-        return self.models[key]
+    def __getitem__(self, item):
+        """Retrieve the ith mean."""
+        return self.base_means[item]
 
-    def __getattr__(self, item):
-        """Attempt to take missing attributes taken from the models."""
-        items = [getattr(model, item) for model in self.models]
+    def __iter__(self):
+        """Iterate over the means."""
+        yield from self.base_means
 
-        if callable(items[0]):
-            return lambda *args, **kwargs: [item(*args, **kwargs) for item in items]
+    def forward(self, input):
+        """Evaluate the mean functions and combine to a `b x len(input[0])` matrix."""
+        return torch.stack([mean(x) for x, mean in zip(input, self.base_means)])
+
+
+class BatchKernel(gpytorch.kernels.Kernel):
+    """Combine different covariance functions across batches.
+
+    Parameters
+    ----------
+    base_kernels : list
+        List of base kernels used for each batch.
+    """
+
+    def __init__(self, base_kernels):
+        super(BatchKernel, self).__init__(batch_size=len(base_kernels))
+        self.base_kernels = ModuleList(base_kernels)
+
+    def __getitem__(self, item):
+        """Retrieve the ith kernel."""
+        return self.base_kernels[item]
+
+    def __iter__(self):
+        """Iterate over the kernels."""
+        yield from self.base_kernels
+
+    def forward(self, x1, x2, diag=False, batch_dims=None, **params):
+        """Evaluate the kernel functions and combine them."""
+        kernels = [kernel(x1[i], x2[i], **params) for i, kernel in enumerate(self.base_kernels)]
+        if diag:
+            kernels = [kernel.diag() for kernel in kernels]
         else:
-            return items
+            kernels = [kernel.evaluate() for kernel in kernels]
+
+        return torch.stack(kernels)
+
+    def size(self, x1, x2):
+        """Return the size of the resulting covariance matrix."""
+        non_batch_size = (x1.size(-2), x2.size(-2))
+        return torch.Size((x1.size(0),) + non_batch_size)
+
+
+class MultiOutputGP(gpytorch.models.ExactGP):
+    """A GP model that uses the batch mode internally to construct multi-output predictions.
+
+    The main difference to simple batch mode, is that the model assumes that all GPs
+    use the same input data.
+
+    Parameters
+    ----------
+    train_x : torch.tensor
+        A (n x d) tensor with n data points of d dimensions each.
+    train_y : torch.tensor
+        A (n x o) tensor with n data points across o output dimensions.
+    kernel : gpytorch.kernels.Kernel
+        A kernel with appropriate batchsize. See `BatchKernel`.
+    likelihood : gpytorch.likelihoods.Likelihood
+        A GP likelihood with appropriate batchsize.
+    mean : gpytorch.means.Mean, optional
+        The mean function with appropriate batchsize. See `BatchMean`.
+    """
+
+    def __init__(self, train_x, train_y, kernel, likelihood, mean=gpytorch.means.ZeroMean()):
+        train_x = train_x.expand(len(train_y), *train_x.shape)
+        super(MultiOutputGP, self).__init__(train_x, train_y, likelihood)
+
+        self.mean = mean
+        self.kernel = kernel
+
+    @property
+    def batch_size(self):
+        """Return the batch size of the model."""
+        return self.kernel.batch_size
 
     def __call__(self, *args, **kwargs):
-        """Combine call results to `MultiOutputMultivariateNormal`."""
-        results = [model(*args, **kwargs) for model in self.models]
-        return MultiOutputMultivariateNormal(results)
+        """Evaluate the underlying batch_mode model."""
+        args = [arg.unsqueeze(-1) if arg.ndimension() == 1 else arg for arg in args]
+        # Expand input arguments across batches
+        args = list(map(lambda x: x.expand(self.batch_size, *x.shape), args))
+        return super().__call__(*args, **kwargs)
 
-    def set_train_data(self, inputs=None, targets=None, strict=True):
-        """Set training data (does not re-fit model hyper-parameters).
-
-        Parameters
-        ----------
-        inputs : torch.tensor
-            (N, n) tensor of N data points with n features.
-        targets : list or torch.tensor
-            A list of targets. If a tensor, the targets for each input are
-            assumed to be stacked accross the last axis. That is, y is (N, m).
-        """
-        if torch.is_tensor(targets):
-            targets = targets.T
-
-        for model, target in zip(self.models, targets):
-            model.set_train_data(inputs=inputs, targets=target, strict=strict)
+    def forward(self, x):
+        """Compute the resulting batch-distribution."""
+        return MultivariateNormal(self.mean(x), self.kernel(x))
