@@ -4,10 +4,11 @@ import torch
 import pytest
 import gpytorch
 
-from mps import BatchMean, BatchKernel, MultiOutputGP
+from mps import BatchMean, BatchKernel, MultiOutputGP, LinearMean
 
 
 class TestBatchMean(object):
+
     @pytest.fixture(scope='module')
     def means(self):
         mean1 = gpytorch.means.ConstantMean()
@@ -45,6 +46,7 @@ class TestBatchMean(object):
 
 
 class TestBatchKernel(object):
+
     @pytest.fixture(scope='module')
     def covariances(self):
         cov1 = gpytorch.kernels.RBFKernel()
@@ -76,7 +78,39 @@ class TestBatchKernel(object):
         torch.testing.assert_allclose(res[1], cov2(test_x[1]).evaluate())
 
 
+class TestLinearMean(object):
+
+    def test_trainable(self):
+        A = torch.randn((1, 3))
+        mean = LinearMean(A, trainable=True)
+        assert len(list(mean.parameters())) == 1
+
+    def test_1d(self):
+        x = torch.randn((10, 3))
+        A = torch.randn((1, 3))
+
+        mean = LinearMean(A, trainable=False)
+        # Make sure matrix is not trainable
+        assert not list(mean.parameters())
+
+        out = mean(x)
+
+        torch.testing.assert_allclose(out, (x @ A.t()).t()[0])
+
+    def test_multidim(self):
+        x = torch.randn((2, 10, 3))
+        A = torch.randn((2, 3))
+
+        mean = LinearMean(A, trainable=False)
+        out = mean(x)
+
+        # A @ x.T = (x.T @ A.T).T  for each x. The latter also works for multiple x.
+        torch.testing.assert_allclose(out[[0]], (x[0] @ A[[0]].t()).t())
+        torch.testing.assert_allclose(out[[1]], (x[1] @ A[[1]].t()).t())
+
+
 class ExactGPModel(gpytorch.models.ExactGP):
+
     def __init__(self, train_x, train_y, kernel, likelihood, mean=gpytorch.means.ZeroMean()):
         super(ExactGPModel, self).__init__(train_x, train_y, likelihood)
         self.mean_module = mean

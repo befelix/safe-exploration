@@ -7,7 +7,7 @@ import gpytorch
 from gpytorch.distributions import MultivariateNormal
 
 
-__all__ = ['BatchMean', 'BatchKernel', 'MultiOutputGP']
+__all__ = ['BatchMean', 'BatchKernel', 'LinearMean', 'MultiOutputGP']
 
 
 class BatchMean(gpytorch.means.Mean):
@@ -77,6 +77,36 @@ class BatchKernel(gpytorch.kernels.Kernel):
         """Return the size of the resulting covariance matrix."""
         non_batch_size = (x1.size(-2), x2.size(-2))
         return torch.Size((x1.size(0),) + non_batch_size)
+
+
+class LinearMean(gpytorch.means.Mean):
+    """A linear mean function.
+
+    If the matrix has more than one rows, the mean will be applied in batch-mode.
+
+    Parameters
+    ----------
+    matrix : torch.tensor
+        A 2d matrix. For each feature vector x in (d, 1) the output is `A @ x`.
+    trainable : bool, optional
+        Whether the mean matrix should be trainable as a parameter.
+    prior : optional
+        The gpytorch prior for the parameter. Ignored if trainable is False.
+    """
+
+    def __init__(self, matrix, trainable=False, prior=None):
+        super().__init__()
+        if trainable:
+            self.register_parameter(name='matrix',
+                                    parameter=torch.nn.Parameter(matrix))
+            if prior is not None:
+                self.register_prior('matrix_prior', prior, 'matrix')
+        else:
+            self.matrix = matrix
+
+    def forward(self, x):
+        """Compute the linear product."""
+        return torch.einsum('ij,ilj->il', self.matrix, x)
 
 
 class MultiOutputGP(gpytorch.models.ExactGP):
