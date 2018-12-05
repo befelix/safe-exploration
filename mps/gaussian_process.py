@@ -130,7 +130,8 @@ class MultiOutputGP(gpytorch.models.ExactGP):
     """
 
     def __init__(self, train_x, train_y, kernel, likelihood, mean=gpytorch.means.ZeroMean()):
-        train_x = train_x.expand(len(train_y), *train_x.shape)
+        if train_y.dim() > 1:
+            train_x = train_x.expand(len(train_y), *train_x.shape)
         super(MultiOutputGP, self).__init__(train_x, train_y, likelihood)
 
         self.mean = mean
@@ -153,9 +154,10 @@ class MultiOutputGP(gpytorch.models.ExactGP):
 
     def __call__(self, *args, **kwargs):
         """Evaluate the underlying batch_mode model."""
-        args = [arg.unsqueeze(-1) if arg.ndimension() == 1 else arg for arg in args]
-        # Expand input arguments across batches
-        args = list(map(lambda x: x.expand(self.batch_size, *x.shape), args))
+        if self.batch_size > 1:
+            args = [arg.unsqueeze(-1) if arg.ndimension() == 1 else arg for arg in args]
+            # Expand input arguments across batches
+            args = list(map(lambda x: x.expand(self.batch_size, *x.shape), args))
         return super().__call__(*args, **kwargs)
 
     def forward(self, x):
