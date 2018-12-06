@@ -142,6 +142,10 @@ class MultiOutputGP(gpytorch.models.ExactGP):
         """Return the batch size of the model."""
         return self.kernel.batch_size
 
+    def set_train_data(self, inputs=None, targets=None, strict=True):
+        """Set the GP training data."""
+        raise NotImplementedError('TODO')
+
     def loss(self, mml):
         """Return the negative log-likelihood of the model.
 
