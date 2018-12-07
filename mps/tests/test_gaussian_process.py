@@ -141,7 +141,7 @@ class TestMultiOutputGP(object):
         test_x = torch.linspace(-1, 2, 5)
         pred = model(test_x)
 
-        true_mean = torch.tensor([-0.5, -0.125, 0.25, 0.6250, 1.0])
+        true_mean = torch.tensor([-0.5, -0.125, 0.25, 0.6250, 1.0])[None, :]
         torch.testing.assert_allclose(pred.mean, true_mean)
 
     def test_multi_output_gp(self):

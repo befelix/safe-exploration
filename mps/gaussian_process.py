@@ -110,11 +110,28 @@ class LinearMean(gpytorch.means.Mean):
         return torch.einsum('ij,ilj->il', self.matrix, x)
 
 
+class WrappedNormal(object):
+    """A wrapper around gpytorch.NormalDistribution that doesn't squeeze empty dims."""
+    def __init__(self, normal):
+        super().__init__()
+        self.normal = normal
+
+    def __getattr__(self, key):
+        """Unsqueeze empty dimensions."""
+        res = getattr(self.normal, key)
+        batch_shape = self.normal.batch_shape
+        if not batch_shape and key in ('mean', 'variance', 'covariance_matrix'):
+            res = res.unsqueeze(0)
+
+        return res
+
+
 class MultiOutputGP(gpytorch.models.ExactGP):
     """A GP model that uses the gpytorch batch mode for multi-output predictions.
 
     The main difference to simple batch mode, is that the model assumes that all GPs
-    use the same input data.
+    use the same input data. Moreover, even for single-input data it outputs predictions
+    together with a singular dimension for the batchsize.
 
     Parameters
     ----------
@@ -172,7 +189,12 @@ class MultiOutputGP(gpytorch.models.ExactGP):
             args = [arg.unsqueeze(-1) if arg.ndimension() == 1 else arg for arg in args]
             # Expand input arguments across batches
             args = list(map(lambda x: x.expand(self.batch_size, *x.shape), args))
-        return super().__call__(*args, **kwargs)
+        normal = super().__call__(*args, **kwargs)
+
+        if self.batch_size > 1:
+            return normal
+        else:
+            return WrappedNormal(normal)
 
     def forward(self, x):
         """Compute the resulting batch-distribution."""
