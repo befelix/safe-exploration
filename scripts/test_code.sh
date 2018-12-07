@@ -22,10 +22,10 @@ NC='\033[0m'
 
 # Run style tests
 echo -e "${GREEN}Running style tests.${NC}"
-flake8 $module --exclude '__init__.py' --max-line-length=120 --show-source || { exit 1; }
+flake8 $module --exclude '__init__.py' --max-line-length=88 --show-source || { exit 1; }
 
 # Ignore import errors for __init__
-flake8 $module --filename=__init__.py  --max-line-length=120 --ignore=F --show-source || { exit 1; }
+flake8 $module --filename=__init__.py  --max-line-length=88 --ignore=F --show-source || { exit 1; }
 
 echo -e "${GREEN}Testing docstring conventions.${NC}"
 # Test docstring conventions

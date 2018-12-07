@@ -111,8 +111,10 @@ class TestLinearMean(object):
 
 class ExactGPModel(gpytorch.models.ExactGP):
 
-    def __init__(self, train_x, train_y, kernel, likelihood, mean=gpytorch.means.ZeroMean()):
+    def __init__(self, train_x, train_y, kernel, likelihood, mean=None):
         super(ExactGPModel, self).__init__(train_x, train_y, likelihood)
+        if mean is None:
+            mean = gpytorch.means.ZeroMean()
         self.mean_module = mean
         self.covar_module = kernel
 

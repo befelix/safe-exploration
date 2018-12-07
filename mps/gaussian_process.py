@@ -65,7 +65,8 @@ class BatchKernel(gpytorch.kernels.Kernel):
 
     def forward(self, x1, x2, diag=False, batch_dims=None, **params):
         """Evaluate the kernel functions and combine them."""
-        kernels = [kernel(x1[i], x2[i], **params) for i, kernel in enumerate(self.base_kernels)]
+        kernels = [kernel(x1[i], x2[i], **params)
+                   for i, kernel in enumerate(self.base_kernels)]
         if diag:
             kernels = [kernel.diag() for kernel in kernels]
         else:
@@ -110,7 +111,7 @@ class LinearMean(gpytorch.means.Mean):
 
 
 class MultiOutputGP(gpytorch.models.ExactGP):
-    """A GP model that uses the batch mode internally to construct multi-output predictions.
+    """A GP model that uses the gpytorch batch mode for multi-output predictions.
 
     The main difference to simple batch mode, is that the model assumes that all GPs
     use the same input data.
@@ -126,10 +127,14 @@ class MultiOutputGP(gpytorch.models.ExactGP):
     likelihood : gpytorch.likelihoods.Likelihood
         A GP likelihood with appropriate batchsize.
     mean : gpytorch.means.Mean, optional
-        The mean function with appropriate batchsize. See `BatchMean`.
+        The mean function with appropriate batchsize. See `BatchMean`. Defaults to
+        `gpytorch.means.ZeroMean()`.
     """
 
-    def __init__(self, train_x, train_y, kernel, likelihood, mean=gpytorch.means.ZeroMean()):
+    def __init__(self, train_x, train_y, kernel, likelihood, mean=None):
+        if mean is None:
+            mean = gpytorch.means.ZeroMean()
+
         if train_y.dim() > 1:
             train_x = train_x.expand(len(train_y), *train_x.shape)
         super(MultiOutputGP, self).__init__(train_x, train_y, likelihood)
