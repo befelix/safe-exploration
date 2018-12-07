@@ -136,7 +136,12 @@ class MultiOutputGP(gpytorch.models.ExactGP):
             mean = gpytorch.means.ZeroMean()
 
         if train_y.dim() > 1:
+            # Try to remove the first data row if it's empty
+            train_y = train_y.squeeze(0)
+
+        if train_y.dim() > 1:
             train_x = train_x.expand(len(train_y), *train_x.shape)
+
         super(MultiOutputGP, self).__init__(train_x, train_y, likelihood)
 
         self.mean = mean

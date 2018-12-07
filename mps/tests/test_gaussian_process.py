@@ -124,56 +124,78 @@ class ExactGPModel(gpytorch.models.ExactGP):
         return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
 
 
-def test_multi_output_gp():
-    # Setup composite mean
-    mean1 = gpytorch.means.ConstantMean()
-    mean2 = gpytorch.means.ConstantMean()
-    mean = BatchMean([mean1, mean2])
+class TestMultiOutputGP(object):
 
-    # Setup composite kernel
-    cov1 = gpytorch.kernels.RBFKernel()
-    cov2 = gpytorch.kernels.RBFKernel()
-    kernel = BatchKernel([cov1, cov2])
+    def test_single_output_gp(self):
+        kernel = gpytorch.kernels.MaternKernel()
+        mean = LinearMean(torch.tensor([[0.5]]))
+        likelihood = gpytorch.likelihoods.GaussianLikelihood()
+        likelihood.noise = torch.tensor(0.01 ** 2)
 
-    # Training data
-    train_x = torch.linspace(0, 2, 5).unsqueeze(-1)
-    train_y = train_x.squeeze(-1)
-    train_y = torch.stack([train_y, train_y])
+        train_x = torch.tensor([-0.5, -0.1, 0., 0.1, 1.])[:, None]
+        train_y = 0.5 * train_x.t()
 
-    # Combined GP
-    likelihood = gpytorch.likelihoods.GaussianLikelihood(batch_size=2)
-    gp = MultiOutputGP(train_x, train_y, kernel, likelihood, mean=mean)
+        model = MultiOutputGP(train_x, train_y, kernel, likelihood, mean=mean)
+        model.eval()
 
-    # Individual GPs
-    likelihood1 = gpytorch.likelihoods.GaussianLikelihood()
-    gp1 = ExactGPModel(train_x, train_y[0], cov1, likelihood1, mean=mean1)
-    gp2 = ExactGPModel(train_x, train_y[1], cov2, likelihood1, mean=mean2)
+        test_x = torch.linspace(-1, 2, 5)
+        pred = model(test_x)
 
-    # Evaluation mode
-    gp.eval()
-    gp1.eval()
-    gp2.eval()
+        true_mean = torch.tensor([-0.5, -0.125, 0.25, 0.6250, 1.0])
+        torch.testing.assert_allclose(pred.mean, true_mean)
 
-    # Evaluate
-    test_x = torch.linspace(-2, 2, 5)[:, None]
-    pred = gp(test_x)
-    pred1 = gp1(test_x)
-    pred2 = gp2(test_x)
+    def test_multi_output_gp(self):
+        # Setup composite mean
+        mean1 = gpytorch.means.ConstantMean()
+        mean2 = gpytorch.means.ConstantMean()
+        mean = BatchMean([mean1, mean2])
 
-    torch.testing.assert_allclose(pred.mean[0], pred1.mean)
-    torch.testing.assert_allclose(pred.mean[1], pred2.mean)
+        # Setup composite kernel
+        cov1 = gpytorch.kernels.RBFKernel()
+        cov2 = gpytorch.kernels.RBFKernel()
+        kernel = BatchKernel([cov1, cov2])
 
-    torch.testing.assert_allclose(pred.covariance_matrix[0], pred1.covariance_matrix)
-    torch.testing.assert_allclose(pred.covariance_matrix[1], pred2.covariance_matrix)
+        # Training data
+        train_x = torch.linspace(0, 2, 5).unsqueeze(-1)
+        train_y = train_x.squeeze(-1)
+        train_y = torch.stack([train_y, train_y])
 
-    torch.testing.assert_allclose(pred.variance[0], pred1.variance)
-    torch.testing.assert_allclose(pred.variance[1], pred2.variance)
+        # Combined GP
+        likelihood = gpytorch.likelihoods.GaussianLikelihood(batch_size=2)
+        gp = MultiOutputGP(train_x, train_y, kernel, likelihood, mean=mean)
 
-    # Test optimization
-    gp.train()
-    optimizer = torch.optim.Adam([{'params': gp.parameters()}], lr=0.1)
-    mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, gp)
-    optimizer.zero_grad()
-    loss = gp.loss(mll)
-    loss.backward()
-    optimizer.step()
+        # Individual GPs
+        likelihood1 = gpytorch.likelihoods.GaussianLikelihood()
+        gp1 = ExactGPModel(train_x, train_y[0], cov1, likelihood1, mean=mean1)
+        gp2 = ExactGPModel(train_x, train_y[1], cov2, likelihood1, mean=mean2)
+
+        # Evaluation mode
+        gp.eval()
+        gp1.eval()
+        gp2.eval()
+
+        # Evaluate
+        test_x = torch.linspace(-2, 2, 5)[:, None]
+        pred = gp(test_x)
+        pred1 = gp1(test_x)
+        pred2 = gp2(test_x)
+
+        torch.testing.assert_allclose(pred.mean[0], pred1.mean)
+        torch.testing.assert_allclose(pred.mean[1], pred2.mean)
+
+        torch.testing.assert_allclose(pred.covariance_matrix[0],
+                                      pred1.covariance_matrix)
+        torch.testing.assert_allclose(pred.covariance_matrix[1],
+                                      pred2.covariance_matrix)
+
+        torch.testing.assert_allclose(pred.variance[0], pred1.variance)
+        torch.testing.assert_allclose(pred.variance[1], pred2.variance)
+
+        # Test optimization
+        gp.train()
+        optimizer = torch.optim.Adam([{'params': gp.parameters()}], lr=0.1)
+        mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, gp)
+        optimizer.zero_grad()
+        loss = gp.loss(mll)
+        loss.backward()
+        optimizer.step()
