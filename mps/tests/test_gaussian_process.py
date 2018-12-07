@@ -92,6 +92,7 @@ class TestLinearMean(object):
         mean = LinearMean(A, trainable=False)
         # Make sure matrix is not trainable
         assert not list(mean.parameters())
+        assert mean.batch_size == 1
 
         out = mean(x)
 
@@ -104,6 +105,7 @@ class TestLinearMean(object):
         mean = LinearMean(A, trainable=False)
         out = mean(x)
 
+        assert mean.batch_size == 2
         # A @ x.T = (x.T @ A.T).T  for each x. The latter also works for multiple x.
         torch.testing.assert_allclose(out[[0]], (x[0] @ A[[0]].t()).t())
         torch.testing.assert_allclose(out[[1]], (x[1] @ A[[1]].t()).t())

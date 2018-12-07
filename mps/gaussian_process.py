@@ -105,6 +105,10 @@ class LinearMean(gpytorch.means.Mean):
         else:
             self.matrix = matrix
 
+    @property
+    def batch_size(self):
+        return self.matrix.size(0)
+
     def forward(self, x):
         """Compute the linear product."""
         return torch.einsum('ij,ilj->il', self.matrix, x)
