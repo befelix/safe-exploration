@@ -29,9 +29,7 @@ DEFAULT_OPT_ENV = {'ctrl_bounds': None,'safe_policy' : None, 'lin_model' : None,
 
 
 class SimpleSafeMPC:
-    """ Gaussian Process MPC with safety bounds
-    
-    
+    """ Simplified implementation of the SafeMPC algorithm in Casadi
     
     """
     
@@ -39,6 +37,37 @@ class SimpleSafeMPC:
                  rhc = True, lin_model = None, ctrl_bounds = None,
                  safe_policy = None, opt_perf_trajectory = None,lin_trafo_gp_input = None):
         """ Initialize the SafeMPC object with dynamic model information
+
+        Parameters
+        ----------
+        n_safe: int 
+            Length of the safety trajectory (number of safe controls)
+        gp: SimpleGPModel
+            The Gaussian Process (GP) statistical model
+        opt_env: dict
+            Dictionary of environment options. List of accepted attributes are given in ATTR_NAMES_ENV.
+            All values that are NOT specified in DEFAULT_OPT_ENV are mandatory.
+        wx_cost: n_x x n_x np.ndarray[float]
+            State cost matrix for the LQR 
+        wu_cost: n_u x n_u np.ndarray[float]
+            Control cost matrix for the LQR 
+        beta_safety: float, optional
+            The safety coefficient for the confidence intervals (Denoted by \beta in paper)
+        rhc: boolean, optional
+            True, if we want to reinitialize the SafeMPC problem in a receding horizon fashion
+        lin_model: Tuple, optional
+            The linear prior model. Consists of tuple (a,b) that defines the linear system.
+            Default is: x_{t+1} = x_t, i.e. (I,0)
+        ctrl_bounds: n_u x 2 np.ndarray[float], optional
+            Upper and lower bound per control input
+        safe_policy: function, optional
+            Custom safe policy u_t^safe = safe_policy(x_t)
+            Default: LQR based on prior model and wx_cost,wu_cost
+        opt_perf_trajectory: dict, optional
+            Dictionary of environment options. List of accepted attributes are given in ATTR_NAMES_PERF.
+            All values that are NOT specified in DEFAULT_OPT_PERF are mandatory.
+        lin_trafo_gp_input: n_x_gp_in x n_x np.ndarray[float], optional
+            Allows for a linear transformation of the gp input (e.g. removing an input)
         
         
         """ 
@@ -79,7 +108,13 @@ class SimpleSafeMPC:
         q_cas = SX.sym('q',(self.n_s,self.n_s))
         g_val_term_cas = lin_ellipsoid_safety_distance(p_cas,q_cas,self.h_mat_safe,self.h_safe)
         self.g_term_cas = cas.Function("g_term",[p_cas,q_cas],[g_val_term_cas])
-        
+
+
+        if not self.h_mat_obs is None:
+            g_val_interm_cas = lin_ellipsoid_safety_distance(p_cas,q_cas,self.h_mat_obs,self.h_obs)
+            self.g_interm_cas = cas.Function("g_interm",[p_cas,q_cas],[g_val_term_cas])
+
+
         self.has_ctrl_bounds = False        
         if not ctrl_bounds is None:
             self.has_ctrl_bounds = True
@@ -125,7 +160,9 @@ class SimpleSafeMPC:
         ##init safe
         
     def init_solver(self, cost_func = None):
-        """ Initialize a casadi solver object with safety bounds information
+        """ Initialize a casadi solver object corresponding to the SafeMPC optimization problem
+
+
         
         Parameters:
         -----------
@@ -155,7 +192,7 @@ class SimpleSafeMPC:
         k_fb_0 = SX.sym("base feedback matrices",(self.n_safe-1,self.n_s*self.n_u))
         
         k_fb_safe_ctrl = SX.zeros(self.n_u,self.n_s)
-        p_all, q_all = cas_multistep(p_0,u_0,k_fb_0,k_fb_safe_ctrl,k_ff_all,self.gp,self.l_mu,self.l_sigma,self.beta_safety,self.a,self.b,self.lin_trafo_gp_input)
+        p_all, q_all, gp_sigma_pred_safe_all = cas_multistep(p_0,u_0,k_fb_0,k_fb_safe_ctrl,k_ff_all,self.gp,self.l_mu,self.l_sigma,self.beta_safety,self.a,self.b,self.lin_trafo_gp_input)
         
         ##generate open_loop trajectory function [vertcat(x_0,u_0)],[f_x])
         self.f_multistep_eval = cas.Function("safe_multistep",[p_0,u_0,k_fb_0,k_ff_all],[p_all, q_all])
@@ -164,16 +201,11 @@ class SimpleSafeMPC:
         g = vertcat(g,g_safe)
         lbg += lbg_safe
         ubg += ubg_safe
-        g_name += g_names_safe       
-
-        ## TO-DO: This doesn't work... why?
-        #for i in range(self.n_safe-1):
-        #    k_fb_safe_combined[i,:] += k_fb_ctrl[0,:]
+        g_name += g_names_safe      
        
-
         ## Generate performance trajectory 
         if self.n_perf > 0 :
-            k_ff_perf, k_fb_perf, k_ff_perf_traj, k_fb_perf_traj, mu_perf, sigma_perf, g_perf,lbg_perf, ubg_perf, g_names_perf = self._generate_perf_trajectory_casadi(p_0,u_0,k_ff_all,k_fb_0,k_fb_safe_ctrl,self.a,self.b,self.lin_trafo_gp_input)
+            k_ff_perf, k_fb_perf, k_ff_perf_traj, k_fb_perf_traj, mu_perf, sigma_perf, gp_sigma_pred_perf_all,  g_perf,lbg_perf, ubg_perf, g_names_perf = self._generate_perf_trajectory_casadi(p_0,u_0,k_ff_all,k_fb_0,k_fb_safe_ctrl,self.a,self.b,self.lin_trafo_gp_input)
             g = vertcat(g,g_perf) 
             lbg += lbg_perf
             ubg += ubg_perf
@@ -185,15 +217,12 @@ class SimpleSafeMPC:
             k_ff_perf_traj = np.array([])
             mu_perf = np.array([])
             sigma_perf = np.array([])
+            gp_sigma_pred_perf_all = None
 
         #k_fb_perf_combined = k_fb_perf
         #if self.n_safe > 1 and self.perf_has_fb:
         #    k_fb_perf_combined = k_fb_perf + cas_reshape(k_fb_0[0,:],(self.n_u,self.n_s))
-
-
-        
-        
-        cost = self.generate_cost_function(p_0,u_0,p_all,q_all,mu_perf, sigma_perf,k_ff_all, k_fb_0, k_fb_perf = k_fb_perf_traj, k_ff_perf = k_ff_perf_traj, custom_cost_func = cost_func)
+        cost = self.generate_cost_function(p_0,u_0,p_all,q_all,mu_perf, sigma_perf,k_ff_all, k_fb_0, gp_sigma_pred_safe_all, k_fb_perf = k_fb_perf_traj, k_ff_perf = k_ff_perf_traj, gp_sigma_pred_perf_all= gp_sigma_pred_perf_all, custom_cost_func = cost_func)
         #cost = 0
 
 
@@ -219,22 +248,22 @@ class SimpleSafeMPC:
         self.g = g
         self.g_name = g_name
     
-    def generate_cost_function(self,p_0,u_0,p_all,q_all,mu_perf, sigma_perf,k_ff_all, k_fb_safe_combined, k_fb_perf = None, k_ff_perf = None, custom_cost_func = None):
+    def generate_cost_function(self,p_0,u_0,p_all,q_all,mu_perf, sigma_perf,k_ff_all, k_fb_safe_combined, gp_sigma_pred_safe_all,k_fb_perf = None, k_ff_perf = None,gp_sigma_pred_perf_all = None, custom_cost_func = None, eps_moore_penrose = 0.0):
         ## Generate cost function 
-        # TO-DO: wrap this in a new function
         if custom_cost_func is None:
             cost = 0
             if self.n_perf > 1:
+
                 n_cost_deviation = np.minimum(self.n_perf,self.n_safe)
                 for i in range(1,n_cost_deviation):
                     cost += mtimes(mu_perf[i,:]-p_all[i,:],mtimes(.1*self.wx_cost,(mu_perf[i,:]-p_all[i,:]).T))
                     
                 for i in range(self.n_perf):
-                    cost -= sum1(sqrt(diag(sigma_perf[i])))
+                    cost -= sqrt(sum2(gp_sigma_pred_perf_all[i,:] + eps_moore_penrose))
             else:
-                cost -= sum1(sqrt(diag(cas_reshape(q_all[0,:],(self.n_s,self.n_s)))))
+                for i in range(self.n_safe):
+                    cost -= sqrt(sum2(gp_sigma_pred_safe_all[i,:]+eps_moore_penrose))
         else:
-
             if self.n_perf > 1:
                 cost = custom_cost_func(p_0,u_0,p_all,q_all,mu_perf,sigma_perf,k_ff_all,k_fb_safe_combined,k_fb_perf,k_ff_perf)
             else:
@@ -247,18 +276,23 @@ class SimpleSafeMPC:
         
         Parameters
         ----------
-        p_all:
-        q_all:
-        k_fb_0:
-        k_fb_ctrl:
-        k_ff:
-        ctrl_bounds:
+        p_all: n_safe x n_s casadi.SX
+            The centers of the safe trajctory ellipsoids
+        q_all: n_safe x n_s x n_s ndarray[float]
+            The shape matrices of the safe trajectory ellipsoids
+        k_fb_0: (n_safe-1) x (n_x * n_u) casadi.SX
+            Feedback control matrices
+        k_ff_ctrl: (n_safe-1) x n_u casadi.SX
+            Feed-forward controls 
         
         Returns
         -------
         g: list[casadi.SX]
+            The constraint functions
         lbg: list[casadi.SX]
+            Lower bounds for the constraints
         ubg: list[casadi.SX]
+            Upper bounds for the constraints
         """
         g = []
         lbg = []
@@ -308,15 +342,35 @@ class SimpleSafeMPC:
         
         return g,lbg,ubg,g_name
         
-    def _generate_perf_trajectory_casadi(self,mu_0,u_0,k_ff_ctrl,k_fb_0,k_fb_safe_ctrl,a=None,b=None,lin_trafo_gp_input = None, safety_constr = True):
-        """ Generate the performance trajectory vars for the casadi solver"""
+    def _generate_perf_trajectory_casadi(self,mu_0,u_0,k_ff_ctrl,k_fb_0,k_fb_safe_ctrl,a=None,b=None,lin_trafo_gp_input = None, safety_constr = False):
+        """ Generate the performance trajectory variables for the casadi solver 
+
+        Parameters:
+        mu_0: n_x x 1 casadi.SX
+            Initial state 
+        u_0: n_u x 1 casadi.SX
+            Initial control 
+        k_ff_ctrl: (n_safe-1) x n_u casadi.SX
+            Safe feed-forward controls 
+        k_fb_0: (n_safe-1) x (n_x * n_u) casadi.SX
+            Safe feedback control matrices
+        a: n_x x n_x np.ndarray[float], optional
+            The A-matrix of the prior linear model
+        b: n_x x n_u np.ndarray[float], optional
+            The B-matrix of the prior linear model
+        lin_trafo_gp_input: n_x_gp_in x n_x np.ndarray[float], optional
+            Allows for a linear transformation of the gp input (e.g. removing an input)
+        safety_constr: boolean, optional
+            True, if we want to put a constraint after (n_safe+1)th performance trajectory state to 
+            be inside the terminal safe set. Can potentially help with (recursive) feasibility
+        """
 
         if self.r > 1:
             warnings.warn("Coupling performance and safety trajectory for more than one step is UNTESTED")
 
         # we don't have a performance trajectory, so nothing to do here. Might wanna catch this even before
         if self.n_perf <= 1: 
-            return np.array([]),np.array([]),np.array([]),np.array([]),np.array([]),[],[],[]
+            return np.array([]),np.array([]),np.array([]),np.array([]),None, np.array([]),[],[],[]
         if self.n_perf > 1:
             k_ff_perf = SX.sym("k_ff_perf",(self.n_perf-self.r,self.n_u))
             k_ff_perf_traj = vertcat(k_ff_ctrl[:self.r-1,:],k_ff_perf)
@@ -329,16 +383,18 @@ class SimpleSafeMPC:
                 for i in range(self.n_perf-self.r):
                     k_fb_perf_traj = np.append(k_fb_perf_traj,[k_fb_perf])
 
-            mu_perf_all, sigma_perf_all,_ = self.perf_trajectory(mu_0,self.gp,vertcat(u_0,k_ff_perf_traj)  ,k_fb_perf_traj,None,a,b,lin_trafo_gp_input)
+            mu_perf_all, sigma_perf_all, gp_sigma_pred_perf_all = self.perf_trajectory(mu_0,self.gp,vertcat(u_0,k_ff_perf_traj)  ,k_fb_perf_traj,None,a,b,lin_trafo_gp_input)
             
+
+            ## evaluation trajectory (mainly for verbosity)
             mu_0_eval = SX.sym("mu_0",(self.n_s,1))
             u_0_eval = SX.sym("u_0",(self.n_u,1))
             k_fb_perf_all_eval = SX.sym("k_fb_perf",(self.n_perf-1,self.n_u*self.n_s))
             k_ff_perf_all_eval = SX.sym("k_ff_perf",(self.n_perf-1,self.n_u))
 
             list_kfb_perf = [cas_reshape(k_fb_perf_all_eval[i,:],(self.n_u,self.n_s)) for i in range(self.n_perf-1)]
-            mu_perf_eval_all, sigma_perf_eval_all, _ = self.perf_trajectory(mu_0_eval,self.gp,vertcat(u_0_eval,k_ff_perf_all_eval)  ,list_kfb_perf,None,a,b,lin_trafo_gp_input)
-            self.f_multistep_perf_eval = cas.Function("f_multistep_perf_eval",[mu_0_eval,u_0_eval,k_fb_perf_all_eval,k_ff_perf_all_eval],[mu_perf_eval_all,sigma_perf_eval_all])
+            mu_perf_eval_all, sigma_perf_eval_all, gp_sigma_pred_perf_all_eval = self.perf_trajectory(mu_0_eval,self.gp,vertcat(u_0_eval,k_ff_perf_all_eval)  ,list_kfb_perf,None,a,b,lin_trafo_gp_input)
+            self.f_multistep_perf_eval = cas.Function("f_multistep_perf_eval",[mu_0_eval,u_0_eval,k_fb_perf_all_eval,k_ff_perf_all_eval],[mu_perf_eval_all,gp_sigma_pred_perf_all_eval])
         
         g_name = []
         g = []
@@ -360,7 +416,7 @@ class SimpleSafeMPC:
                 g_name += ["ctrl_constr_performance_{}".format(i)]
 
 
-        return k_ff_perf, k_fb_perf, k_ff_perf_traj,k_fb_perf_traj, mu_perf_all, sigma_perf_all, g,lbg, ubg, g_name
+        return k_ff_perf, k_fb_perf, k_ff_perf_traj,k_fb_perf_traj, mu_perf_all, sigma_perf_all, gp_sigma_pred_perf_all, g,lbg, ubg, g_name
 
     def _generate_control_constraint(self,k_ff,q = None,k_fb = None,ctrl_bounds = None):
         """ Build control constraints from state ellipsoids and linear feedback controls
@@ -449,7 +505,9 @@ class SimpleSafeMPC:
         """ Get the initial feedback controller k_fb
         
         x_0: n_s x 1 ndarray[float], optional
+            Current state of the system
         u_0: n_u x 1 ndarray[float], optional
+            Initialization of the control input
         
         """
         q = self.wx_feedback
@@ -468,26 +526,7 @@ class SimpleSafeMPC:
             k_fb = -k_lqr
         else:
 
-            raise NotImplementedError("There definitely is a bug here!")
-
-            z = np.hstack((x_0.T,u_0.T))
-            jac_mu = self.gp.predictive_gradients(z)
-            mu_new,_ = self.gp.predict(z)
-            
-            a = jac_mu[0,:,:self.n_s] + np.eye(self.n_s)
-            b = jac_mu[0,:,self.n_s:]
-            a_aug = np.vstack((np.hstack((a,mu_new.T-np.dot(b,u_0)-np.dot(a,x_0))),
-                               np.hstack((np.zeros((1,self.n_s)),np.zeros((1,1))))))
-            b_aug = np.vstack((b,np.zeros((1,self.n_u))))
-            
-            q = self.wx_cost
-            r = self.wu_cost
-            q_aug = np.vstack((np.hstack((q,np.zeros((self.n_s,1)))),np.hstack((np.zeros((1,self.n_s)),np.eye(1)))))                
-            
-            k_fb_aug,_,_ = self.dlqr(a_aug,b_aug,q_aug,r)
-            k_fb_aug = -k_fb_aug #mind that our control is defined as u = K*x and not u = -K*x
-            k_fb_aug = np.reshape(k_fb_aug,(self.n_s+1,self.n_u))
-            k_fb = k_fb_aug[:self.n_s,:]
+            raise NotImplementedError("Cannot compute feed-back matrices without prior model")
             
         return k_fb.reshape((1,self.n_s*self.n_u))
            
@@ -575,7 +614,7 @@ class SimpleSafeMPC:
         
             return u_apply.reshape(self.n_u,), success
         
-    def solve(self,p_0, k_ff_all_0 = None, k_fb_all_0 = None, sol_verbose = False):
+    def solve(self,p_0, u_0 = None, k_ff_all_0 = None, k_fb_0 = None, u_perf_0 = None, k_fb_perf_0 = None, sol_verbose = False):
         """ Solve the MPC problem for a given set of input parameters
         
         
@@ -601,16 +640,18 @@ class SimpleSafeMPC:
         assert self.solver_initialized, "Need to initialize the solver first!"
         
         
-        u_0, k_ff_all_0, k_fb_0, u_perf_0, k_fb_perf_0 = self._get_init_controls(p_0)
-        
+        u_0_init, k_ff_all_0_init, k_fb_0_init, u_perf_0_init, k_fb_perf_0_init = self._get_init_controls()
 
-        if k_fb_perf_0 is None:
-            k_fb_perf_0 = []
-
-        if u_perf_0 is None:
-            u_perf_0 = []
-        else:
-            u_perf_0 = cas_reshape(u_perf_0,(-1,1))
+        if not u_0:
+            u_0 = u_0_init
+        if not k_ff_all_0:
+            k_ff_all_0 = k_ff_all_0_init
+        if not k_fb_0:
+            k_fb_0 = k_fb_0_init
+        if not u_perf_0:
+            u_perf_0 = u_perf_0_init
+        if not k_fb_perf_0:
+            k_fb_perf_0 = k_fb_perf_0_init
 
         params = np.vstack((p_0,np.reshape(k_fb_0,(-1,1)),cas_reshape(k_fb_perf_0,(-1,1))))
         
@@ -673,17 +714,6 @@ class SimpleSafeMPC:
             # This is not sufficient, since casadi gives out wrong feasibility values
             if np.any(np.array(self.lbg) - feas_tol > g_res ) or np.any(np.array(self.ubg) + feas_tol < g_res ):      
                 feasible = False
-                
-            #if self.verbosity > 1:
-            #    print("\n=== Constraint values:")
-            #    for i in range(len(g_res)):
-            #        print(" constraint: {}, lbg: {}, g: {}, ubg: {} ".format(self.g_name[i],self.lbg[i],g_res[i],self.ubg[i]))
-            #    print("\n")
-            
-            #if self.verbosity > 0:
-            #    print("===== SOLUTION FEASIBLE: {} ========".format(feasible))
-            
-        
             
             x_opt = sol["x"]
             self.has_openloop = True
@@ -715,11 +745,13 @@ class SimpleSafeMPC:
             p_safe = np.array(p_safe)
             q_safe = np.array(q_safe)
 
-            print("=== Safe Trajectory: ===")
-            print("Centers:")
-            print(p_safe)
-            print("Safety controls:")
-            print(k_ff_safe)
+            if self.verbosity > 1:
+                print("=== Safe Trajectory: ===")
+                print("Centers:")
+                print(p_safe)
+                print("Safety controls:")
+                print(u_apply)
+                print(k_ff_safe)
 
             k_fb_perf_traj_eval = np.empty((0,self.n_s*self.n_u))
             k_ff_perf_traj_eval = np.empty((0,self.n_u))
@@ -733,18 +765,15 @@ class SimpleSafeMPC:
             if self.n_perf > 0:
                 mu_perf, sigma_perf = self.f_multistep_perf_eval(x_0.squeeze(),u_apply,k_fb_perf_traj_eval,k_ff_perf_traj_eval)
 
-                print("=== Perf Trajectory: ===")
-                print("Mu perf:")
-                print(mu_perf)
-                print("Peformance controls:")
-                print(k_ff_perf_traj_eval)
+                if self.verbosity  > 1:
+                    print("=== Performance Trajectory: ===")
+                    print("Mu perf:")
+                    print(mu_perf)
+                    print("Peformance controls:")
+                    print(k_ff_perf_traj_eval)
             
 
             feasible, _ =  self.eval_safety_constraints(p_safe,q_safe)
-            print(g_res)
-            #print("---Test---")
-            #p_ctrl , q_all = self.get_trajectory_openloop(x_0.squeeze(),k_fb_safe_apply,k_ff_safe_all)
-            #feasible, _ =  self.eval_safety_constraints(p_ctrl,q_all)
             
             if self.rhc and feasible:
                 self.k_ff_safe = k_ff_safe
@@ -762,9 +791,6 @@ class SimpleSafeMPC:
             self.n_fail = 0
 
         if not feasible:
-            if self.verbosity > 1:
-                print("Infeasible solution!")
-            
             self.n_fail += 1
             q_all = None
             k_fb_apply = None
@@ -774,13 +800,13 @@ class SimpleSafeMPC:
             if self.n_fail >= self.n_safe:
                 ## Too many infeasible solutions -> switch to safe controller
                 if self.verbosity > 1:
-                    print("Too many infeasible solutions -> switch to safe controller")
+                    print("Infeasible solution. Too many infeasible solutions, switching to safe controller")
                 u_apply = self.safe_policy(x_0)
                 k_ff_safe_all = u_apply
             else:
                 ## can apply previous solution
                 if self.verbosity > 1:
-                    print("Switching to previous solution, n_fail = {}, n_safe = {}".format(self.n_fail,self.n_safe))
+                    print("Infeasible solution. Switching to previous solution, n_fail = {}, n_safe = {}".format(self.n_fail,self.n_safe))
                 if sol_verbose:
                     u_apply,k_fb_apply, k_ff_safe_all, p_safe = self.get_old_solution(x_0, get_ctrl_traj = True)
                 else:
@@ -793,7 +819,8 @@ class SimpleSafeMPC:
         return u_apply, success
         
 
-    def eval_safety_constraints(self,p_all,q_all,ubg_term = 0., lbg_term = -np.inf,terminal_only = True, eps_constraints = 1e-5 ):
+    def eval_safety_constraints(self,p_all,q_all,ubg_term = 0., lbg_term = -np.inf,
+                                ubg_interm = 0., lbg_interm = -np.inf,terminal_only = False, eps_constraints = 1e-5 ):
         """ Evaluate the safety constraints """
         g_term_val = self.g_term_cas(p_all[-1,:,None],cas_reshape(q_all[-1,:],(self.n_s,self.n_s)))
 
@@ -801,17 +828,25 @@ class SimpleSafeMPC:
         
 
         feasible = feasible_term
-        if not terminal_only:
-            raise NotImplementedError("Still need to eval the intermediate safety constraint vals")
+        if terminal_only or self.h_mat_obs is None:
+
+            if self.verbosity > 1:
+                print("\n===== Evaluated terminal constraint values: FEASIBLE = {} =====".format(feasible))
+                print(g_term_val)
+                print("\n===== ===== ===== ===== ===== ===== ===== =====")
+
+            return feasible, g_term_val 
+
+        g_interm_val = self.g_interm_cas(p_all[-1,:,None],cas_reshape(q_all[-1,:],(self.n_s,self.n_s)))
+
+        feasible_interm = np.all(lbg_interm - eps_constraints< g_interm_val) and np.all(g_interm_val < ubg_interm + eps_constraints)
+
+        feasible = feasible_term and feasible_interm
 
 
-        if self.verbosity > 1:
-            print("\n===== Evaluated terminal constraint values: FEASIBLE = {} =====".format(feasible))
-            print(g_term_val)
-            print("\n===== ===== ===== ===== ===== ===== ===== =====")
+        return feasible, np.vstack((g_term_val,g_interm_val))
 
-        return feasible, g_term_val 
-
+        
     def get_old_solution(self, x, k = None, get_ctrl_traj = False):
         """ Shift previously obtained solutions in time and return solution to be applied
         
@@ -862,7 +897,7 @@ class SimpleSafeMPC:
             if k < self.n_safe:
                 k_fb_safe_traj = self.k_fb_safe_all[k:,:]
                 #in accordance to the structure current ctrl u_apply is part of the k_ff ctrl trajectory
-                k_ff_safe_traj = np.vstack((u_apply,self.k_ff_all[k+1:,:]))
+                k_ff_safe_traj = np.vstack((u_apply,self.k_ff_safe[k+1:,:]))
                 p_ctrl_safe_traj = self.p_safe[k:,:]
                 
             return u_apply, k_fb_safe_traj, \
@@ -871,8 +906,7 @@ class SimpleSafeMPC:
         return u_apply
         
     def _set_attributes_from_dict(self, attrib_names, default_attribs = {}, custom_attrib = {} ):
-        """ """
-
+        """ Set class attributes from a list of keys,values """
         for attr_name in attrib_names:
             if attr_name in custom_attrib:
                 attr_val = custom_attrib[attr_name]
@@ -892,10 +926,24 @@ class SimpleSafeMPC:
         else:
             raise NotImplementedError("Unknown uncertainty propagation method")
 
-    def _get_init_controls(self,x_0):
+    def _get_init_controls(self):
         """ Initialize the controls for the MPC step
         
-            TO-DO: hard-coded initial actions are not a good idea!
+
+        Returns
+        -------
+        u_0: n_u x 0 np.array[float]
+            Initialization of the first (shared) input
+        k_ff_safe_new:  (n_safe-1) x n_u np.ndarray[float]
+            Initialization of the safety feed-forward control inputs
+        k_fb_0_new: n_u x n_x np.ndarray[float]
+            Initialization of the safety feed-back control inputs
+        k_ff_perf_new: (n_perf - r_1) x n_u np.ndarray[float]
+            Initialization of the performance feed-forward control inputs.
+            Not including the shared controls (if r > 1)
+        k_fb_perf_0: n_u x n_x np.ndarray[float]
+            Initialization of the safety feed-back control inputs
+
         """
        
         u_perf_0 = None
@@ -921,13 +969,9 @@ class SimpleSafeMPC:
 
                 if self.n_safe > self.r + 1:
                     k_ff_safe_new = np.vstack((k_ff_safe_new,k_ff_safe[self.r:,:]))
-                #else:
-                #    k_ff_safe_new = np.vstack((k_ff_safe_new,k_ff_safe[-1,:]))
             else:
                 u_0 = self.u_apply
                 k_ff_safe_new = np.array([])
-                
-                
                 k_fb_safe_ctrl_0 = np.array([])
             
             if self.n_perf - self.r > 0:
@@ -941,9 +985,6 @@ class SimpleSafeMPC:
             else:
                 k_ff_perf_new = np.array([])
                 k_fb_perf_0 = np.array([])
-            
-            
-
         else:
             k_fb_0 = np.empty((self.n_safe-1,self.n_s*self.n_u))
             for i in range(self.n_safe-1):
@@ -965,11 +1006,9 @@ class SimpleSafeMPC:
             k_fb_0_new = np.vstack((k_fb_0[1:,:],k_fb_0[-1,:]))#np.zeros((self.n_safe-1,self.n_s*self.n_u))
         else:
             k_fb_0_new = np.array([])
-        print(np.shape(k_fb_perf_0))
-        print("??")
                     
         return u_0, k_ff_safe_new, k_fb_0_new, k_ff_perf_new, k_fb_perf_0
-                
+
     def update_model(self, x, y, opt_hyp = False, replace_old = True, reinitialize_solver = True):
         """ Update the model of the dynamics 
         
@@ -978,7 +1017,14 @@ class SimpleSafeMPC:
         x: n x (n_s+n_u) array[float]
             The raw training input (state,action) pairs
         y: n x (n_s) array[float]
-            The raw training targets
+            The raw training targets (observations of next state)
+        opt_hyp: bool
+            True, if we want to re-optimize the GP hyperparameters
+        replace_old: bool
+            True, if we replace the current training set of the GP with x,y
+        reinitialize_solver:
+            True, if we re-initialize the solver (otherwise the MPC will not be updated with the new GP)
+
         """
         n_train = np.shape(x)[0]
         x_s = x[:,:self.n_s].reshape((n_train,self.n_s))
