@@ -12,9 +12,11 @@ import casadi as cas
 import casadi.tools as ctools
 import warnings
 
+from sklearn import cluster
 from utils import rgetattr,rsetattr
 from gp_models_utils_casadi import gp_pred_function
 from GPy.kern import RBF, Linear, Matern52
+from GPy.util.linalg import pdinv
 
 
 class SimpleGPModel():
@@ -34,7 +36,7 @@ class SimpleGPModel():
         
     """
     
-    def __init__(self,n_s_out,n_s_in,n_u,X=None,y=None,m=None,kern_types = None, hyp = None, train = False):
+    def __init__(self,n_s_out,n_s_in,n_u,X=None,y=None,m=None,kern_types = None, hyp = None, train = False, Z = None):
         """ Initialize GP Model ( possibly without training set)
         
         Parameters
@@ -43,6 +45,8 @@ class SimpleGPModel():
             y (np.ndarray[float], optional): Training targets
             m (int, optional): number of datapoints to be selected (randomly) 
                     from the training set 
+            kern_types (list[str]): a list of pre-specified covariance function types
+            Z (tuple): Inducing points 
             
         """
         self.n_s_out = n_s_out
@@ -50,13 +54,18 @@ class SimpleGPModel():
         self.n_u = n_u
         self.gp_trained = False
         self.m = m
+        self.Z = Z
         self._init_kernel_function(kern_types,hyp)
         self.do_sparse_gp = False
+
+        self.z_fixed = False
+        if not Z is None:
+            self.z_fixed = True
 
         if X is None or y is None: #initialize without training (no data available)
             train = False
         if train:
-            self.train(X,y,m)
+            self.train(X,y,m,Z =Z)
                  
     @classmethod 
     def from_dict(cls,gp_dict):
@@ -80,11 +89,12 @@ class SimpleGPModel():
             data = np.load(data_path)
             x = data["S"]
             y = data["y"]
+            data_available = True
         elif "x" in gp_dict and "y" in gp_dict:
             x = gp_dict["x"]
             y = gp_dict["y"]
+            data_available = True
         else:
-            data_available = False
             warnings.warn("""In order to be trained, GP either needs a data_path or 
             the data itself (key 'data_path' or keys 'x' and 'y') -> we just instantiate the GP class, no training""")
         
@@ -113,8 +123,12 @@ class SimpleGPModel():
         hyp = None
         if "hyp" in gp_dict:
             hyp = gp_dict["hyp"]
-            
-        return cls(n_s_out,n_s_in,n_u,x,y,m,kern_types,hyp,train)
+
+        Z = None
+        if "Z" in gp_dict:
+            Z = gp_dict["Z"]
+
+        return cls(n_s_out,n_s_in,n_u,x,y,m,kern_types,hyp,train,Z)
         
     def to_dict(self):
         """ return a dict summarizing the object """
@@ -128,7 +142,7 @@ class SimpleGPModel():
 
         return gp_dict
         
-    def train(self,X,y,m = None, opt_hyp = True):
+    def train(self,X,y,m = None, opt_hyp = True, noise_diag = 1e-5, Z = None, choose_data = True):
         """ Train a GP for each state dimension
         
         Args:
@@ -137,34 +151,29 @@ class SimpleGPModel():
         """
         n_data, _ = np.shape(X)
 
-        """
-        if self.do_sparse_gp:
-            if m is None:
-                raise ValueError("Number of inducing points m needs to be specified for sparse gp regression")
-            X_train = X
-            y_train = y
-            Z = X_train
-            y_z = y_train
-
-        else:
-        """
         X_train = X
         y_train = y
 
         if not m is None:
-            if n_data < m:
-                warnings.warn("""The desired number of datapoints is not available. Dataset consist of {}
-                       Datapoints! """.format(n_data))
-                X_train = X
-                y_train = y
-                Z = X
-                y_z = y_train
+            if self.do_sparse_gp and not Z is None:
+                pass
             else:
-                idx = np.random.choice(n_data,size=m,replace = False)
-                Z = X[idx,:]
-                y_z = y[idx,:]
-              
-                n_data = m
+                if n_data < m:
+                    warnings.warn("""The desired number of datapoints is not available. Dataset consist of {}
+                           Datapoints! """.format(n_data))
+                    X_train = X
+                    y_train = y
+                    Z = X
+                    y_z = y_train
+                else:
+
+                    if choose_data:
+                        Z,y_z = self.choose_datapoints_maxvar(X_train,y_train,self.m)
+
+                    else:
+                        idx = np.random.choice(n_data,size=m,replace = False)
+                        Z = X[idx,:]
+                        y_z = y[idx,:]
         else:
             if self.do_sparse_gp:
                 raise ValueError("Number of inducing points m needs to be specified for sparse gp regression")
@@ -172,11 +181,7 @@ class SimpleGPModel():
             Z = X_train
             y_z = y_train
 
-        if self.do_sparse_gp:
-            n_beta = np.minimum(self.m,n_data)
-        else:
-            n_beta = n_data
-
+        n_beta = np.shape(Z)[0]
         beta = np.empty((n_beta,self.n_s_out))
 
         inv_K = [None]*self.n_s_out
@@ -188,8 +193,8 @@ class SimpleGPModel():
 
             if self.do_sparse_gp:
                 y_i = y_train[:,i].reshape(-1,1)
-
                 model_gp = GPy.models.SparseGPRegression(X_train,y_i,kernel = kern, Z = Z)
+
             else:
                 y_i = y_z[:,i].reshape(-1,1)
                 model_gp = GPy.models.GPRegression(Z,y_i,kernel = kern)
@@ -197,9 +202,16 @@ class SimpleGPModel():
             if opt_hyp:
                 model_gp.optimize(max_iters = 1000,messages=True)
 
-            print(kern)
             post = model_gp.posterior
-            inv_K[i] = post.woodbury_inv
+
+            if noise_diag > 0.0:
+                inv_K[i] = pdinv(post._K+float(model_gp.Gaussian_noise.variance+noise_diag)*np.eye(n_beta))[0]
+            else:
+
+                inv_K[i] = post.woodbury_inv
+
+
+
             beta[:,i] = post.woodbury_vector.reshape(-1,)
             process_noise[i] = model_gp.Gaussian_noise.variance
             gps[i] = model_gp
@@ -207,8 +219,11 @@ class SimpleGPModel():
         # create a dictionary of kernel paramters
         self.hyp = self._create_hyp_dict(gps,self.kern_types)
         
-        #update the class attributes     
-        self.z = Z
+        #update the class attributes  
+        if self.z_fixed:   
+            self.z = self.Z
+        else:
+            self.z = Z
         self.inv_K = inv_K
         self.beta = beta
         self.gps = gps
@@ -216,8 +231,78 @@ class SimpleGPModel():
         self.x_train = X_train
         self.y_train = y_train
 
+    def choose_datapoints_maxvar(self,x,y,m,k = 10,min_ratio_k = 0.25,n_reopt_gp = 1):
+        """ Choose datapoints for the GP based on the maximum predicted variance criterion 
+
+        Parameters
+        ----------
+        x: n x (n_s + n_u) array[float]
+            The training set
+        y: n x n_s
+            The training targets
+
+        m: The number of datapoints to select
+
+        """
+        n_data = np.shape(x)[0]
+
+        if n_data <= m: ## we have less data than the subset m -> use the whole dataset
+            return x,y
+
+        if not self.gp_trained:
+            self.train(x,y,m = None)
+
         
-    def update_model(self, x, y, opt_hyp = False, replace_old = True):
+        k = np.minimum(int(n_data*min_ratio_k),k)
+
+        ## get initial set of datapoints using k-means
+        km = cluster.KMeans(n_clusters = k)
+        clust_ids = km.fit_predict(x)
+
+        sort_idx = np.argsort(clust_ids)
+        clust_ids_sorted = clust_ids[sort_idx]
+
+        unq_first = np.concatenate(([True], clust_ids_sorted[1:] != clust_ids_sorted[:-1]))
+        unq_items = clust_ids_sorted[unq_first]
+        unq_count = np.diff(np.nonzero(unq_first)[0])
+        unq_idx = np.split(sort_idx, np.cumsum(unq_count)) #list containing k arrays -> the indices of the samples in the corresponding classes
+
+        unq_per_cluster_idx = [np.random.choice(clust_idx) for clust_idx in unq_idx]    
+        idx_not_selected = np.setdiff1d(np.arange(n_data),unq_per_cluster_idx)
+
+        x_chosen = x[np.array(unq_per_cluster_idx),:]
+        y_chosen = y[np.array(unq_per_cluster_idx),:]
+
+        x_pool = x[idx_not_selected,:]
+        y_pool = y[idx_not_selected,:]
+
+        chunks = int((m-k)/(n_reopt_gp+1))
+
+        for i in range(m-k):
+            print("size x_pool: {}".format(np.shape(x_pool)[0]) )
+            print("size x_chosen: {}".format(np.shape(x_chosen)[0]) )
+
+            if i % chunks == 0:
+                self.train(x_pool,y_pool,m=None)
+
+            _ , pred_var_pool  =  self.predict(x_pool)
+            idx_max_sigma = np.argmax(np.sum(pred_var_pool,axis=1))
+
+
+            x_chosen = np.vstack((x_chosen,x_pool[None,idx_max_sigma,:]))
+            y_chosen = np.vstack((y_chosen,y_pool[None,idx_max_sigma,:]))
+
+            x_pool = np.delete(x_pool,(idx_max_sigma),axis = 0)
+            y_pool = np.delete(y_pool,(idx_max_sigma),axis = 0)
+
+            for j in range(self.n_s_out):
+                self.gps[j].set_XY(x_chosen,y_chosen[:,j,None])
+
+        return x_chosen, x_chosen
+
+
+
+    def update_model(self, x, y, opt_hyp = False, replace_old = True, noise_diag = 1e-5, choose_data = True):
         """ Update the model based on the current settings and new data 
         
         Parameters
@@ -237,7 +322,7 @@ class SimpleGPModel():
             y_new = np.vstack((self.y_train,y))
             
         if opt_hyp or not self.gp_trained:
-            self.train(x_new,y_new,self.m,opt_hyp = opt_hyp)
+            self.train(x_new,y_new,self.m,opt_hyp = opt_hyp,Z = self.Z)
         else:
             n_data = np.shape(x_new)[0]
             inv_K = [None]*self.n_s_out
@@ -254,9 +339,13 @@ class SimpleGPModel():
                     y_z = y_new
                     n_beta = n_data
                 else:
-                    idx = np.random.choice(n_data,size=self.m,replace = False)
-                    Z = x_new[idx,:]
-                    y_z = y_new[idx,:]
+                    if choose_data:
+                        Z,y_z = self.choose_datapoints_maxvar(x_new,y_new,self.m)
+
+                    else:
+                        idx = np.random.choice(n_data,size=self.m,replace = False)
+                        Z = x_new[idx,:]
+                        y_z = y_new[idx,:]
                     n_beta = self.m
             
             beta = np.empty((n_beta,self.n_s_out))
@@ -265,12 +354,18 @@ class SimpleGPModel():
             for i in range(self.n_s_out):
                 if self.do_sparse_gp:
                     self.gps[i].set_XY(x_new,y_new[:,i].reshape(-1,1))
-                    self.gps[i].set_Z(Z)
+                    if not self.z_fixed:
+                        self.gps[i].set_Z(Z)
                 else:
                     self.gps[i].set_XY(Z,y_z[:,i].reshape(-1,1))
                     
                 post = self.gps[i].posterior
-                inv_K[i] = post.woodbury_inv
+                
+                if noise_diag > 0.0:
+                    inv_K[i] = pdinv(post._K+float(self.gps[i].Gaussian_noise.variance+noise_diag)*np.eye(n_beta))[0]
+                else:
+                    inv_K[i] = post.woodbury_inv
+
                 beta[:,i] = post.woodbury_vector.reshape(-1,)
             
             self.x_train = x_new
@@ -404,7 +499,7 @@ class SimpleGPModel():
         for i in range(self.n_s_out):
             
             if quantiles is None:
-                y_mu_pred[:,i],y_sigm_pred[:,i] = self.gps[i].predict_noiseless(x_new)
+                y_mu_pred[:,None,i],y_sigm_pred[:,None,i] = self.gps[i].predict_noiseless(x_new)
             else:
                 raise NotImplementedError()
                 
@@ -418,6 +513,7 @@ class SimpleGPModel():
         """ Return a symbolic casadi function representing predictive mean/variance
         
         """
+
         out_dict = gp_pred_function(x_new,self.z,self.beta,self.hyp,self.kern_types,self.inv_K,True,compute_grads)
         mu_new = out_dict["pred_mu"]
         sigma_new = out_dict["pred_sigma"]
@@ -479,15 +575,16 @@ class SimpleGPModel():
         return S
         
     def information_gain(self,x = None):
-        """ """
+        """ Mutual information between samples and system """
         
         if x is None:
             x = self.z
             
         n_data = np.shape(x)[0]
         inf_gain_x_f = [None]*self.n_s_out
-        for i in range(self.n_s):
+        for i in range(self.n_s_out):
             noise_var_i = float(self.gps[i].Gaussian_noise.variance)
             inf_gain_x_f[i] = np.log(nLa.det(np.eye(n_data) + (1/noise_var_i)*self.gps[i].posterior._K))
         
         return inf_gain_x_f
+
