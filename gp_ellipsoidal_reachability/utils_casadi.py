@@ -9,7 +9,7 @@ admits being use by a Casadi ( symbolic ) framework.
 @author: tkoller
 """
 
-from casadi import mtimes, eig_symbolic, fmax, norm_2, horzcat,sqrt, exp, SX ,cos, sin, det,inv,vertcat,horzcat
+from casadi import mtimes, eig_symbolic, fmax, norm_2, horzcat,sqrt, exp, SX ,cos, sin, det,inv,vertcat,horzcat,trace,diag
 from casadi import reshape as cas_reshape
 import numpy as np
 
@@ -357,7 +357,7 @@ def loss_sat(m,v,z,W = None):
 
     return 1+L
 
-def loss_quadratic(m,v,z,W = None):
+def loss_quadratic(m,z,v = None, W = None):
     """ Quadratic cost function 
 
     Simple quadratic loss with W as weight matrix, ignoring variance
@@ -383,4 +383,8 @@ def loss_quadratic(m,v,z,W = None):
     if W is None:
         W = SX.eye(D)
 
-    return mtimes((m-z).T,mtimes(W,m-z))
+    l_var = 0
+    if not v is None:
+        l_var = trace(mtimes(W,v))
+
+    return mtimes((m-z).T,mtimes(W,m-z)) + l_var
