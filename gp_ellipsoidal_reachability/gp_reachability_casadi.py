@@ -79,7 +79,7 @@ def onestep_reachability(p_center,gp,k_ff,l_mu,l_sigma,
         rkhs_bound = c_safety*sqrt(pred_var.T)
         q_1 = ellipsoid_from_rectangle(rkhs_bound)
 
-        return p_1, q_1
+        return p_1, q_1, pred_var
     else: # the state is a (ellipsoid) set
 
         ## compute the linearization centers
@@ -119,7 +119,8 @@ def onestep_reachability(p_center,gp,k_ff,l_mu,l_sigma,
         
         p_1 , q_1 = sum_two_ellipsoids(p_sum_lagrange,Q_sum_lagrange,p_0,Q_0)      
         
-        return p_1,q_1
+        return p_1, q_1, sigm_0
+
         
 def multi_step_reachability(p_0,u_0,k_fb_0,k_fb_ctrl,k_ff,gp,l_mu,l_sigm,c_safety = 1.,a=None,b=None,t_z_gp = None):
     """ Generate trajectory of reachset by iteratively computing the one-step reachability
@@ -158,10 +159,11 @@ def multi_step_reachability(p_0,u_0,k_fb_0,k_fb_ctrl,k_ff,gp,l_mu,l_sigm,c_safet
     n_u,n_s = np.shape(k_fb_ctrl)
     n_fb = np.shape(k_fb_0)[0]
     
-    p_new, q_new = onestep_reachability(p_0,gp,u_0,l_mu,l_sigm,None,None,c_safety,a,b,t_z_gp)
+    p_new, q_new, gp_pred_sigma = onestep_reachability(p_0,gp,u_0,l_mu,l_sigm,None,None,c_safety,a,b,t_z_gp)
         
     p_all = p_new.T
     q_all = q_new.reshape((1,n_s*n_s))
+    gp_pred_sigma_all = gp_pred_sigma
     
     for i in range(n_fb):
         p_old = p_new
@@ -169,12 +171,14 @@ def multi_step_reachability(p_0,u_0,k_fb_0,k_fb_ctrl,k_ff,gp,l_mu,l_sigm,c_safet
         k_ff_i = k_ff[i,:].reshape((n_u,1))
         k_fb_i = (k_fb_0[i] + k_fb_ctrl).reshape((n_u,n_s))
         
-        p_new, q_new = onestep_reachability(p_old,gp,k_ff_i,l_mu,l_sigm,q_old,k_fb_i,c_safety,a,b,t_z_gp) 
+        p_new, q_new, gp_pred_sigma = onestep_reachability(p_old,gp,k_ff_i,l_mu,l_sigm,q_old,k_fb_i,c_safety,a,b,t_z_gp) 
         
         p_all = vertcat(p_all,p_new.T)
         q_all = vertcat(q_all,q_new.reshape((1,n_s*n_s)))
+        gp_pred_sigma_all = vertcat(gp_pred_sigma_all,gp_pred_sigma)
     
-    return p_all,q_all
+    return p_all,q_all, gp_pred_sigma_all
+
         
 def lin_ellipsoid_safety_distance(p_center,q_shape,h_mat,h_vec,c_safety = 1.0):
     """ Compute symbolically the distance between eLlipsoid and polytope in casadi
