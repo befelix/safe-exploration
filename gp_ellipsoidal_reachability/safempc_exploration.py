@@ -15,7 +15,7 @@ from casadi import reshape as cas_reshape
 from gp_reachability_casadi import multi_step_reachability as cas_multistep
 from gp_reachability_casadi import onestep_reachability, lin_ellipsoid_safety_distance, objective
 
-class StaticMPCExplorationOracle:
+class StaticSafeMPCExploration:
     """ Oracle which finds informative samples
     similar with safety constraint and MPC setting.
     
@@ -310,7 +310,7 @@ class StaticMPCExplorationOracle:
         return np.all(g > lbg - feas_tol  ) and np.all(g < ubg + feas_tol )
             
             
-class DynamicMPCExplorationOracle:
+class DynamicSafeMPCExploration:
     """ """
     
     

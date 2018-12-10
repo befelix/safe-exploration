@@ -20,27 +20,48 @@ ATTR_NAMES_ENV = ['h_mat_safe','h_safe','lin_model','ctrl_bounds','h_mat_obs','h
 DEFAULT_OPT_ENV = {'ctrl_bounds': None,'safe_policy' : None, 'lin_model' : None, 'h_mat_obs' : None, 'h_obs':None}
 
 class CautiousMPC:
-    """ Implementation of the Cautious MPC Algorithm 
+    """ Approximate implementation of the Cautious MPC algorithm  
+
+    Implementation similar to the "Cautious Model Predictive Control using Gaussian Process Regression" https://arxiv.org/abs/1705.10702
+    paper with approximate uncertainty propagation under state-feedback control laws and chance constraints.
+
+    Attributes
+    ----------
+    T: int
+        The MPC horizon (number of timesteps in trajectroy planning) 
+    gp: SimpleGPModel
+        The Gaussian Process statistical model
+    env_options: dict
+        Dictionary containing the environment setting (see ?? for details)
+    beta_safety: float
+        The safety coefficient that influences the cautiousness of the constraints (see discussion on constraints in https://arxiv.org/abs/1705.10702) 
+    rhc: Bool
+        True, if we warmstart the NLP in receding horizon MPC style or just initialize with default values 
+    lin_model:
+        The linear prior model 
+    lin_trafo_gp_input:
+        A linear transformation of the GP input. Possible application: E.g. to turn off a particular dimension that is invariant (e.g. cart position in cart pole system)  
+    perf_trajectory: SX.Function
+        The uncertainty propagation technique. E.g. Taylor approximation of the GP posterior under uncertaint inputs ( see https://arxiv.org/abs/1705.10702 for an overview )
 
     """
 
     def __init__(self, T, gp, env_options, beta_safety, rhc = True,lin_model = None,lin_trafo_gp_input = None, perf_trajectory = mean_equivalent_multistep ,k_fb = None):
-        """
+        """ 
+
     
         """
         self.T = T
         self.gp = gp
-        self.beta_safety = beta_safety
         self.n_s = gp.n_s_out
         self.n_u = gp.n_u
         self.n_fail = T-1
-
+        self.beta_safety = beta_safety
         self.perf_trajectory = perf_trajectory
 
         self.cost_func = None
         self.lin_prior = False
 
-        print(env_options)
         self._set_attributes_from_dict(ATTR_NAMES_ENV,DEFAULT_OPT_ENV,env_options)
 
         self.lin_trafo_gp_input = lin_trafo_gp_input
@@ -56,7 +77,7 @@ class CautiousMPC:
         self.m_obs = m_obs_mat
         
         self.has_ctrl_bounds = False        
-        print(self.ctrl_bounds)
+
         if not self.ctrl_bounds is None:
             self.has_ctrl_bounds = True
             assert np.shape(self.ctrl_bounds) == (self.n_u,2), """control bounds need 
@@ -83,8 +104,6 @@ class CautiousMPC:
             k_lqr,_,_ = dlqr(a,b,q,r)
             self.k_fb = -k_lqr
 
-
-
     def _set_attributes_from_dict(self, attrib_names, default_attribs = {}, custom_attrib = {} ):
         """ Set Attributes from a dictionary of attribute/value pairs"""
 
@@ -105,7 +124,7 @@ class CautiousMPC:
         -----------
         cost_func: Function
             A function which admits casadi.SX type inputs
-            and returns a scalar function
+            and returns a scalar
             If performance controls exist function has to be of the form:
                 cost_func(p_all,k_ff_all,x_perf,u_perf)
             otherwise:
@@ -156,9 +175,16 @@ class CautiousMPC:
 
     def get_action(self, x0_mu):
         """ Wrapper around the solve Function
+        
+        Parameters
+        ----------
+        x0_mu: n_x x 0 np.array[float]
+            The current state of the system
 
-        Returns:
-        u_apply: 
+        Returns
+        -------
+        u_apply: n_ux0 np.array[float]
+            The action to be applied to the system
         exit_code: int
             An exit code that indicates what kind of action is applied. The following values 
             are possible:
@@ -191,7 +217,7 @@ class CautiousMPC:
 
         return self._get_solution(sol,crash,x0_mu,k_fb_0)
 
-    def _get_solution(self, sol, crash ,p_0, k_fb_0):
+    def _get_solution(self, sol, crash ,p_0, k_fb_0, feas_tol = 1e-6):
         if crash: 
             self.n_fail += 1
             exit_code = 2
@@ -204,28 +230,12 @@ class CautiousMPC:
 
         mu_all, sigma_all,sigma_g = self.f_multistep_eval(p_0,k_ff,k_fb_0)
 
-        print(p_0)
-        print(k_ff)
-        print(k_fb_0)
-        print("Trajectory:")
-        print(mu_all)
-        print(sigma_all)
-        print("last sigma_g")
-        print(sigma_g)
-        ## Evaluate the constraints
-        warnings.warn("Currently we are evaluatin the constraints the 'simple way'!")
-
-        feasible = True
+        ## Evaluate the constraints        
         g_res = sol["g"]
-        print(g_res)
-        print(self.g_name)
-        print(self.ubg)
-        print(self.lbg)
-        feas_tol = 1e-6
+        feasible = True
         if np.any(np.array(self.lbg) - feas_tol > g_res ) or np.any(np.array(self.ubg) + feas_tol < g_res ):      
                 feasible = False
 
-        #feasible = self.eval_safety_constraints(mu_all,sigma_all)
         if feasible:
             self.k_ff_old = k_ff
             exit_code = 0
@@ -236,11 +246,27 @@ class CautiousMPC:
             self.n_fail += 1
             return self._get_old_solution(p_0)
 
-    def _get_old_solution(self,p_0):
-        """
+    def _get_old_solution(self,x0_mu):
+        """ Get previous solution in case of infeasibility
 
-        """
+        In case of infeasibility, reuse shifted previous feasible solution or fall back to
+        the feedback control without feed-forward
 
+        Parameters
+        ----------
+        x0_mu: n_x x 0 np.array[float]
+            The current state of the system 
+
+        Returns
+        -------
+        u_apply: n_ux0 np.array[float]
+            The action to be applied to the system
+        exit_code: int
+            An exit code that indicates what kind of action is applied. The following values 
+            are possible in this mode:
+                1: Optimization failed to find feasible solution. Old solution applied.
+                3: No old feasible solution found, apply k_fb
+        """
         if self.n_fail < self.T:
             u_apply = self.k_ff_old[self.n_fail,:]
             exit_code = 1
@@ -250,9 +276,12 @@ class CautiousMPC:
 
         return u_apply.reshape(self.n_u,), exit_code
 
-
     def _get_init_controls(self):
-        """
+        """ Initialize the NLP in RHC style or with zeros
+
+        In case of infeasibility of the previous NLP, use
+        a zero initialization, otherwise shift the previous controls
+        in RHC style
 
         """
         if self.n_fail == 0:
@@ -263,15 +292,6 @@ class CautiousMPC:
         k_fb_0 = self.k_fb
 
         return k_ff_0, k_fb_0
-
-
-    def eval_safety_constraints(mu_all,sigma_all,k_ff,k_fb):
-        """
-
-        """
-
-        raise NotImplementedError("Evaluation of safety constraints not implemented")
-
 
     def generate_safety_constraints(self, p_all, q_all, u_0, k_fb, k_ff):
         """ Generate all safety constraints
@@ -322,20 +342,11 @@ class CautiousMPC:
             for i in range(H):
                 p_i = p_all[i,:].T
                 q_i = q_all[i,:].reshape((self.n_s,self.n_s))
-                g_state = lin_ellipsoid_safety_distance(p_i,q_i,self.h_mat_obs,self.h_obs)
+                g_state = lin_ellipsoid_safety_distance(p_i,q_i,self.h_mat_obs,self.h_obs,c_safety = self.beta_safety)
                 g = vertcat(g,g_state)
                 lbg += [-cas.inf]*self.m_obs
                 ubg += [0]*self.m_obs
                 g_name += ["obstacle_avoidance_constraint{}".format(i)]*self.m_obs
-            
-        # terminal state constraint
-        #p_T = p_all[-1,:].T
-        #q_T = q_all[-1,:].reshape((self.n_s,self.n_s))
-        #g_terminal = lin_ellipsoid_safety_distance(p_T,q_T,self.h_mat_safe,self.h_safe)
-        #g = vertcat(g,g_terminal)
-        #g_name += ["terminal constraint"]*self.m_safe
-        #lbg += [-cas.inf]*self.m_safe
-        #ubg += [0]*self.m_safe
         
         return g,lbg,ubg,g_name
 
@@ -381,7 +392,7 @@ class CautiousMPC:
         p_u = k_ff
         q_u = mtimes(k_fb,mtimes(q,k_fb.T))
         
-        g = lin_ellipsoid_safety_distance(p_u,q_u,h_mat,h_vec)
+        g = lin_ellipsoid_safety_distance(p_u,q_u,h_mat,h_vec,c_safety = self.beta_safety)
         
         return g, [-cas.inf]*2*n_u, [0]*2*n_u
 
@@ -395,6 +406,14 @@ class CautiousMPC:
             The raw training input (state,action) pairs
         y: n x (n_s) array[float]
             The raw training targets
+        opt_hyp: Bool
+            True, if the hyperparemeters should be re-optimized
+        replace_old: Bool
+            True, if old samples should be replaced. Basically, set to True
+            if x,y is the whole dataset and to False if it is just additional samples
+        reinitialize_solver:
+            True, if you want to reinitialize the solver with the updated GP. This is necessary
+            to incorporate the new GP into the optimizer. It rarely makes sense to set this to False
         """
         n_train = np.shape(x)[0]
         x_s = x[:,:self.n_s].reshape((n_train,self.n_s))
