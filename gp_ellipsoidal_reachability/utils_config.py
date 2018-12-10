@@ -5,7 +5,6 @@ Created on Tue Nov 21 09:44:58 2017
 @author: tkoller
 """
 from gp_models import SimpleGPModel
-from safempc import SafeMPC
 from safempc_simple import SimpleSafeMPC
 from cautious_mpc import CautiousMPC
 from environments import InvertedPendulum, CartPole
