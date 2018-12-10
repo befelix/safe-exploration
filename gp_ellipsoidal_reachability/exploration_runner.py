@@ -5,11 +5,11 @@ Created on Tue Nov 21 09:37:59 2017
 @author: tkoller
 """
 
-from exploration_oracle import StaticMPCExplorationOracle, DynamicMPCExplorationOracle
+from safempc_exploration import StaticSafeMPCExploration, DynamicSafeMPCExploration
 from casadi import *
 from gp_reachability import verify_trajectory_safety, trajectory_inside_ellipsoid
 from matplotlib.cm import viridis
-from utils import sample_inside_polytope
+from utils import generate_initial_samples
 from utils_config import create_env, create_solver
 
 import numpy as np
@@ -17,15 +17,36 @@ import matplotlib.pyplot as plt
 import warnings
 
 
-def run_exploration(conf,  
-        static_exploration = True, 
-        n_iterations = 50, 
-        n_restarts_optimizer = 20,
-        visualize = False,
-        save_path = None,
-        verify_safety = True,
-        n_experiments = 1):          
-    """ """
+def run_exploration(conf):          
+    """ Runs exploration algorithm for static and dynamic exploration 
+    
+    Implementation of the exploration experiments, where we learn about the underlying system as 
+    quickly as possible. As in the paper, we consider two settings:
+        1. Static Exploration:
+            Here, we try to find in each iteration the most informative state,action pair in the state space that 
+            is part of a feasible return trajectory to the safe set. Hence the gathered samples are not part of a trajectory,
+            but we reset the system to a different state every time step
+        2. Dynamic Exploration:
+            We run the system over "n_iterations" time steps without resetting it and we want to execute the most 
+            "informative" trajectory on the system. Hence, we do not reset the system.
+            In this setting we can decide to use an additional performance trajectory by setting "n_perf > 0" in the config
+            (again, see the paper for details)
+
+    Parameters
+    ----------
+    conf: Config
+        The Config class for the exploration setting (see DefaultConfigExploration for details)
+
+    """
+
+    ## Get configs (see DefaultConfigExploration for Details)
+    static_exploration = conf.static_exploration
+    n_iterations = conf.n_iterations
+    n_restarts_optimizer = conf.n_restarts_optimizer
+    visualize = conf.visualize
+    save_path = conf.save_path
+    verify_safety = conf.verify_safety
+    n_experiments = conf.n_experiments
 
     l_inf_gain =[]
     l_sigm_sum = []
@@ -43,16 +64,17 @@ def run_exploration(conf,
         safempc.update_model(X,y,opt_hyp = conf.train_gp,reinitialize_solver = False)
 
         if static_exploration:
-            exploration_module = StaticMPCExplorationOracle(safempc,env)
+            exploration_module = StaticSafeMPCExploration(safempc,env)
             
             if verify_safety:
                 warnings.warn("Safety_verification not possible in static mode")
                 verify_safety = False
         else:
-            exploration_module = DynamicMPCExplorationOracle(safempc,env)
+            exploration_module = DynamicSafeMPCExploration(safempc,env)
             
+        ## Initialize some logging variables
         inf_gain = np.empty((n_iterations,env.n_s))
-        sigm_sum = np.empty((n_iterations,1)) #the sum of the confidence intervals
+        sigm_sum = np.empty((n_iterations,1)) #the sum of the confidence intervals per dimension
         sigm = np.empty((n_iterations,env.n_s)) #the individual confidence intervals
         z_all = np.empty((n_iterations,env.n_s+env.n_u))
         x_next_obs_all = np.empty((n_iterations,env.n_s))
@@ -82,8 +104,8 @@ def run_exploration(conf,
             safety_all = np.zeros((n_iterations,),dtype = np.bool)
             inside_ellipsoid = np.zeros((n_iterations,safempc.n_safe))
         
-        if static_exploration:
-            x_i = None
+        if static_exploration: 
+            x_i = None # in static setting we optimize over x_i
         else:
             x_i = env.reset(env.p_origin)
             
@@ -121,8 +143,7 @@ def run_exploration(conf,
                     plt.show(block=False)
                     plt.pause(0.25)
                 
-            ## Apply to system and observe next state 
-            
+            ## Apply to system and observe next state  
             #only reset the system to a different state in static mode
             if static_exploration:
                 x_next,x_next_obs = env.simulate_onestep(x_i.squeeze(),u_i.squeeze())
@@ -162,83 +183,6 @@ def run_exploration(conf,
             results_dict = save_results(save_path,l_sigm_sum,l_sigm,l_inf_gain,l_z_all, \
                                         l_x_next_obs_all,l_x_next_pred,x_next_prior, \
                                         safempc.gp,safety_all,x_train_init)
-
-
-def generate_initial_samples(env,conf,relative_dynamics,solver,safe_policy):
-
-    std = conf.init_std_initial_data 
-    mean = conf.init_m_initial_data
-
-    if conf.init_mode == "random_rollouts":
-        
-
-        X,y,_,_ = do_rollout(env, conf.n_steps_init,plot_trajectory=conf.plot_trajectory,render = conf.render,mean = mean, std = std)
-        for i in range(1,conf.n_rollouts_init):
-            xx,yy, _,_ = do_rollout(env, conf.n_steps_init,plot_trajectory=conf.plot_trajectory,render = conf.render)
-            X = np.vstack((X,xx))
-            y = np.vstack((y,yy))
-
-    elif conf.init_mode == "safe_samples":
-
-        n_samples = conf.n_safe_samples
-        n_max = conf.c_max_probing_init*n_samples
-        n_max_next_state = conf.c_max_probing_next_state *n_samples 
-
-        states_probing = env._sample_start_state(n_samples = n_max,mean= mean,std= std).T
-
-
-        h_mat_safe, h_safe,_,_ = env.get_safety_constraints(normalize = True)
-
-        bool_mask_inside = np.argwhere(sample_inside_polytope(states_probing,solver.h_mat_safe,solver.h_safe))
-        states_probing_inside = states_probing[bool_mask_inside,:]
-
-        n_inside_first = np.shape(states_probing_inside)[0]
-
-        i = 0
-        cont = True
-
-        X = np.zeros((1,env.n_s+env.n_u))
-        y = np.zeros((1,env.n_s))
-
-        n_success = 0
-        while cont:
-            state = states_probing_inside[i,:]
-            action = safe_policy(state.T)
-            next_state, next_observation = env.simulate_onestep(state.squeeze(),action)
-
-            
-
-            if sample_inside_polytope(next_state[None,:],h_mat_safe,h_safe):
-                state_action = np.hstack((state.squeeze(),action.squeeze()))
-                X = np.vstack((X,state_action))
-                if relative_dynamics:
-                    y = np.vstack((y,next_observation - state))
-                    
-                else:
-                    y = np.vstack((y,next_observation))
-                n_success += 1
-
-            i += 1
-
-            if i >= n_inside_first  or n_success >= n_samples:
-                cont = False
-
-
-
-        if conf.verbose > 1:
-            print("==== Safety controller evaluation ====")
-            print("Ratio sample / inside safe set: {} / {}".format(n_inside_first,n_max))
-            print("Ratio next state inside safe set / intial state in safe set: {} / {}".format(n_success,i))
-
-        X = X[1:,:]
-        y = y[1:,:]
-
-        return X,y
-
-    else:
-        raise NotImplementedError("Unknown option initialization mode: {}".format(conf.init_mode))
-
-    return X,y
 
 
 def save_results(save_path,sigm_sum,sigm,inf_gain,z_all,x_next_obs_all,x_next_pred,x_next_prior,gp,x_train_0,safety_all = None):
