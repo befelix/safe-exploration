@@ -47,8 +47,9 @@ def sample_inside_polytope(x,a,b):
     
     """
     k,_ = x.shape
+
     c = np.dot(a,x.T) - repmat(b,1,k)
-    
+
     return np.all(c < 0, axis = 0).squeeze()
     
 def feedback_ctrl(x,k_ff,k_fb = None,p=None):
@@ -311,3 +312,107 @@ def rgetattr(obj, attr, default=sentinel):
         def _getattr(obj, name):
             return getattr(obj, name, default)
     return functools.reduce(_getattr, [obj]+attr.split('.'))
+
+
+def generate_initial_samples(env,conf,relative_dynamics,solver,safe_policy):
+    """ Generate initial samples from the system 
+
+    Generate samples with two different modes:
+        Random rollouts - Rollout the system with a random control policy
+        Safe samples - Generate samples x_t,u_t,x_{t+1} where we use u_t = \pi_{safe}(x_t) and we only 
+                       use samples where x_t, x_{t+1} \in X_{safe}
+
+    Parameters
+    ----------
+    env: Environment
+        The environment we are considering
+    conf: Config
+        Config class
+    relative_dynamics: Bool
+        True, if we want observations y_t = x_{t+1] - x_t
+    solver: SimpleSafeMPC or CautiousMPC
+        The MPC solver
+    safe_policy: function
+        The initial safe policy \pi_{safe}
+
+    Returns
+    -------
+    X: n_obs x (n_s+n_u) np.ndarray[float]
+        The state - action pairs of the observations
+    y: n_obs x n_s np.ndarray[float]
+        The observed next_states
+
+    """
+    std = conf.init_std_initial_data 
+    mean = conf.init_m_initial_data
+
+    if conf.init_mode == "random_rollouts":
+        
+        X,y,_,_ = do_rollout(env, conf.n_steps_init,plot_trajectory=conf.plot_trajectory,render = conf.render,mean = mean, std = std)
+        for i in range(1,conf.n_rollouts_init):
+            xx,yy, _,_ = do_rollout(env, conf.n_steps_init,plot_trajectory=conf.plot_trajectory,render = conf.render)
+            X = np.vstack((X,xx))
+            y = np.vstack((y,yy))
+
+    elif conf.init_mode == "safe_samples":
+
+        n_samples = conf.n_safe_samples
+        n_max = conf.c_max_probing_init*n_samples
+        n_max_next_state = conf.c_max_probing_next_state *n_samples 
+
+        states_probing = env._sample_start_state(n_samples = n_max,mean= mean,std= std).T
+
+
+        h_mat_safe, h_safe,_,_ = env.get_safety_constraints(normalize = True)
+
+        bool_mask_inside = np.argwhere(sample_inside_polytope(states_probing,solver.h_mat_safe,solver.h_safe))
+        states_probing_inside = states_probing[bool_mask_inside,:]
+
+        n_inside_first = np.shape(states_probing_inside)[0]
+
+        i = 0
+        cont = True
+
+        X = np.zeros((1,env.n_s+env.n_u))
+        y = np.zeros((1,env.n_s))
+
+        n_success = 0
+        while cont:
+            state = states_probing_inside[i,:]
+            action = safe_policy(state.T)
+            next_state, next_observation = env.simulate_onestep(state.squeeze(),action)
+
+            
+
+            if sample_inside_polytope(next_state[None,:],h_mat_safe,h_safe):
+                state_action = np.hstack((state.squeeze(),action.squeeze()))
+                X = np.vstack((X,state_action))
+                if relative_dynamics:
+                    y = np.vstack((y,next_observation - state))
+                    
+                else:
+                    y = np.vstack((y,next_observation))
+                n_success += 1
+
+            i += 1
+
+            if i >= n_inside_first  or n_success >= n_samples:
+                cont = False
+
+
+
+        if conf.verbose > 1:
+            print("==== Safety controller evaluation ====")
+            print("Ratio sample / inside safe set: {} / {}".format(n_inside_first,n_max))
+            print("Ratio next state inside safe set / intial state in safe set: {} / {}".format(n_success,i))
+
+        X = X[1:,:]
+        y = y[1:,:]
+
+        return X,y
+
+    else:
+        raise NotImplementedError("Unknown option initialization mode: {}".format(conf.init_mode))
+
+    return X,y
+    
