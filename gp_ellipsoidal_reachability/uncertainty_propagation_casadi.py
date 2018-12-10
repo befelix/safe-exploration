@@ -56,7 +56,7 @@ def one_step_taylor(mu_x,gp, k_ff, sigma_x = None, k_fb = None, a = None, b = No
         mu_new = lin_prior + pred_mu.T
 
 
-        return mu_new, diag(pred_var)
+        return mu_new, diag(pred_var), pred_var
 
 
     mu_g, sigma_g, jac_mu = gp.predict_casadi_symbolic(z_bar.T,True)
@@ -91,7 +91,7 @@ def one_step_taylor(mu_x,gp, k_ff, sigma_x = None, k_fb = None, a = None, b = No
 
     sigma_new = mtimes(lin_trafo_mat,mtimes(sigma_all,lin_trafo_mat.T))
 
-    return mu_new , sigma_new
+    return mu_new , sigma_new, sigma_g
 
 
 def multi_step_taylor_symbolic(mu_0, gp, k_ff, k_fb , sigma_0 = None, a = None, b = None, a_gp_inp_x = None):
@@ -132,22 +132,24 @@ def multi_step_taylor_symbolic(mu_0, gp, k_ff, k_fb , sigma_0 = None, a = None, 
     n_s = np.shape(mu_0)[0]
     T, n_u = np.shape(k_ff)
 
-    mu_new, sigma_new = one_step_taylor(mu_0,gp,k_ff[0,:].reshape((n_u,1)),None,None,a,b,a_gp_inp_x)
+    mu_new, sigma_new, gp_sigma_pred = one_step_taylor(mu_0,gp,k_ff[0,:].reshape((n_u,1)),None,None,a,b,a_gp_inp_x)
     mu_all = mu_new.T
     sigma_all = sigma_new.reshape((1,n_s*n_s))
+    gp_sigma_pred_all = gp_sigma_pred
 
     for i in range(T-1):
         mu_old = mu_new
         sigma_old = sigma_new
         k_ff_i = k_ff[i+1,:].reshape((n_u,1))
 
-        mu_new, sigma_new = one_step_taylor(mu_old,gp,k_ff_i,sigma_old,k_fb[i],a,b,a_gp_inp_x)
-
+        mu_new, sigma_new, gp_sigma_pred = one_step_taylor(mu_old,gp,k_ff_i,sigma_old,k_fb[i],a,b,a_gp_inp_x)
 
         mu_all = vertcat(mu_all,mu_new.T)
         sigma_all = vertcat(sigma_all,sigma_new.reshape((1,n_s*n_s)))
+        gp_sigma_pred_all = vertcat(gp_sigma_pred_all,gp_sigma_pred)
 
-    return mu_all, sigma_all 
+
+    return mu_all, sigma_all, gp_sigma_pred_all 
     
 
 def mean_equivalent_multistep(mu_0,gp,k_ff, k_fb,sigma_0 = None, a=None,b=None,a_gp_inp_x = None):
@@ -184,21 +186,22 @@ def mean_equivalent_multistep(mu_0,gp,k_ff, k_fb,sigma_0 = None, a=None,b=None,a
     n_s = np.shape(mu_0)[0]
     T, n_u = np.shape(k_ff)
 
-    mu_new, sigma_new = one_step_mean_equivalent(mu_0,gp,k_ff[0,:].reshape((n_u,1)),None,None,a,b,a_gp_inp_x)
+    mu_new, sigma_new, gp_sigma_pred = one_step_mean_equivalent(mu_0,gp,k_ff[0,:].reshape((n_u,1)),None,None,a,b,a_gp_inp_x)
     mu_all = mu_new.T
     sigma_all = sigma_new.reshape((1,n_s*n_s))
-
+    gp_sigma_pred_all = gp_sigma_pred
     for i in range(T-1):
         mu_old = mu_new
         sigma_old = sigma_new
         k_ff_i = k_ff[i+1,:].reshape((n_u,1))
 
-        mu_new, sigma_new = one_step_mean_equivalent(mu_old,gp,k_ff_i,sigma_old,k_fb[i],a,b,a_gp_inp_x)
+        mu_new, sigma_new, gp_sigma_pred = one_step_mean_equivalent(mu_old,gp,k_ff_i,sigma_old,k_fb[i],a,b,a_gp_inp_x)
 
         mu_all = vertcat(mu_all,mu_new.T)
         sigma_all = vertcat(sigma_all,sigma_new.reshape((1,n_s*n_s)))
+        gp_sigma_pred_all = vertcat(gp_sigma_pred_all,gp_sigma_pred)
 
-    return mu_all, sigma_all, sigma_new 
+    return mu_all, sigma_all, gp_sigma_pred_all 
     
 
 def one_step_mean_equivalent(mu_x,gp, k_ff, sigma_x = None, k_fb = None, a = None, b = None, a_gp_inp_x = None):
@@ -242,7 +245,7 @@ def one_step_mean_equivalent(mu_x,gp, k_ff, sigma_x = None, k_fb = None, a = Non
         mu_new = lin_prior + pred_mu.T
 
 
-        return mu_new, diag(pred_var)
+        return mu_new, diag(pred_var), pred_var
 
 
     mu_g, sigma_g  = gp.predict_casadi_symbolic(z_bar.T,False)
@@ -275,4 +278,4 @@ def one_step_mean_equivalent(mu_x,gp, k_ff, sigma_x = None, k_fb = None, a = Non
 
     sigma_new = mtimes(lin_trafo_mat,mtimes(sigma_all,lin_trafo_mat.T))
 
-    return mu_new , sigma_new
+    return mu_new , sigma_new, sigma_g
