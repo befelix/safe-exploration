@@ -4,55 +4,56 @@ Created on Tue Nov 21 09:44:58 2017
 
 @author: tkoller
 """
-
 from gp_models import SimpleGPModel
 from safempc import SafeMPC
+from safempc_simple import SimpleSafeMPC
+from cautious_mpc import CautiousMPC
 from environments import InvertedPendulum, CartPole
-from os.path import abspath, join, exists, dirname, basename, realpath
+from os.path import abspath, join, exists, dirname, basename, realpath, split
 from importlib import import_module
 from os import mkdir
 from utils import dlqr
-
+import warnings
 import numpy as np 
+import sys
 
 def create_solver(conf, env, model_options = None):
     """ Create a solver from a set of options and environment information"""
-    
-    n_safe = conf.n_safe
-    n_perf = conf.n_perf
-    l_mu = env.l_mu
-    l_sigm = env.l_sigm
-    wx_cost = conf.lqr_wx_cost
-    wu_cost = conf.lqr_wu_cost
+
     lin_model = None
+    lin_trafo_gp_input = conf.lin_trafo_gp_input
 
     h_mat_safe, h_safe, h_mat_obs, h_obs = env.get_safety_constraints(normalize = True) 
+
+    warnings.warn("Normalization of constraints may be wrong!")
+
     a_true,b_true = env.linearize_discretize()
     
     safe_policy = None
     if conf.lin_prior:
-        
         a_prior, b_prior = get_prior_model_from_conf(conf,env)
         lin_model = (a_prior,b_prior)
         #by default takes identity as prior. Need to define safe_policy
+    wx_cost = conf.lqr_wx_cost
+    wu_cost = conf.lqr_wu_cost
+
     q= wx_cost
     r= wu_cost
     k_lqr,_,_ = dlqr(a_true,b_true,q,r)
     k_fb = -k_lqr
     safe_policy = lambda x: np.dot(k_fb,x) 
-    
+
     if model_options is None:
-        gp = SimpleGPModel(env.n_s,env.n_u,kern_types = conf.kern_types)
+        gp = SimpleGPModel(conf.gp_ns_out,conf.gp_ns_in,env.n_u,m = conf.m,kern_types = conf.kern_types,Z = conf.Z)
     else:
         gp = SimpleGPModel.from_dict(model_options)
     
     dt = env.dt
     ctrl_bounds = np.hstack((np.reshape(env.u_min,(-1,1)),np.reshape(env.u_max,(-1,1))))
 
-    # the environment options needed for the safempc algorithm
+    
     env_opts_safempc = dict()
-    env_opts_safempc["l_mu"] = env.l_mu
-    env_opts_safempc["l_sigma"] = env.l_sigm   
+
     env_opts_safempc["h_mat_safe"] = h_mat_safe
     env_opts_safempc["h_safe"] = h_safe
     env_opts_safempc["lin_model"] = lin_model
@@ -61,19 +62,42 @@ def create_solver(conf, env, model_options = None):
     env_opts_safempc["h_mat_obs"] = h_mat_obs
     env_opts_safempc["h_obs"] = h_obs
     env_opts_safempc["dt"] = env.dt
+    env_opts_safempc["lin_trafo_gp_input"] = lin_trafo_gp_input
 
-    perf_opts_safempc = dict()
-    perf_opts_safempc["type_perf_traj"] = conf.type_perf_traj
-    perf_opts_safempc["n_perf"] = conf.n_perf
-    perf_opts_safempc["r"] = conf.r
-    perf_opts_safempc["perf_has_fb"] = conf.perf_has_fb
+    if conf.solver_type == "safempc":
+        # the environment options needed for the safempc algorithm
+        n_safe = conf.n_safe
+        n_perf = conf.n_perf
+        l_mu = env.l_mu
+        l_sigm = env.l_sigm
+
+        
+        env_opts_safempc["l_mu"] = env.l_mu
+        env_opts_safempc["l_sigma"] = env.l_sigm   
+
+        perf_opts_safempc = dict()
+        perf_opts_safempc["type_perf_traj"] = conf.type_perf_traj
+        perf_opts_safempc["n_perf"] = conf.n_perf
+        perf_opts_safempc["r"] = conf.r
+        perf_opts_safempc["perf_has_fb"] = conf.perf_has_fb
+
+        solver = SimpleSafeMPC(n_safe, gp, env_opts_safempc, wx_cost, wu_cost,beta_safety = conf.beta_safety, lin_model = lin_model, ctrl_bounds = ctrl_bounds,
+                 safe_policy = safe_policy, opt_perf_trajectory = perf_opts_safempc,lin_trafo_gp_input = lin_trafo_gp_input)
+    elif conf.solver_type == "cautious_mpc":
+        T = conf.T
+
+        solver = CautiousMPC(T,gp,env_opts_safempc,conf.beta_safety,lin_trafo_gp_input = lin_trafo_gp_input,k_fb = k_fb)
+    else:
+        raise ValueError("Unknown solver type: {}".format(conf.solver_type))
 
 
-    mpc_control = SafeMPC(n_safe, gp, env_opts_safempc, wx_cost, wu_cost,beta_safety = conf.beta_safety,
-                 ilqr_init = conf.ilqr_init, lin_model = lin_model, ctrl_bounds = ctrl_bounds,
-                 safe_policy = safe_policy, opt_perf_trajectory = perf_opts_safempc)
+
+    #mpc_control = SafeMPC(n_safe, gp, env_opts_safempc, wx_cost, wu_cost,beta_safety = conf.beta_safety,
+    #             ilqr_init = conf.ilqr_init, lin_model = lin_model, ctrl_bounds = ctrl_bounds,
+    #             safe_policy = safe_policy, opt_perf_trajectory = perf_opts_safempc,lin_trafo_gp_input = lin_trafo_gp_input)
     
-    return mpc_control
+    
+    return solver, safe_policy
     
     
 def create_env(env_name,env_options_dict = None):
@@ -99,6 +123,7 @@ def get_prior_model_from_conf(conf,env_true):
         env_prior = create_env(conf.env_name,conf.prior_model)
         
         a_prior,b_prior = env_prior.linearize_discretize()     
+
     else:
         a_prior,b_prior = (np.eye(env_true.n_s),np.zeros((env_true.n_s,env.n_u)))
         
@@ -113,8 +138,6 @@ def get_model_options_from_conf(conf,env):
         return np.load(conf.gp_dict_path)
     
     #neither a gp_dict_path nor a gp_data_path exists -> return None
-    if conf.gp_data_path is None:
-        return None
     gp_dict = dict()
     
     a_prior,b_prior = get_prior_model_from_conf(conf,env)
@@ -123,24 +146,29 @@ def get_model_options_from_conf(conf,env):
     prior_model = lambda z: np.dot(z,ab_prior.T)
     gp_dict["prior_model"] = prior_model
     
+
     gp_dict["data_path"] = conf.gp_data_path
     gp_dict["m"] = conf.m
     gp_dict["kern_types"] = conf.kern_types
     gp_dict["hyp"] = conf.gp_hyp
     gp_dict["train"] = conf.train_gp
-    
+    gp_dict["n_s_in"] = conf.gp_ns_in
+    gp_dict["n_s_out"] = conf.gp_ns_out
+    gp_dict["n_u"] = conf.gp_nu
+    gp_dict["Z"] = conf.Z
+
     return gp_dict
     
 def loadConfig(conf_path):
-    conf_path = abspath(conf_path)
-    if not exists(conf_path):
+
+    if not exists(abspath(conf_path)):
         raise(ValueError("The specified configuration does not exist!"))
     else:
-        filename = basename(conf_path)
+
+        file_path, filename = split(conf_path)
         module_name = filename.split('.')[0]
-        module_name = 'scenario_configs.' + module_name
-        configuration = import_module(module_name)
+        module_name_path = file_path+'.' + module_name
+        configuration = import_module(module_name_path)
         conf = configuration.Config()
-        #conf_dir = dirname(conf_path)
-        #model_path = join(conf_dir, '..', 'models', conf.model_name)
+
         return conf
