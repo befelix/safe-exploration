@@ -26,12 +26,34 @@ class Environment:
     """ Base class for environments
     
     
+    Attributes
+        ----------
+        name: str
+            The name of the environment
+        n_s: int
+            Number of state dimensions
+        n_u: int
+            Number of control dimensions
+        dt: float
+            time difference between simulation steps (i.e. 1/(simulation frequency))
+        is_initialized: Bool
+            True, if the environment is already initialized (e.g. via reset())
+        iteration: int
+            Number of timesteps for which the simulation is running (can be resetted via reset())
+        init_std: n_s x 0 np.array[float]
+        init_m
+        u_min
+        u_max
+        plant_noise
+        target
+        verbosity
     """
     __metaclass__ = abc.ABCMeta
     
     def __init__(self,name, n_s, n_u, dt, init_m,init_std, plant_noise,
                  u_min, u_max, target, verbosity = 0, p_origin = None):
         """
+        
         
         """
         self.name = name
