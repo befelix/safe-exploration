@@ -34,9 +34,6 @@ def run_uncertainty_propagation(env,safempc,conf):
             _,_,p_traj_i,q_traj_i = multistep_reachability_new(x_0[:,None],k_ff[0,:,None],k_fb,np.zeros((env.n_u,env.n_s)),k_ff[1:,:],safempc.gp,env.l_mu,env.l_sigm,c_safety = conf.beta_safety,a = a_prior,b=b_prior)
             q_traj_i = q_traj_i.reshape((-1,env.n_s,env.n_s))
             _, _, p_1, q_1 = multistep_reachability(x_0[:,None],safempc.gp,k_fb,k_ff,env.l_mu,env.l_sigm,c_safety = conf.beta_safety,a = a_prior,b=b_prior)
-            print("???????????????????")
-            print(q_traj_i-q_1.reshape((-1,env.n_s,env.n_s)))
-            print(p_1-p_traj_i)
         else:
             for j in range(conf.n_restarts_optimizer):
                 x_0 = env.reset()
@@ -52,14 +49,12 @@ def run_uncertainty_propagation(env,safempc,conf):
         p_all[i] = p_traj_i
         q_all[i] = q_traj_i
         x_all[i,0,:] = x_0
-        print("X_====00000=====XXXXX")
-        print(x_0)
         
         inside_ellipsoid_i = trajectory_inside_ellipsoid(env,x_0,p_traj_i,q_traj_i,k_fb,k_ff)
         
         inside_ellipsoid_per_step[i,:] = inside_ellipsoid_i
         inside_ellipsoid_all[i] = np.all(inside_ellipsoid_i)
-        print(inside_ellipsoid_per_step)
+
     if conf.save_results:
         save_results(conf.save_path,inside_ellipsoid_per_step,inside_ellipsoid_all,
                      x_all,p_all,q_all)
