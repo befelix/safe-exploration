@@ -8,7 +8,7 @@ from default_config import DefaultConfig
 from utils_casadi import trig_aug, generic_cost, loss_sat, loss_quadratic,cost_dev_safe_perf 
 import numpy as np
 
-class DefaultConfigEpisode(DefaultConfigEpisode):
+class DefaultConfigEpisode(DefaultConfig):
     """
     Options class for the exploration setting
     """
