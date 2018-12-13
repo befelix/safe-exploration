@@ -19,8 +19,6 @@ from uncertainty_propagation_casadi import mean_equivalent_multistep, multi_step
 from gp_reachability import multistep_reachability
 from utils import dlqr, feedback_ctrl
 
-from ilqr_cython import CILQR
-
 ATTR_NAMES_PERF = ['type_perf_traj','n_perf','r','perf_has_fb']
 DEFAULT_OPT_PERF = {'type_perf_traj':'mean_equivalent','n_perf' : 10, 'r' : 1, 'perf_has_fb' : True }
 
