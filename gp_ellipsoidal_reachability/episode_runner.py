@@ -6,8 +6,6 @@ Created on Fri Sep 29 11:11:23 2017
 """
 from environments import InvertedPendulum
 from sampling_models import MonteCarloSafetyVerification
-from safempc import SafeMPC
-from gp_models import SimpleGPModel
 from utils_config import create_solver, create_env
 from collections import namedtuple
 from utils import generate_initial_samples
