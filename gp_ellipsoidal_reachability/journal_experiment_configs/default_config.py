@@ -32,21 +32,16 @@ class DefaultConfig(object):
         """ """
         conf_name = splitext(basename(file_path))[0]
         
-        if self.save_results: 
-            if self.save_dir is None:
-                time_string = datetime.datetime.now().strftime("%d-%m-%y-%H-%M-%S")
-                res_path = "{}/res_{}_{}".format(self.save_path_base,conf_name,time_string)
-            else:
-                res_path = "{}/{}".format(self.save_path_base,self.save_dir)
-
-            print(res_path)
+        if self.save_results and self.save_dir is None:
+            time_string = datetime.datetime.now().strftime("%d-%m-%y-%H-%M-%S")
+            res_path = "{}/res_{}_{}".format(self.save_path_base,conf_name,time_string)
             try:
                 makedirs(res_path)
             except Exception, e:
                 warnings.warn(e)
             self.save_path = res_path
-                
-                #copy config file into results folder
+            
+            #copy config file into results folder
             dirname_conf = dirname(file_path)
             copy("{}/{}.py".format(dirname_conf,conf_name),"{}/".format(res_path))
-                
+            
