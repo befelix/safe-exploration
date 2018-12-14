@@ -3,7 +3,7 @@
 import itertools
 
 import torch
-from torch.autograd.gradcheck import zero_gradients
+from torch.autograd import grad
 
 
 __all__ = ['compute_jacobian', 'update_cholesky', 'SetTorchDtype']
@@ -30,9 +30,7 @@ def compute_jacobian(f, x):
 
     # Default to standard gradient in the 0d case
     if f.dim() == 0:
-        zero_gradients(x)
-        f.backward()
-        return x.grad
+        return grad(f, x)[0]
 
     # Initialize outputs
     jacobian = torch.zeros(f.shape + x.shape)
@@ -44,10 +42,8 @@ def compute_jacobian(f, x):
 
     # Iterate over all elements in f
     for index in itertools.product(*map(range, f.shape)):
-        zero_gradients(x)
         grad_output[index] = 1
-        f.backward(grad_output, retain_graph=True)
-        jacobian[index] = x.grad.data
+        jacobian[index] = grad(f, x, grad_outputs=grad_output, retain_graph=True)[0]
         grad_output[index] = 0
 
     return jacobian
