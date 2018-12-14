@@ -8,7 +8,6 @@ setup(
     license="MIT",
     packages=find_packages(exclude=['docs']),
     install_requires=['numpy>=1.0,<2',
-                      'gpytorch>=0.1.0rc5',
                       'casadi',
                       'GPy',
                       'scikit-learn',
