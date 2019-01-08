@@ -410,7 +410,7 @@ class SimpleGPModel():
 
 
         if kern_types is None:
-            kern_types = [None]*self.n_s
+            kern_types = [None]*self.n_s_out
             for i in range(self.n_s_out):
                 kern_types[i] = "rbf"
                 kerns[i] = RBF(input_dim, ARD = True)
