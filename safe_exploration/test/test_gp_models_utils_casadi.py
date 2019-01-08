@@ -113,14 +113,18 @@ def test_k_lin_rbf(before_gp_utils_casadi_test_rbf):
     
     x_inp, y_inp,n_dim = before_gp_utils_casadi_test_rbf
     ls_lin = np.random.rand(n_dim,) + 1
-    ls_rbf = np.random.rand(n_dim,) + 1
+    ls_prod_lin = np.random.rand(1,)+1
+    ls_rbf = np.random.rand(1,) + 1
+
     rbf_var = np.random.rand()+1
     hyp = dict()
-    hyp["lin_variances"] = ls_lin
-    hyp["rbf_lengthscales"] = ls_rbf
-    hyp["rbf_variance"] = rbf_var
+    hyp["linear.variances"] = ls_lin
+    hyp["prod.rbf.lengthscale"] = ls_rbf
+    hyp["prod.rbf.variance"] = rbf_var
+    hyp["prod.linear.variances"] = ls_prod_lin
+   
     
-    kern_lin = Linear(n_dim,ls_lin,True)*RBF(n_dim,rbf_var,ls_rbf,True)
+    kern_lin = Linear(1,ls_prod_lin,True,active_dims = [1])*RBF(1,rbf_var,ls_rbf,True,active_dims = [1])+ Linear(n_dim,ls_lin,True)
     
     x = SX.sym("x",np.shape(x_inp))
     

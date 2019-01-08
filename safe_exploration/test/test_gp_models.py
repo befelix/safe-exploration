@@ -24,7 +24,7 @@ def before_gp_predict_test(request):
     X = train_data["X"]
     y = train_data["y"]
     m = None
-    gp = SimpleGPModel(n_s,n_u,X,y,m,kern_types,train = True)
+    gp = SimpleGPModel(n_s,n_s,n_u,X,y,m,kern_types,train = True)
     
     return gp,n_s,n_u
     
@@ -42,8 +42,9 @@ def test_predict_casadi_symbolic(before_gp_predict_test):
     out_cas = f_nograd(test_input.T)
     out_numeric = gp.predict(test_input.T)
     
-    assert np.all(np.isclose(out_cas[1],out_numeric[1])), "Do the predictive vars match?"
     assert np.all(np.isclose(out_cas[0],out_numeric[0])), "Do the predictive means match?"
+    assert np.all(np.isclose(out_cas[1],out_numeric[1])), "Do the predictive vars match?"
+    
     
     
     

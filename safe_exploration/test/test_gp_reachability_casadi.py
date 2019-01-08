@@ -33,9 +33,10 @@ def before_test_onestep_reachability(request):
     X = train_data["X"]
     y = train_data["y"]
     m = 50
-    gp = gp_models.SimpleGPModel(n_s,n_u,X,y,m,train = True)
-    L_mu = np.array([0.1]*n_s)
-    L_sigm = np.array([0.1]*n_s)
+    gp = gp_models.SimpleGPModel(n_s,n_s,n_u,X,y,m,train = False)
+    gp.train(X,y,m,opt_hyp = True,choose_data = False)
+    L_mu = np.array([0.001]*n_s)
+    L_sigm = np.array([0.001]*n_s)
     k_fb = .1*np.random.rand(n_u,n_s) # need to choose this appropriately later
     k_ff = .1*np.random.rand(n_u,1)
     
@@ -58,7 +59,7 @@ def test_onestep_reachability(before_test_onestep_reachability):
     k_fb_cas = SX.sym("k_fb",(n_u,n_s))
     k_ff_cas = SX.sym("k_ff",(n_u,1))
     
-    p_new_cas, q_new_cas = reach_cas.onestep_reachability(p,gp,k_ff_cas,L_mu,L_sigm,q,k_fb_cas,c_safety,a=a,b=b)
+    p_new_cas, q_new_cas, _ = reach_cas.onestep_reachability(p,gp,k_ff_cas,L_mu,L_sigm,q,k_fb_cas,c_safety,a=a,b=b)
     f = Function("f",[k_fb_cas,k_ff_cas],[p_new_cas,q_new_cas])
     
     f_out_cas = f(k_fb,k_ff)
@@ -97,7 +98,7 @@ def test_multistep_reachability(before_test_onestep_reachability):
     k_ff_cas = SX.sym("k_ff",(T-1,n_u))
     k_fb_cas_ctrl = SX.sym("k_fb_ctrl",(n_u,n_s))
     
-    p_new_cas, q_new_cas = reach_cas.multi_step_reachability(p,u_0,k_fb_cas_0,k_fb_cas_ctrl,k_ff_cas,gp,L_mu,L_sigm,c_safety,a,b)
+    p_new_cas, q_new_cas, _ = reach_cas.multi_step_reachability(p,u_0,k_fb_cas_0,k_fb_cas_ctrl,k_ff_cas,gp,L_mu,L_sigm,c_safety,a,b)
     f = Function("f",[u_0_cas,k_fb_cas_0,k_fb_cas_ctrl,k_ff_cas],[p_new_cas,q_new_cas])
     
     p_all_cas,q_all_cas = f_out_cas = f(u_0,k_fb_0,k_fb_ctrl,k_ff)
@@ -141,7 +142,7 @@ def test_multistep_reachability_new(before_test_onestep_reachability):
     k_ff_cas = SX.sym("k_ff",(T-1,n_u))
     k_fb_cas_ctrl = SX.sym("k_fb_ctrl",(n_u,n_s))
     
-    p_new_cas, q_new_cas = reach_cas.multi_step_reachability(p,u_0,k_fb_cas_0,k_fb_cas_ctrl,k_ff_cas,gp,L_mu,L_sigm,c_safety,a,b)
+    p_new_cas, q_new_cas, _ = reach_cas.multi_step_reachability(p,u_0,k_fb_cas_0,k_fb_cas_ctrl,k_ff_cas,gp,L_mu,L_sigm,c_safety,a,b)
     f = Function("f",[u_0_cas,k_fb_cas_0,k_fb_cas_ctrl,k_ff_cas],[p_new_cas,q_new_cas])
     
     p_all_cas,q_all_cas = f_out_cas = f(u_0,k_fb_0,k_fb_ctrl,k_ff)
