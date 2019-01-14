@@ -64,6 +64,7 @@ class SimpleGPModel():
 
         if X is None or y is None: #initialize without training (no data available)
             train = False
+
         if train:
             self.train(X,y,m,Z =Z)
                  
@@ -205,12 +206,13 @@ class SimpleGPModel():
             post = model_gp.posterior
 
             if noise_diag > 0.0:
-                inv_K[i] = pdinv(post._K+float(model_gp.Gaussian_noise.variance+noise_diag)*np.eye(n_beta))[0]
-            else:
+                model_gp.likelihood.variance.fix(noise_diag)
+                #inv_K[i] = pdinv(post._K+float(model_gp.Gaussian_noise.variance+noise_diag)*np.eye(n_beta))[0]
+            #else:
+            #    inv_K[i] = post.woodbury_inv
 
-                inv_K[i] = post.woodbury_inv
-
-
+            post = model_gp.posterior
+            inv_K[i] = post.woodbury_inv
 
             beta[:,i] = post.woodbury_vector.reshape(-1,)
             process_noise[i] = model_gp.Gaussian_noise.variance
@@ -513,7 +515,8 @@ class SimpleGPModel():
         """ Return a symbolic casadi function representing predictive mean/variance
         
         """
-
+        assert self.gp_trained,"Cannot predict, need to train the GP first!" 
+        
         out_dict = gp_pred_function(x_new,self.z,self.beta,self.hyp,self.kern_types,self.inv_K,True,compute_grads)
         mu_new = out_dict["pred_mu"]
         sigma_new = out_dict["pred_sigma"]
