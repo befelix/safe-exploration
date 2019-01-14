@@ -10,6 +10,8 @@ from ..environments import InvertedPendulum, CartPole
 from ..utils import sample_inside_polytope
 from scipy.optimize import approx_fprime
 
+np.random.seed(0)
+
 @pytest.fixture(params=[InvertedPendulum(),CartPole()])
 def before_test_inv_pend(request):
     env = request.param
@@ -19,10 +21,11 @@ def before_test_inv_pend(request):
 def test_normalization(before_test_inv_pend):
     """ """
     env = before_test_inv_pend
-    state = np.random.rand(2)
-    action = np.random.rand(1)
+    state = np.random.rand(env.n_s)
+    action = np.random.rand(env.n_u)
     s_1,a_1 =  env.normalize(*env.unnormalize(state,action))
     s_2,a_2 =  env.unnormalize(*env.normalize(state,action))
+
     assert np.all(s_1==state) 
     assert np.all(a_1==action)
     assert np.all(s_2==state)
