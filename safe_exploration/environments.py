@@ -897,7 +897,7 @@ class CartPole(Environment):
         g = self.g
 
         A = np.array([[0, 1,                     0, 0                             ],
-                      [0, 0,g * m / M            , -b / (M*l)                     ],
+                      [0, 0,.5*g * m / M            , -b*.5 / (M*l)                     ],
                       [0, 0, 0                    , 1                             ],
                       [0, 0,g  * (m + M) / (l * M), -b * (m + M) / (m * M * l**2)]])
 
