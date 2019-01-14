@@ -13,6 +13,10 @@ from .. import gp_reachability as reach_num
 from casadi import SX, Function
 from casadi import reshape as cas_reshape
 
+np.random.seed(125)
+a_tol = 1e-6
+r_tol = 1e-4
+
 @pytest.fixture(params = [("InvPend",True,True),("InvPend",False,True),
                           ("InvPend",True,True),("InvPend",False,True)])
 def before_test_onestep_reachability(request):
