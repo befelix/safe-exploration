@@ -20,7 +20,7 @@ from gp_reachability import multistep_reachability
 from utils import dlqr, feedback_ctrl
 
 ATTR_NAMES_PERF = ['type_perf_traj','n_perf','r','perf_has_fb']
-DEFAULT_OPT_PERF = {'type_perf_traj':'mean_equivalent','n_perf' : 10, 'r' : 1, 'perf_has_fb' : True }
+DEFAULT_OPT_PERF = {'type_perf_traj':'mean_equivalent','n_perf' : 5, 'r' : 1, 'perf_has_fb' : True }
 
 ATTR_NAMES_ENV = ['l_mu','l_sigma','h_mat_safe','h_safe','lin_model','ctrl_bounds','safe_policy','h_mat_obs','h_obs' , 'dt']
 DEFAULT_OPT_ENV = {'ctrl_bounds': None,'safe_policy' : None, 'lin_model' : None, 'h_mat_obs' : None, 'h_obs':None}
@@ -32,8 +32,8 @@ class SimpleSafeMPC:
     """
     
     def __init__(self, n_safe, gp, opt_env, wx_cost, wu_cost,beta_safety = 2.5,
-                 rhc = True, lin_model = None, ctrl_bounds = None,
-                 safe_policy = None, opt_perf_trajectory = None,lin_trafo_gp_input = None):
+                 rhc = True, ctrl_bounds = None,
+                 safe_policy = None, opt_perf_trajectory = {},lin_trafo_gp_input = None):
         """ Initialize the SafeMPC object with dynamic model information
 
         Parameters
@@ -406,6 +406,8 @@ class SimpleSafeMPC:
             ubg += [0.]*self.m_safe
 
         if self.has_ctrl_bounds:
+            print("What about the performance control bounds??")
+            print(self.has_ctrl_bounds)
             for i in range(self.n_perf-self.r):
                 g_u_i, lbu_i, ubu_i = self._generate_control_constraint(k_ff_perf[i,:].T)
                 g = vertcat(g,g_u_i)
@@ -563,8 +565,8 @@ class SimpleSafeMPC:
         if k_fb.ndim ==2:
             _, n_s = np.shape(k_fb)
             k_tmp = k_fb
-            k_fb = np.empty((T,n_u,n_s))
-            for i in range(T):
+            k_fb = np.empty((T-1,n_u,n_s))
+            for i in range(T-1):
                 k_fb[i] = k_tmp
 
         #f_multistep_cas = 
@@ -640,15 +642,15 @@ class SimpleSafeMPC:
         
         u_0_init, k_ff_all_0_init, k_fb_0_init, u_perf_0_init, k_fb_perf_0_init = self._get_init_controls()
 
-        if not u_0:
+        if u_0 is None:
             u_0 = u_0_init
-        if not k_ff_all_0:
+        if k_ff_all_0 is None:
             k_ff_all_0 = k_ff_all_0_init
-        if not k_fb_0:
+        if k_fb_0 is None:
             k_fb_0 = k_fb_0_init
-        if not u_perf_0:
+        if u_perf_0 is None :
             u_perf_0 = u_perf_0_init
-        if not k_fb_perf_0:
+        if k_fb_perf_0 is None:
             k_fb_perf_0 = k_fb_perf_0_init
 
         params = np.vstack((p_0,np.reshape(k_fb_0,(-1,1)),cas_reshape(k_fb_perf_0,(-1,1))))
@@ -791,9 +793,10 @@ class SimpleSafeMPC:
         if not feasible:
             self.n_fail += 1
             q_all = None
-            k_fb_apply = None
+            k_fb_safe_apply = None
             k_ff_all = None
             p_safe = None
+            q_safe = None
             
             if self.n_fail >= self.n_safe:
                 ## Too many infeasible solutions -> switch to safe controller
@@ -806,7 +809,7 @@ class SimpleSafeMPC:
                 if self.verbosity > 1:
                     print("Infeasible solution. Switching to previous solution, n_fail = {}, n_safe = {}".format(self.n_fail,self.n_safe))
                 if sol_verbose:
-                    u_apply,k_fb_apply, k_ff_safe_all, p_safe = self.get_old_solution(x_0, get_ctrl_traj = True)
+                    u_apply,k_fb_safe_apply, k_ff_safe_all, p_safe = self.get_old_solution(x_0, get_ctrl_traj = True)
                 else:
                     u_apply = self.get_old_solution(x_0)
                     k_ff_safe_all = u_apply
