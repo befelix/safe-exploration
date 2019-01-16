@@ -17,7 +17,7 @@ from gp_reachability_casadi import multi_step_reachability as cas_multistep
 from gp_reachability_casadi import onestep_reachability, lin_ellipsoid_safety_distance, objective
 from uncertainty_propagation_casadi import mean_equivalent_multistep, multi_step_taylor_symbolic
 from gp_reachability import multistep_reachability
-from utils import dlqr, feedback_ctrl
+from utils import dlqr, feedback_ctrl, array_of_vec_to_array_of_mat
 
 ATTR_NAMES_PERF = ['type_perf_traj','n_perf','r','perf_has_fb']
 DEFAULT_OPT_PERF = {'type_perf_traj':'mean_equivalent','n_perf' : 5, 'r' : 1, 'perf_has_fb' : True }
@@ -32,7 +32,7 @@ class SimpleSafeMPC:
     """
     
     def __init__(self, n_safe, gp, opt_env, wx_cost, wu_cost,beta_safety = 2.5,
-                 rhc = True, ctrl_bounds = None,
+                 rhc = True,
                  safe_policy = None, opt_perf_trajectory = {},lin_trafo_gp_input = None):
         """ Initialize the SafeMPC object with dynamic model information
 
@@ -113,12 +113,12 @@ class SimpleSafeMPC:
             self.g_interm_cas = cas.Function("g_interm",[p_cas,q_cas],[g_val_term_cas])
 
 
-        self.has_ctrl_bounds = False        
-        if not ctrl_bounds is None:
+        self.has_ctrl_bounds = False       
+
+        if not self.ctrl_bounds is None:
             self.has_ctrl_bounds = True
-            assert np.shape(ctrl_bounds) == (self.n_u,2), """control bounds need 
+            assert np.shape(self.ctrl_bounds) == (self.n_u,2), """control bounds need 
             to be of shape n_u x 2 with i,0 lower bound and i,1 upper bound per dimension"""
-            self.ctrl_bounds = ctrl_bounds
             
         self.wx_cost = wx_cost
         self.wu_cost = wu_cost
@@ -563,15 +563,7 @@ class SimpleSafeMPC:
             
         T, n_u = np.shape(k_ff)
         if k_fb.ndim ==2:
-            _, n_s = np.shape(k_fb)
-            k_tmp = k_fb
-            k_fb = np.empty((T-1,n_u,n_s))
-            for i in range(T-1):
-                k_fb[i] = k_tmp
-
-        #f_multistep_cas = 
-
-        #f_multistep_cas = Function()
+            k_fb = array_of_vec_to_array_of_mat(k_fb,self.n_u,self.n_s)
 
         _,_,p_all, q_all = multistep_reachability(x_0[:,None],self.gp,k_fb,k_ff,
                                               self.l_mu,self.l_sigma,c_safety = self.beta_safety, verbose=self.verbosity,a =self.a,b=self.b)
@@ -741,7 +733,8 @@ class SimpleSafeMPC:
 
             k_fb_safe_apply = k_fb_0
 
-            p_safe, q_safe = self.f_multistep_eval(x_0.squeeze(),u_apply,k_fb_0,k_ff_safe)
+            p_safe, q_safe = self.get_trajectory_openloop(x_0.squeeze(),k_fb_safe_apply,k_ff_safe_all)
+
             p_safe = np.array(p_safe)
             q_safe = np.array(q_safe)
 
@@ -797,6 +790,7 @@ class SimpleSafeMPC:
             k_ff_all = None
             p_safe = None
             q_safe = None
+            g_res = None
             
             if self.n_fail >= self.n_safe:
                 ## Too many infeasible solutions -> switch to safe controller
@@ -815,7 +809,8 @@ class SimpleSafeMPC:
                     k_ff_safe_all = u_apply
                 
         if sol_verbose:
-            return u_apply, feasible, success, k_fb_safe_apply, k_ff_safe_all, p_safe, q_safe
+
+            return u_apply, feasible, success, array_of_vec_to_array_of_mat(k_fb_safe_apply,self.n_u,self.n_s), k_ff_safe_all, p_safe, q_safe, g_res
             
         return u_apply, success
         
