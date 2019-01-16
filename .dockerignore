@@ -1,0 +1,13 @@
+examples
+htmlcov
+.travis.yml
+.gitignore
+.git
+*.pyc
+.ipynb_checkpoints
+**/__pycache__
+safe_exploration.egg-info
+README.md
+mps
+experiments
+
