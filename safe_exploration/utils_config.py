@@ -80,7 +80,7 @@ def create_solver(conf, env, model_options = None):
         perf_opts_safempc["r"] = conf.r
         perf_opts_safempc["perf_has_fb"] = conf.perf_has_fb
 
-        solver = SimpleSafeMPC(n_safe, gp, env_opts_safempc, wx_cost, wu_cost,beta_safety = conf.beta_safety, lin_model = lin_model, ctrl_bounds = ctrl_bounds,
+        solver = SimpleSafeMPC(n_safe, gp, env_opts_safempc, wx_cost, wu_cost,beta_safety = conf.beta_safety, lin_model = lin_model,
                  safe_policy = safe_policy, opt_perf_trajectory = perf_opts_safempc,lin_trafo_gp_input = lin_trafo_gp_input)
     elif conf.solver_type == "cautious_mpc":
         T = conf.T
