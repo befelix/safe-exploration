@@ -33,7 +33,7 @@ def before_test_onestep_reachability(request):
     X = train_data["X"]
     y = train_data["y"]
     m = 50
-    gp = gp_models.SimpleGPModel(n_s,n_u,X,y,m,train = True)
+    gp = gp_models.SimpleGPModel(n_s,n_s,n_u,X,y,m,train = True)
     L_mu = np.array([0.1]*n_s)
     L_sigm = np.array([0.1]*n_s)
     k_fb = .1*np.random.rand(n_u,n_s) # need to choose this appropriately later
@@ -51,32 +51,30 @@ def before_test_onestep_reachability(request):
  
 
 def test_multistep_trajectory(before_test_onestep_reachability):
-    """ Compare multi-steps 'by hand' with the function """
-    
-    
+    """ Compare multi-steps 'by hand' with the function """    
     
     mu_0,_,gp,k_fb,k_ff,L_mu,L_sigm,c_safety,a,b = before_test_onestep_reachability
     T=3
     n_u,n_s = np.shape(k_fb)
-    print(k_fb)
 
     k_fb_cas_single = SX.sym("k_fb_single",(n_u,n_s))
     k_ff_cas_single  = SX.sym("k_ff_single",(n_u,1))
     k_ff_cas_all = SX.sym("k_ff_single",(T,n_u))
+
     k_fb_cas_all = SX.sym("k_fb_all",(T-1,n_s*n_u))
+    k_fb_cas_all_inp = [k_fb_cas_all[i,:].reshape((n_u,n_s)) for i in range(T-1)]
     mu_0_cas = SX.sym("mu_0",(n_s,1))
     sigma_0_cas = SX.sym("sigma_0",(n_s,n_s))
 
-    mu_onestep_no_var_in, sigm_onestep_no_var_in = prop_casadi.one_step_taylor(mu_0_cas,gp,k_ff_cas_single, a = a, b = b)
-    mu_one_step, sigm_onestep = prop_casadi.one_step_taylor(mu_0_cas,gp,k_ff_cas_single, k_fb = k_fb_cas_single, sigma_x = sigma_0_cas,a = a, b = b)
+    mu_onestep_no_var_in, sigm_onestep_no_var_in, _ = prop_casadi.one_step_taylor(mu_0_cas,gp,k_ff_cas_single, a = a, b = b)
 
-    mu_multistep, sigma_multistep = prop_casadi.multi_step_taylor_symbolic(mu_0_cas, gp, k_ff_cas_all, k_fb_cas_all , a = a, b = b)
+    mu_one_step, sigm_onestep,_ = prop_casadi.one_step_taylor(mu_0_cas,gp,k_ff_cas_single, k_fb = k_fb_cas_single, sigma_x = sigma_0_cas,a = a, b = b)
+
+    mu_multistep, sigma_multistep, _ = prop_casadi.multi_step_taylor_symbolic(mu_0_cas, gp, k_ff_cas_all, k_fb_cas_all_inp , a = a, b = b)
 
     on_step_no_var_in = Function("on_step_no_var_in",[mu_0_cas,k_ff_cas_single],[mu_onestep_no_var_in,sigm_onestep_no_var_in])
     one_step = Function("one_step",[mu_0_cas,sigma_0_cas,k_ff_cas_single,k_fb_cas_single],[mu_one_step,sigm_onestep])
     multi_step = Function("multi_step",[mu_0_cas,k_ff_cas_all,k_fb_cas_all],[mu_multistep,sigma_multistep])
-
-
 
 
     ## TODO: Need mu, sigma as input aswell
