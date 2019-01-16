@@ -14,6 +14,7 @@ import functools
 from numpy.linalg import solve,norm
 from numpy import sqrt,trace,zeros,diag, eye
 from numpy.matlib import repmat
+from casadi import reshape as cas_reshape
 
 def dlqr(a,b,q,r):
     """ Get the feedback controls from linearized system at the current time step
@@ -170,7 +171,7 @@ def print_ellipsoid(p_center,q_shape,text = "ellipsoid",visualize = False):
     print(diag(q_shape))
     print("===============")
     
-def _vec_to_mat(v,n,tril_vec = True):
+def vec_to_mat(v,n,tril_vec = True):
     """ Reshape vector into square matrix
     
     Inputs:
@@ -193,10 +194,38 @@ def _vec_to_mat(v,n,tril_vec = True):
                 A[j,i] = A[i,j]
                 c += 1     
     else: 
-        A = np.reshape(v,(n,n))
+        A = cas_reshape(v,(n,n))
  
     return A    
     
+def array_of_vec_to_array_of_mat(array_of_vec,n,m):
+    """ Convert multiple vectorized matrices to 3-dim numpy array
+
+    
+    Parameters
+    ----------
+    array_of_vec: T x n*m array_like
+        array of vectorized matrices
+    n: int
+        The first dimension of the vectorized matrices
+    m: int 
+        The second dimension of the vectorized matrices
+
+    Returns
+    -------
+    array_of_mat: T x n x m ndarray
+        The 3D-array containing the matrices
+    """
+
+    T, size_vec = np.shape(array_of_vec)
+
+    assert size_vec == n*m, "Are the shapes of the vectorized and output matrix the same?"
+
+    array_of_mat = np.empty((T,n,m))
+    for i in range(T):
+        array_of_mat[i,:,:] = cas_reshape(array_of_mat[i],(n,m))
+
+    return array_of_mat
     
 def _get_edges_hyperrectangle(l_b,u_b,m = None):
     """ Generate set of points from box-bounds
