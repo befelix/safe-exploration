@@ -10,7 +10,7 @@ import scipy.linalg as sLa
 import itertools
 import warnings
 
-from utils import _prod_combinations_1darray,solve_LLS,_vec_to_mat,all_elements_equal
+from utils import _prod_combinations_1darray,solve_LLS,all_elements_equal
 
 from numpy import sqrt,trace,zeros,diag, eye
 
