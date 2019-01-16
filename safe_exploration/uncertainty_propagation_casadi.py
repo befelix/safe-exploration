@@ -35,7 +35,6 @@ def one_step_taylor(mu_x,gp, k_ff, sigma_x = None, k_fb = None, a = None, b = No
             The covariance matrix of the gaussian output of the uncertainty propagation
 
     """
-    
     n_s = np.shape(mu_x)[0]
     n_u = np.shape(k_ff)[0]
 
@@ -61,7 +60,6 @@ def one_step_taylor(mu_x,gp, k_ff, sigma_x = None, k_fb = None, a = None, b = No
 
     mu_g, sigma_g, jac_mu = gp.predict_casadi_symbolic(z_bar.T,True)
 
-
     jac_mu = horzcat(mtimes(jac_mu[:,:n_gp_in],a_gp_inp_x),jac_mu[:,n_gp_in:])
     ## Compute taylor approximation of the posterior 
     sigma_u = mtimes(k_fb,mtimes(sigma_x,k_fb.T)) #covariance of control input
@@ -73,7 +71,6 @@ def one_step_taylor(mu_x,gp, k_ff, sigma_x = None, k_fb = None, a = None, b = No
 
     sigma_z = vertcat(sigma_z_0,sigma_z_1) #covariance matrix of combined state-control input z 
 
-    
     sigma_zg = mtimes(sigma_z,jac_mu.T) #cross-covariance between g and z
 
     sigma_g = diag(sigma_g) + mtimes(jac_mu,mtimes(sigma_z,jac_mu.T)) # The addtitional term stemming from the taylor approxiamtion 
@@ -253,7 +250,6 @@ def one_step_mean_equivalent(mu_x,gp, k_ff, sigma_x = None, k_fb = None, a = Non
 
     
     ## Compute taylor approximation of the posterior 
-    print(np.shape(k_fb))
     sigma_u = mtimes(k_fb,mtimes(sigma_x,k_fb.T)) #covariance of control input
     sigma_xu = mtimes(sigma_x,k_fb.T) #cross-covariance between state and controls
 
