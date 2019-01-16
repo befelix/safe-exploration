@@ -4,14 +4,16 @@ Created on Thu Sep 28 16:12:30 2017
 
 @author: tkoller
 """
+import os.path
+
 import pytest
 import numpy as np
+from casadi import SX, Function, vertcat
+from casadi import reshape as cas_reshape
 
 from .. import gp_models
 from .. import uncertainty_propagation_casadi as prop_casadi
 
-from casadi import SX, Function, vertcat
-from casadi import reshape as cas_reshape
 
 @pytest.fixture(params = [("InvPend",True,True),("InvPend",False,True),
                           ("InvPend",True,True),("InvPend",False,True)])
@@ -21,7 +23,7 @@ def before_test_onestep_reachability(request):
     if env == "InvPend":
         n_s = 2
         n_u = 1
-        path = "invpend_data.npz"
+        path = os.path.join(os.path.dirname(__file__), "invpend_data.npz")
         c_safety = 2
     a = None
     b = None
@@ -48,7 +50,6 @@ def before_test_onestep_reachability(request):
     return p,q,gp,k_fb,k_ff,L_mu,L_sigm,c_safety,a,b
 
 
-@pytest.mark.xfail
 def test_multistep_trajectory(before_test_onestep_reachability):
     """ Compare multi-steps 'by hand' with the function """
 

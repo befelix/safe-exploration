@@ -4,6 +4,8 @@ Created on Fri Sep 29 12:03:39 2017
 
 @author: tkoller
 """
+import os.path
+
 import pytest
 from ..safempc_simple import SimpleSafeMPC
 from ..environments import CartPole
@@ -23,7 +25,7 @@ def before_test_safempc(request):
         env = CartPole()
         n_s = env.n_s
         n_u = env.n_u
-        path = "data_cartpole.npz"
+        path = os.path.join(os.path.dirname(__file__), "data_cartpole.npz")
         c_safety = 0.5
 
     a = None

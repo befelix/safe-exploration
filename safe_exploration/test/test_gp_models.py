@@ -5,6 +5,7 @@ Created on Wed Sep 27 13:01:18 2017
 @author: tkoller
 """
 
+import os.path
 import pytest
 from numpy.testing import assert_allclose
 import numpy as np
@@ -21,13 +22,10 @@ r_tol = 1e-4
 def before_gp_predict_test(request):
 
     env, kern_types = request.param
-    if env == "InvPend":
-        path = "invpend_data.npz"
-        n_s = 2
-        n_u = 1
+    n_s = 2
+    n_u = 1
 
-
-    train_data = np.load(path)
+    train_data = np.load(os.path.join(os.path.dirname(__file__), 'invpend_data.npz'))
     X = train_data["X"]
     y = train_data["y"]
     m = None
@@ -36,7 +34,7 @@ def before_gp_predict_test(request):
     return gp, n_s, n_u
 
 
-@pytest.mark.xfail
+# @pytest.mark.xfail
 def test_predict_casadi_symbolic(before_gp_predict_test):
     """Does symbolic gp prediction yield the same results as numeric eval? """
 

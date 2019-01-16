@@ -4,6 +4,8 @@ Created on Thu Sep 28 16:12:30 2017
 
 @author: tkoller
 """
+import os.path
+
 import pytest
 import numpy as np
 
@@ -22,18 +24,16 @@ r_tol = 1e-4
 def before_test_onestep_reachability(request):
 
     env, init_uncertainty, lin_model = request.param
-    if env == "InvPend":
-        n_s = 2
-        n_u = 1
-        path = "invpend_data.npz"
-        c_safety = 2
+    n_s = 2
+    n_u = 1
+    c_safety = 2
     a = None
     b = None
     if lin_model:
         a = np.random.rand(n_s,n_s)
         b = np.random.rand(n_s,n_u)
 
-    train_data = np.load(path)
+    train_data = np.load(os.path.join(os.path.dirname(__file__), 'invpend_data.npz'))
     X = train_data["X"]
     y = train_data["y"]
     m = 50
@@ -53,7 +53,6 @@ def before_test_onestep_reachability(request):
     return p,q,gp,k_fb,k_ff,L_mu,L_sigm,c_safety,a,b
 
 
-@pytest.mark.xfail
 def test_onestep_reachability(before_test_onestep_reachability):
     """ do we get the same results as the numpy equivalent?"""
 
@@ -121,9 +120,6 @@ def test_multistep_reachability(before_test_onestep_reachability):
 @pytest.mark.xfail
 def test_multistep_reachability_new(before_test_onestep_reachability):
     """ """
-
-
-
     p,_,gp,k_fb,_,L_mu,L_sigm,c_safety,a,b = before_test_onestep_reachability
     T=3
 

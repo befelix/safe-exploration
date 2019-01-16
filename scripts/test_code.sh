@@ -33,4 +33,4 @@ pydocstyle $module || { exit 1; }
 
 # Run unit tests
 echo -e "${GREEN}Running unit tests.${NC}"
-pytest --doctest-modules --cov --cov-fail-under=25 $module || { exit 1; }
+pytest --doctest-modules --cov --cov-fail-under=50 $module || { exit 1; }

@@ -6,7 +6,7 @@ setup(
     author="Torsten Koller, Felix Berkenkamp",
     author_email="fberkenkamp@gmail.com",
     license="MIT",
-    packages=find_packages(exclude=['docs']),
+    packages=find_packages(exclude=['docs', 'mps']),
     install_requires=['numpy>=1.0,<2',
                       'casadi',
                       'GPy',
@@ -34,4 +34,5 @@ setup(
         'Programming Language :: Python :: 3.6',
         'Programming Language :: Python :: 3.7'
     ],
+    package_data={'safe_exploration': ['test/*.npz']},
 )
