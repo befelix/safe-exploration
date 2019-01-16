@@ -16,7 +16,7 @@ from casadi import reshape as cas_reshape
 @pytest.fixture(params = [("InvPend",True,True),("InvPend",False,True),
                           ("InvPend",True,True),("InvPend",False,True)])
 def before_test_onestep_reachability(request):
-    
+
     env, init_uncertainty, lin_model = request.param
     if env == "InvPend":
         n_s = 2
@@ -28,7 +28,7 @@ def before_test_onestep_reachability(request):
     if lin_model:
         a = np.random.rand(n_s,n_s)
         b = np.random.rand(n_s,n_u)
-        
+
     train_data = np.load(path)
     X = train_data["X"]
     y = train_data["y"]
@@ -38,21 +38,20 @@ def before_test_onestep_reachability(request):
     L_sigm = np.array([0.1]*n_s)
     k_fb = .1*np.random.rand(n_u,n_s) # need to choose this appropriately later
     k_ff = .1*np.random.rand(n_u,1)
-    
+
     p = .1*np.random.randn(n_s,1)
     if init_uncertainty:
-        q = .2 * np.array([[.5,.2],[.2,.65]]) # reachability based on previous uncertainty 
+        q = .2 * np.array([[.5,.2],[.2,.65]]) # reachability based on previous uncertainty
     else:
         q = None # no initial uncertainty
-    
-    return p,q,gp,k_fb,k_ff,L_mu,L_sigm,c_safety,a,b
-    
-    
- 
 
+    return p,q,gp,k_fb,k_ff,L_mu,L_sigm,c_safety,a,b
+
+
+@pytest.mark.xfail
 def test_multistep_trajectory(before_test_onestep_reachability):
-    """ Compare multi-steps 'by hand' with the function """    
-    
+    """ Compare multi-steps 'by hand' with the function """
+
     mu_0,_,gp,k_fb,k_ff,L_mu,L_sigm,c_safety,a,b = before_test_onestep_reachability
     T=3
     n_u,n_s = np.shape(k_fb)
@@ -93,4 +92,4 @@ def test_multistep_trajectory(before_test_onestep_reachability):
 
     assert np.allclose(np.array(mu_all[0,:]),np.array(mu_1).T), "Are the centers of the first prediction the same?"
     assert np.allclose(np.array(mu_all[-1,:]),np.array(mu_3).T), "Are the centers of the final prediction the same?"
-    assert np.allclose(cas_reshape(sigma_all[-1,:],(n_s,n_s)),sigma_3), "Are the last covariance matrices the same?" 
+    assert np.allclose(cas_reshape(sigma_all[-1,:],(n_s,n_s)),sigma_3), "Are the last covariance matrices the same?"
