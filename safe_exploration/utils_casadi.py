@@ -137,7 +137,7 @@ def matrix_norm_2_generalized(a, b_inv, x = None, n_iter = None):
         x /= norm_2(x)
         
     if n_iter is None:
-        n_iter = n**2
+        n_iter = 2*n**2
         
     y = mtimes(b_inv,mtimes(a,x))
     for i in range(n_iter):
@@ -162,7 +162,7 @@ def matrix_norm_2(a_mat,x = None,n_iter = None):
         x /= norm_2(x)
         
     if n_iter is None:
-        n_iter = n**2
+        n_iter = 2*n**2
     
     y = mtimes(a_mat,x)
     
