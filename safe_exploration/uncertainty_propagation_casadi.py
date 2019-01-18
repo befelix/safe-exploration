@@ -14,24 +14,22 @@ def one_step_taylor(mu_x,gp, k_ff, sigma_x = None, k_fb = None, a = None, b = No
     """ One-step uncertainty propagation via first-order taylor approximation
 
     Parameters
-    ---------- 
+    ----------
     mu: n_s x 1 ndarray[casadi.sym]
-            Mean of the gaussian input 
+            Mean of the gaussian input
     gp: GaussianProcess
-            The gp  
-    k_ff: n_u x 1 array[float]     
+            The GP
+    k_ff: n_u x 1 array[float]
             The additive term of the controls
     sigma: n_s x n_s ndarray[casadi.sym]
             The covariance matrix of the gaussian input
 
-    
 
 
     Returns
     -------
     mu_new: n_s x 1 ndarray[casadi.sym]
-            Mean of the gaussian output of the uncertainty propagation 
-    sigma_new: n_s x n_s ndarray[casadi.sym]
+            Mean of the gaussian output of the uncertainty propagation    sigma_new: n_s x n_s ndarray[casadi.sym]
             The covariance matrix of the gaussian output of the uncertainty propagation
 
     """
@@ -45,7 +43,7 @@ def one_step_taylor(mu_x,gp, k_ff, sigma_x = None, k_fb = None, a = None, b = No
     n_gp_in,_ = np.shape(a_gp_inp_x)
 
     z_bar = vertcat(mtimes(a_gp_inp_x,mu_x),u_p)
-    if a is None: 
+    if a is None:
         a = SX.eye(n_s)
         b = SX.zeros(n_s,n_u)
 
@@ -61,7 +59,7 @@ def one_step_taylor(mu_x,gp, k_ff, sigma_x = None, k_fb = None, a = None, b = No
     mu_g, sigma_g, jac_mu = gp.predict_casadi_symbolic(z_bar.T,True)
 
     jac_mu = horzcat(mtimes(jac_mu[:,:n_gp_in],a_gp_inp_x),jac_mu[:,n_gp_in:])
-    ## Compute taylor approximation of the posterior 
+    ## Compute taylor approximation of the posterior
     sigma_u = mtimes(k_fb,mtimes(sigma_x,k_fb.T)) #covariance of control input
     sigma_xu = mtimes(sigma_x,k_fb.T) #cross-covariance between state and controls
 
@@ -69,16 +67,16 @@ def one_step_taylor(mu_x,gp, k_ff, sigma_x = None, k_fb = None, a = None, b = No
     sigma_z_0 = horzcat(sigma_x, sigma_xu )
     sigma_z_1 = horzcat(sigma_xu.T,  sigma_u)
 
-    sigma_z = vertcat(sigma_z_0,sigma_z_1) #covariance matrix of combined state-control input z 
+    sigma_z = vertcat(sigma_z_0,sigma_z_1) #covariance matrix of combined state-control input z
 
     sigma_zg = mtimes(sigma_z,jac_mu.T) #cross-covariance between g and z
 
-    sigma_g = diag(sigma_g) + mtimes(jac_mu,mtimes(sigma_z,jac_mu.T)) # The addtitional term stemming from the taylor approxiamtion 
+    sigma_g = diag(sigma_g) + mtimes(jac_mu,mtimes(sigma_z,jac_mu.T)) # The addtitional term stemming from the taylor approxiamtion
 
     sigma_all_0 = horzcat(sigma_z,sigma_zg)
     sigma_all_1 = horzcat(sigma_zg.T,sigma_g)
 
-    sigma_all = vertcat(sigma_all_0,sigma_all_1) #covariance of combined z and g 
+    sigma_all = vertcat(sigma_all_0,sigma_all_1) #covariance of combined z and g
 
 
     lin_trafo_mat = horzcat(a,b,SX.eye(n_s)) # linear trafo matrix
@@ -101,13 +99,13 @@ def multi_step_taylor_symbolic(mu_0, gp, k_ff, k_fb , sigma_0 = None, a = None, 
     mu_0: n_s x 1 ndarray[casadi.sym | float]
         Initial state
     gp: GaussianProcess
-        The gp  
+        The GP
     k_ff: T x n_u ndarray[casadi.sym]
         The feed forward terms to optimize over
     k_fb: n_s x n_u ndarray[casadi.SX]
         The feedback gain (same for each timestep)
-    sigma_0: n_s x n_s ndarray[casadi.sym | float] 
-        The initial uncertainty 
+    sigma_0: n_s x n_s ndarray[casadi.sym | float]
+        The initial uncertainty
     a: n_s x n_s ndarray[float]
         The A matrix of the linear model Ax + Bu
     b: n_s x n_u ndarray[float]
@@ -146,8 +144,8 @@ def multi_step_taylor_symbolic(mu_0, gp, k_ff, k_fb , sigma_0 = None, a = None, 
         gp_sigma_pred_all = vertcat(gp_sigma_pred_all,gp_sigma_pred)
 
 
-    return mu_all, sigma_all, gp_sigma_pred_all 
-    
+    return mu_all, sigma_all, gp_sigma_pred_all
+
 
 def mean_equivalent_multistep(mu_0,gp,k_ff, k_fb,sigma_0 = None, a=None,b=None,a_gp_inp_x = None):
     """ Compute the simple 'mean-equivalent' uncertainty propagation with GPs
@@ -157,7 +155,7 @@ def mean_equivalent_multistep(mu_0,gp,k_ff, k_fb,sigma_0 = None, a=None,b=None,a
     mu_0: n_s x 1 ndarray[casadi.sym | float]
         Initial state
     gp: GaussianProcess
-        The gp  
+        The gp
     k_ff: T x n_u ndarray[casadi.sym]
         The feed forward terms to optimize over
     a: n_s x n_s ndarray[float]
@@ -179,7 +177,7 @@ def mean_equivalent_multistep(mu_0,gp,k_ff, k_fb,sigma_0 = None, a=None,b=None,a
 
     if not sigma_0 is None:
         raise NotImplementedError("Still need to do this!")
-        
+
     n_s = np.shape(mu_0)[0]
     T, n_u = np.shape(k_ff)
 
@@ -198,41 +196,41 @@ def mean_equivalent_multistep(mu_0,gp,k_ff, k_fb,sigma_0 = None, a=None,b=None,a
         sigma_all = vertcat(sigma_all,sigma_new.reshape((1,n_s*n_s)))
         gp_sigma_pred_all = vertcat(gp_sigma_pred_all,gp_sigma_pred)
 
-    return mu_all, sigma_all, gp_sigma_pred_all 
-    
+    return mu_all, sigma_all, gp_sigma_pred_all
+
 
 def one_step_mean_equivalent(mu_x,gp, k_ff, sigma_x = None, k_fb = None, a = None, b = None, a_gp_inp_x = None):
     """ One-step uncertainty propagation via first-order taylor approximation
 
     Parameters
-    ---------- 
+    ----------
     mu: n_s x 1 ndarray[casadi.sym]
-            Mean of the gaussian input 
+            Mean of the gaussian input
     gp: GaussianProcess
-            The gp  
-    k_ff: n_u x 1 array[float]     
+            The gp
+    k_ff: n_u x 1 array[float]
             The additive term of the controls
     sigma: n_s x n_s ndarray[casadi.sym]
             The covariance matrix of the gaussian input
 
-    
+
 
 
     Returns
     -------
     mu_new: n_s x 1 ndarray[casadi.sym]
-            Mean of the gaussian output of the uncertainty propagation 
+            Mean of the gaussian output of the uncertainty propagation
     sigma_new: n_s x n_s ndarray[casadi.sym]
             The covariance matrix of the gaussian output of the uncertainty propagation
 
     """
-    
+
     n_s = np.shape(mu_x)[0]
     n_u = np.shape(k_ff)[0]
 
     u_p = k_ff
     z_bar = vertcat(mtimes(a_gp_inp_x,mu_x),u_p)
-    if a is None: 
+    if a is None:
         a = SX.eye(n_s)
         b = SX.zeros(n_s,n_u)
 
@@ -248,8 +246,8 @@ def one_step_mean_equivalent(mu_x,gp, k_ff, sigma_x = None, k_fb = None, a = Non
     mu_g, sigma_g  = gp.predict_casadi_symbolic(z_bar.T,False)
 
 
-    
-    ## Compute taylor approximation of the posterior 
+
+    ## Compute taylor approximation of the posterior
     sigma_u = mtimes(k_fb,mtimes(sigma_x,k_fb.T)) #covariance of control input
     sigma_xu = mtimes(sigma_x,k_fb.T) #cross-covariance between state and controls
 
@@ -257,14 +255,14 @@ def one_step_mean_equivalent(mu_x,gp, k_ff, sigma_x = None, k_fb = None, a = Non
     sigma_z_0 = horzcat(sigma_x, sigma_xu )
     sigma_z_1 = horzcat(sigma_xu.T,  sigma_u)
 
-    sigma_z = vertcat(sigma_z_0,sigma_z_1) #covariance matrix of combined state-control input z 
-    
+    sigma_z = vertcat(sigma_z_0,sigma_z_1) #covariance matrix of combined state-control input z
+
     sigma_zg = SX.zeros(n_s+n_u,n_s) #cross-covariance between g and z
 
     sigma_all_0 = horzcat(sigma_z,sigma_zg)
     sigma_all_1 = horzcat(sigma_zg.T,diag(sigma_g))
 
-    sigma_all = vertcat(sigma_all_0,sigma_all_1) #covariance of combined z and g 
+    sigma_all = vertcat(sigma_all_0,sigma_all_1) #covariance of combined z and g
 
 
     lin_trafo_mat = horzcat(a,b,SX.eye(n_s)) # linear trafo matrix
