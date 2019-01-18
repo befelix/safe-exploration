@@ -720,7 +720,8 @@ class SimpleSafeMPC:
 
             k_ff_safe = np.array(cas_reshape(x_opt[idx_k_ff],(self.n_safe-1,self.n_u)))
             k_ff_safe_all = np.vstack((u_apply,k_ff_safe))
-            k_fb_safe_apply = np.copy(k_fb_0)
+
+            k_fb_safe_output = array_of_vec_to_array_of_mat(np.copy(k_fb_0),self.n_u,self.n_s)
 
             p_safe, q_safe = self.get_safety_trajectory_openloop(x_0,u_apply,np.copy(k_fb_0),k_ff_safe)
 
@@ -762,7 +763,7 @@ class SimpleSafeMPC:
                 self.k_ff_perf = k_ff_perf
                 self.k_fb_0 = k_fb_0
                 self.p_safe = p_safe
-                self.k_fb_safe_all = k_fb_safe_apply
+                self.k_fb_safe_all = np.copy(k_fb_0)
                 self.u_apply = u_apply
                 self.k_fb_perf_0 = k_fb_perf_0
 
@@ -775,7 +776,7 @@ class SimpleSafeMPC:
         if not feasible:
             self.n_fail += 1
             q_all = None
-            k_fb_safe_apply = None
+            k_fb_safe_output = None
             k_ff_all = None
             p_safe = None
             q_safe = None
@@ -792,14 +793,14 @@ class SimpleSafeMPC:
                 if self.verbosity > 1:
                     print("Infeasible solution. Switching to previous solution, n_fail = {}, n_safe = {}".format(self.n_fail,self.n_safe))
                 if sol_verbose:
-                    u_apply,k_fb_safe_apply, k_ff_safe_all, p_safe = self.get_old_solution(x_0, get_ctrl_traj = True)
+                    u_apply,k_fb_safe_output, k_ff_safe_all, p_safe = self.get_old_solution(x_0, get_ctrl_traj = True)
                 else:
                     u_apply = self.get_old_solution(x_0)
                     k_ff_safe_all = u_apply
 
         if sol_verbose:
 
-            return u_apply, feasible, success, array_of_vec_to_array_of_mat(k_fb_safe_apply,self.n_u,self.n_s), k_ff_safe_all, p_safe, q_safe, sol
+            return u_apply, feasible, success, k_fb_safe_output, k_ff_safe_all, p_safe, q_safe, sol
 
         return u_apply, success
 
