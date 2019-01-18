@@ -15,11 +15,12 @@ import deepdish as dd
 import numpy as np
 from ..utils import array_of_vec_to_array_of_mat
 
-np.random.seed(125)
+a_tol = 1e-5
+r_tol = 1e-4
 
 @pytest.fixture(params = [("CartPole",True)])
 def before_test_safempc(request):
-
+    np.random.seed(125)
     env,lin_model = request.param
     if env == "CartPole":
         env = CartPole()
@@ -42,7 +43,6 @@ def before_test_safempc(request):
     y = y[:80,:]
 
 
-    print(np.shape(X))
     m = None
     gp = gp_models.SimpleGPModel(n_s,n_s,n_u,X,y,m)
     gp.train(X,y,m,True,None,False)
@@ -54,9 +54,9 @@ def before_test_safempc(request):
     l_sigma = np.array([0.01]*n_s)
 
     h_mat_safe = np.hstack((np.eye(n_s,1),-np.eye(n_s,1))).T
-    h_safe = np.array([1000,1000]).reshape((2,1))
+    h_safe = np.array([5,5]).reshape((2,1))
     h_mat_obs = np.copy(h_mat_safe)
-    h_obs = np.array([2000,2000]).reshape((2,1))
+    h_obs = np.array([5,5]).reshape((2,1))
 
     wx_cost = 10*np.eye(n_s)
     wu_cost = 0.1
@@ -145,11 +145,17 @@ def test_mpc_casadi_same_constraint_values_as_numeric_eval(before_test_safempc):
     h_mat_obs = safe_mpc.h_mat_obs
     h_obs = safe_mpc.h_obs
     m_obs,n_s = np.shape(h_mat_obs)
+    m_safe, _ = np.shape(h_mat_safe)
 
     g_0 = lin_ellipsoid_safety_distance(p_all[0,:].reshape(n_s,1),q_all[0,:].reshape(n_s,n_s),h_mat_obs,h_obs)
     g_1 = lin_ellipsoid_safety_distance(p_all[1,:].reshape(n_s,1),q_all[1,:].reshape(n_s,n_s),h_mat_obs,h_obs)
     g_safe = lin_ellipsoid_safety_distance(p_all[1,:].reshape(n_s,1),q_all[1,:].reshape(n_s,n_s),h_mat_safe,h_safe)
 
-    assert np.allclose(g_0,constr_values[:m_obs]), "Are the distances to the obstacle the same after one step?"
-    assert np.allclose(g_1,constr_values[m_obs:2*m_obs]), "Are the distances to the obstacle the same after two steps?"
-    assert np.allclose(g_safe,constr_values[2*m_obs:]), "Are the distances to the obstacle the same after two steps?"
+
+    idx_state_constraints = env.n_u*n_safe*2-1
+
+    assert np.allclose(g_1,constr_values[idx_state_constraints+m_obs:idx_state_constraints+2*m_obs],r_tol,a_tol), "Are the distances to the obstacle the same after two steps?"
+    assert np.allclose(g_safe,constr_values[-m_safe:],r_tol,a_tol), "Are the distances to the obstacle the same after two steps?"
+    assert np.allclose(g_0,constr_values[idx_state_constraints:idx_state_constraints+m_obs],r_tol,a_tol), "Are the distances to the obstacle the same after one step?"
+
+
