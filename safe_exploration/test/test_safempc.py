@@ -10,17 +10,20 @@ import pytest
 from ..safempc_simple import SimpleSafeMPC
 from ..environments import CartPole
 from .. import gp_models
-from ..gp_reachability import multistep_reachability, lin_ellipsoid_safety_distance,multistep_reachability_new
-import deepdish as dd
+from ..gp_reachability import multistep_reachability, lin_ellipsoid_safety_distance
+from ..gp_reachability_casadi import multi_step_reachability as ms_cas
 import numpy as np
 from ..utils import array_of_vec_to_array_of_mat
+from numpy.testing import assert_allclose
 
+from casadi import SX, Function
+from casadi import reshape as cas_reshape
 a_tol = 1e-5
 r_tol = 1e-4
 
 @pytest.fixture(params = [("CartPole",True)])
 def before_test_safempc(request):
-    np.random.seed(125)
+    np.random.seed(12345)
     env,lin_model = request.param
     if env == "CartPole":
         env = CartPole()
@@ -54,9 +57,9 @@ def before_test_safempc(request):
     l_sigma = np.array([0.01]*n_s)
 
     h_mat_safe = np.hstack((np.eye(n_s,1),-np.eye(n_s,1))).T
-    h_safe = np.array([5,5]).reshape((2,1))
+    h_safe = np.array([100,100]).reshape((2,1))
     h_mat_obs = np.copy(h_mat_safe)
-    h_obs = np.array([5,5]).reshape((2,1))
+    h_obs = np.array([150,150]).reshape((2,1))
 
     wx_cost = 10*np.eye(n_s)
     wu_cost = 0.1
@@ -80,17 +83,18 @@ def before_test_safempc(request):
     env_opts_safempc["lin_model"] = lin_model_param
 
 
-    safe_mpc_solver = SimpleSafeMPC(n_safe,gp,env_opts_safempc,wx_cost,wu_cost,beta_safety = c_safety)
+    safe_mpc = SimpleSafeMPC(n_safe,gp,env_opts_safempc,wx_cost,wu_cost,beta_safety = c_safety)
 
-    safe_mpc_solver.init_solver()
+    safe_mpc.init_solver()
 
-    x_0 = np.zeros((n_s,1))
+    x_0 = 0.2*np.random.randn(n_s,1)#np.zeros((n_s,1))
 
-    return env, safe_mpc_solver,x_0, c_safety, l_mu, l_sigma, gp,a,b,n_safe
+    _,_,_,k_fb_apply, k_ff_apply, p_all,q_all, sol= safe_mpc.solve(x_0,sol_verbose = True)
 
+    return env, safe_mpc,None,None,k_fb_apply, k_ff_apply, p_all,q_all, sol
 
-@pytest.mark.xfail
-def test_safempc_open_loop_trajectory_same_as_planned(before_test_safempc):
+@pytest.mark.skip(reason="Not implemented yet")
+def test_mpc_casadi_same_objective_value_values_as_numeric_eval(before_test_safempc):
     """ check if casadi mpc constr values are the same as from numpy reachability results
 
     TODO: A rather circuituous way to check if the internal function evaluations
@@ -100,62 +104,36 @@ def test_safempc_open_loop_trajectory_same_as_planned(before_test_safempc):
     in test_gp_reachability_casadi.py
 
     """
-    env, safe_mpc,x_0,c_safety,l_mu,l_sigma,gp,a,b,n_safe = before_test_safempc
+    env, safe_mpc,k_ff_perf_traj,k_fb_perf_traj,k_fb_apply, k_ff_apply, p_all,q_all, sol = before_test_safempc
+
     h_mat_safe = safe_mpc.h_mat_safe
     h_safe = safe_mpc.h_safe
     h_mat_obs = safe_mpc.h_mat_obs
     h_obs = safe_mpc.h_obs
 
-    _,_,_, k_fb_apply, k_ff_all, p_all_planner,q_all_planner, constr_values = safe_mpc.solve(x_0,sol_verbose = True)
-
-    if k_fb_apply.ndim == 2:
-        k_fb_apply = array_of_vec_to_array_of_mat(k_fb_apply,env.n_u,env.n_s)
-        #k_fb_tmp = np.copy(k_fb_apply)
-        #n_u,n_s = np.shape(k_fb_tmp)
-        #k_fb_apply = np.empty((n_safe-1,n_u,n_s))
-        #for i in range(n_safe-1):
-        #    k_fb_apply[i] = k_fb_tmp
+    _,_,_, k_fb_apply, k_ff_all, p_all_planner,q_all_planner, sol = safe_mpc.solve(x_0,sol_verbose = True)
 
 
 
 
-    p_new,q_new,p_all_ms,q_all_ms = multistep_reachability(x_0,gp,k_fb_apply,k_ff_all,l_mu,l_sigma,None, c_safety,0,a,b)
-
-    n_s = np.shape(p_all_ms)[1]
-
-    assert np.allclose(p_all_ms[-1,:],p_all_planner[-1,:]), "Are the centers of the last ellipsoids the same?"
-    assert np.allclose(p_all_ms[0,:],p_all_planner[0,:]), "Are the centers of the first ellipsoids the same?"
-    assert np.allclose(q_all_ms[-1,:,:],q_all_planner[-1,:,:]), "Are the shape matrices of the last ellipsoids the same?"
-    assert np.allclose(q_all_ms[0,:,:],q_all_planner[0,:,:]), "Are the shape matrices of the first ellipsoids the same?"
-
-
-@pytest.mark.xfail
 def test_mpc_casadi_same_constraint_values_as_numeric_eval(before_test_safempc):
     """check if the returned open loop (numerical) ellipsoids are the same as in internal planning"""
 
-    env, safe_mpc,x_0,c_safety,l_mu,l_sigma,gp,a,b,n_safe = before_test_safempc
-
-    _,_,_, k_fb_apply, k_ff_apply, p_all,q_all, constr_values= safe_mpc.solve(x_0,sol_verbose = True)
+    env, safe_mpc,k_ff_perf_traj,k_fb_perf_traj,k_fb_apply, k_ff_apply, p_all,q_all, sol = before_test_safempc
 
 
-    p_all,q_all = safe_mpc.get_trajectory_openloop(x_0.squeeze(),k_fb_apply,k_ff_apply)
+    n_s = env.n_s
+    n_u = env.n_u
+    g_0 = lin_ellipsoid_safety_distance(p_all[0,:].reshape(n_s,1),q_all[0,:].reshape(n_s,n_s),safe_mpc.h_mat_obs,safe_mpc.h_obs)
+    g_1 = lin_ellipsoid_safety_distance(p_all[1,:].reshape(n_s,1),cas_reshape(q_all[1,:],(n_s,n_s)),safe_mpc.h_mat_obs,safe_mpc.h_obs)
+    g_safe = lin_ellipsoid_safety_distance(p_all[-1,:].reshape(n_s,1),q_all[-1,:].reshape(n_s,n_s),safe_mpc.h_mat_safe,safe_mpc.h_safe)
 
-    h_mat_safe = safe_mpc.h_mat_safe
-    h_safe = safe_mpc.h_safe
-    h_mat_obs = safe_mpc.h_mat_obs
-    h_obs = safe_mpc.h_obs
-    m_obs,n_s = np.shape(h_mat_obs)
-    m_safe, _ = np.shape(h_mat_safe)
+    idx_state_constraints = env.n_u*safe_mpc.n_safe*2-1
 
-    g_0 = lin_ellipsoid_safety_distance(p_all[0,:].reshape(n_s,1),q_all[0,:].reshape(n_s,n_s),h_mat_obs,h_obs)
-    g_1 = lin_ellipsoid_safety_distance(p_all[1,:].reshape(n_s,1),q_all[1,:].reshape(n_s,n_s),h_mat_obs,h_obs)
-    g_safe = lin_ellipsoid_safety_distance(p_all[1,:].reshape(n_s,1),q_all[1,:].reshape(n_s,n_s),h_mat_safe,h_safe)
+    constr_values = sol["g"]
 
-
-    idx_state_constraints = env.n_u*n_safe*2-1
-
-    assert np.allclose(g_1,constr_values[idx_state_constraints+m_obs:idx_state_constraints+2*m_obs],r_tol,a_tol), "Are the distances to the obstacle the same after two steps?"
-    assert np.allclose(g_safe,constr_values[-m_safe:],r_tol,a_tol), "Are the distances to the obstacle the same after two steps?"
-    assert np.allclose(g_0,constr_values[idx_state_constraints:idx_state_constraints+m_obs],r_tol,a_tol), "Are the distances to the obstacle the same after one step?"
-
-
+    assert_allclose(g_0,constr_values[idx_state_constraints:idx_state_constraints+safe_mpc.m_obs],r_tol,a_tol)
+    #Are the distances to the obstacle the same after two steps?
+    assert_allclose(g_1,constr_values[idx_state_constraints+safe_mpc.m_obs:idx_state_constraints+2*safe_mpc.m_obs],r_tol,a_tol)
+    #Are the distances to the safe set the same after the last step?
+    assert_allclose(g_safe,constr_values[idx_state_constraints+2*safe_mpc.m_obs:idx_state_constraints+2*safe_mpc.m_obs+safe_mpc.m_safe],r_tol,a_tol)
