@@ -13,7 +13,7 @@ from importlib import import_module
 from os import mkdir
 from utils import dlqr
 import warnings
-import numpy as np 
+import numpy as np
 import sys
 
 def create_solver(conf, env, model_options = None):
@@ -22,12 +22,12 @@ def create_solver(conf, env, model_options = None):
     lin_model = None
     lin_trafo_gp_input = conf.lin_trafo_gp_input
 
-    h_mat_safe, h_safe, h_mat_obs, h_obs = env.get_safety_constraints(normalize = True) 
+    h_mat_safe, h_safe, h_mat_obs, h_obs = env.get_safety_constraints(normalize = True)
 
     warnings.warn("Normalization of constraints may be wrong!")
 
     a_true,b_true = env.linearize_discretize()
-    
+
     safe_policy = None
     if conf.lin_prior:
         a_prior, b_prior = get_prior_model_from_conf(conf,env)
@@ -40,17 +40,17 @@ def create_solver(conf, env, model_options = None):
     r= wu_cost
     k_lqr,_,_ = dlqr(a_true,b_true,q,r)
     k_fb = -k_lqr
-    safe_policy = lambda x: np.dot(k_fb,x) 
+    safe_policy = lambda x: np.dot(k_fb,x)
 
     if model_options is None:
         gp = SimpleGPModel(conf.gp_ns_out,conf.gp_ns_in,env.n_u,m = conf.m,kern_types = conf.kern_types,Z = conf.Z)
     else:
         gp = SimpleGPModel.from_dict(model_options)
-    
+
     dt = env.dt
     ctrl_bounds = np.hstack((np.reshape(env.u_min,(-1,1)),np.reshape(env.u_max,(-1,1))))
 
-    
+
     env_opts_safempc = dict()
 
     env_opts_safempc["h_mat_safe"] = h_mat_safe
@@ -70,9 +70,9 @@ def create_solver(conf, env, model_options = None):
         l_mu = env.l_mu
         l_sigm = env.l_sigm
 
-        
+
         env_opts_safempc["l_mu"] = env.l_mu
-        env_opts_safempc["l_sigma"] = env.l_sigm   
+        env_opts_safempc["l_sigma"] = env.l_sigm
 
         perf_opts_safempc = dict()
         perf_opts_safempc["type_perf_traj"] = conf.type_perf_traj
@@ -94,11 +94,11 @@ def create_solver(conf, env, model_options = None):
     #mpc_control = SafeMPC(n_safe, gp, env_opts_safempc, wx_cost, wu_cost,beta_safety = conf.beta_safety,
     #             ilqr_init = conf.ilqr_init, lin_model = lin_model, ctrl_bounds = ctrl_bounds,
     #             safe_policy = safe_policy, opt_perf_trajectory = perf_opts_safempc,lin_trafo_gp_input = lin_trafo_gp_input)
-    
-    
+
+
     return solver, safe_policy
-    
-    
+
+
 def create_env(env_name,env_options_dict = None):
     """ Given a set of options, create an environment """
     if env_options_dict is None:
@@ -109,7 +109,7 @@ def create_env(env_name,env_options_dict = None):
         return CartPole(**env_options_dict)
     else:
         raise NotImplementedError("Unknown environment: {}".format(conf.env_name))
-        
+
 def get_prior_model_from_conf(conf,env_true):
     """ Get prior model from config"""
     if conf.lin_prior:
@@ -118,33 +118,33 @@ def get_prior_model_from_conf(conf,env_true):
             conf.prior_model["norm_x"] = env_true.norm[0]
         if not "norm_u" in conf.prior_model:
             conf.prior_model["norm_u"] = env_true.norm[1]
-            
+
         env_prior = create_env(conf.env_name,conf.prior_model)
-        
-        a_prior,b_prior = env_prior.linearize_discretize()     
+
+        a_prior,b_prior = env_prior.linearize_discretize()
 
     else:
         a_prior,b_prior = (np.eye(env_true.n_s),np.zeros((env_true.n_s,env.n_u)))
-        
+
     return a_prior, b_prior
-    
+
 def get_model_options_from_conf(conf,env):
     """ Utility function to create a gp options dict from the config class"""
-    
-    
+
+
     #There already is a gp_dict ready to use
     if not conf.gp_dict_path is None:
         return np.load(conf.gp_dict_path)
-    
+
     #neither a gp_dict_path nor a gp_data_path exists -> return None
     gp_dict = dict()
-    
+
     a_prior,b_prior = get_prior_model_from_conf(conf,env)
-        
+
     ab_prior = np.hstack((a_prior,b_prior))
     prior_model = lambda z: np.dot(z,ab_prior.T)
     gp_dict["prior_model"] = prior_model
-    
+
 
     gp_dict["data_path"] = conf.gp_data_path
     gp_dict["m"] = conf.m
@@ -157,7 +157,7 @@ def get_model_options_from_conf(conf,env):
     gp_dict["Z"] = conf.Z
 
     return gp_dict
-    
+
 def loadConfig(conf_path):
 
     if not exists(abspath(conf_path)):
