@@ -16,7 +16,6 @@ from casadi import SX, Function
 from casadi import reshape as cas_reshape
 from ..utils import array_of_vec_to_array_of_mat
 
-import warnings
 a_tol = 1e-5
 r_tol = 1e-4
 
@@ -25,8 +24,8 @@ r_tol = 1e-4
 @pytest.fixture(params = [("InvPend",True,True),("InvPend",False,True),
                           ("InvPend",True,True),("InvPend",False,True)])
 def before_test_onestep_reachability(request):
-    np.random.seed(25)
-    warnings.warn("important tests deactivated")
+    np.random.seed(50)
+
     env, init_uncertainty, lin_model = request.param
     n_s = 2
     n_u = 1
