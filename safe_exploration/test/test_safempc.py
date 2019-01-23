@@ -48,7 +48,7 @@ def before_test_safempc(request):
 
     m = None
     gp = gp_models.SimpleGPModel(n_s,n_s,n_u,X,y,m)
-    gp.train(X,y,m,True,None,False)
+    gp.train(X,y,m,False,None,False)
 
     n_safe = 3
     n_perf = None
@@ -57,9 +57,9 @@ def before_test_safempc(request):
     l_sigma = np.array([0.01]*n_s)
 
     h_mat_safe = np.hstack((np.eye(n_s,1),-np.eye(n_s,1))).T
-    h_safe = np.array([100,100]).reshape((2,1))
+    h_safe = np.array([300,300]).reshape((2,1))
     h_mat_obs = np.copy(h_mat_safe)
-    h_obs = np.array([150,150]).reshape((2,1))
+    h_obs = np.array([300,300]).reshape((2,1))
 
     wx_cost = 10*np.eye(n_s)
     wu_cost = 0.1
