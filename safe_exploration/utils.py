@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+#-*- coding: utf-8 -*-
 """
 Created on Wed Sep 20 10:43:16 2017
 
@@ -347,6 +347,30 @@ def rgetattr(obj, attr, default=sentinel):
             return getattr(obj, name, default)
     return functools.reduce(_getattr, [obj]+attr.split('.'))
 
+def reshape_derivatives_3d_to_2d(derivative_3d):
+    """ Reshape 3D derivative tensor to 2D derivative
+
+    Given a function f: \R^{n_in} \to \R^{r \times s} we get a derivative tensor
+    df: \R^{n_in} \to \R^{r \times s \times n_in} that needs to be reshaped to
+    df_{2d}: \R^{n_in} \to \R^{r * s \times n_in} as casadi only allows for 2D arrays.
+
+    The reshaping rule has to follow the casadi rule for these kinds of reshape operations
+
+    TO-DO: For now this is only tested implicitly through test_state_space_model/test_ssm_evaluator_derivatives_passed_correctly
+           by checking if the SSMEvaluator passes the gradients in the right format to casadi (with the use of this function)
+    Parameters
+    ----------
+    derivative_3d: 3D-array[float]
+        A (r,s,n_in) array representing the evaluated derivative tensor df
+
+    Returns
+    -------
+    derivative_2d:
+        A (r*s,n_in) array representing the reshaped, evaluated derivative tenor df_{2d}
+    """
+    r,s,n_in = np.shape(derivative_3d)
+
+    return np.reshape(derivative_3d,(r*s,n_in))
 
 def generate_initial_samples(env,conf,relative_dynamics,solver,safe_policy):
     """ Generate initial samples from the system
