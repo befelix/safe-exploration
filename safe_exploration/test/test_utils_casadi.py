@@ -13,17 +13,12 @@ import pytest
 from casadi import Function, SX
 
 
-@pytest.fixture(params = ["t_1","t_2","t_3","t_4"])
+@pytest.fixture(params = [2,3,5,8])
 def before_test_matrix_norm_2(request):
-    if request.param == "t_1":
-        n_s = 2
-    elif request.param == "t_2":
-        n_s = 3
-    elif request.param == "t_3":
-        n_s = 5
-    elif request.param == "t_4":
-        n_s = 8
+    np.random.seed(123)
+    n_s = request.param
     x_0 = np.random.rand(n_s,n_s)
+
     return np.dot(x_0,x_0.T), n_s
 
 
