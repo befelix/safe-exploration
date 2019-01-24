@@ -1,0 +1,29 @@
+version: 2
+jobs:
+  build:
+    docker:
+      - image: circleci/python:2.7
+    steps:
+      - checkout
+
+      - run:
+          name: Install library
+          command: |
+            sudo pip install virtualenv
+            virtualenv -p python2.7 venv
+            . venv/bin/activate
+            pip install --upgrade pip
+            pip install numpy
+            pip install -e .[test]
+      - run:
+          name: Run tests
+          command: |
+            . venv/bin/activate
+            bash scripts/test_code.sh
+
+workflows:
+  version: 2
+  build_and_test:
+    jobs:
+      - build
+

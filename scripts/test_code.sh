@@ -27,10 +27,10 @@ NC='\033[0m'
 # Ignore import errors for __init__
 #flake8 $module --filename=__init__.py  --ignore=F --show-source || { exit 1; }
 
-#echo -e "${GREEN}Testing docstring conventions.${NC}"
+echo -e "${GREEN}Testing docstring conventions.${NC}"
 # Test docstring conventions
 pydocstyle $module || { exit 1; }
 
 # Run unit tests
 echo -e "${GREEN}Running unit tests.${NC}"
-pytest --doctest-modules --cov --cov-fail-under=50 $module || { exit 1; }
+pytest --doctest-modules --cov=$module --cov-fail-under=50 $module || { exit 1; }
