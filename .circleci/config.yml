@@ -7,6 +7,15 @@ jobs:
       - checkout
 
       - run:
+          name: Install build dependencies
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends --quiet build-essential
+
+      - restore_cache:
+          keys: pip
+
+      - run:
           name: Install library
           command: |
             sudo pip install virtualenv
@@ -15,6 +24,12 @@ jobs:
             pip install --upgrade pip
             pip install numpy
             pip install -e .[test]
+
+      - save_cache:
+          key: pip
+          paths:
+            - ~/.cache/pip
+
       - run:
           name: Run tests
           command: |
