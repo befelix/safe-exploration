@@ -12,8 +12,8 @@ import numpy as np
 from casadi import SX, mtimes, vertcat
 from casadi import reshape as cas_reshape
 
-from gp_reachability_casadi import lin_ellipsoid_safety_distance
-from uncertainty_propagation_casadi import mean_equivalent_multistep
+from .gp_reachability_casadi import lin_ellipsoid_safety_distance
+from .uncertainty_propagation_casadi import mean_equivalent_multistep
 
 ATTR_NAMES_ENV = ['h_mat_safe', 'h_safe', 'lin_model', 'ctrl_bounds', 'h_mat_obs',
                   'h_obs', 'dt']

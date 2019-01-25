@@ -11,11 +11,11 @@ import numpy as np
 from casadi import SX, mtimes, vertcat, sum2, sqrt
 from casadi import reshape as cas_reshape
 
-from gp_reachability_casadi import lin_ellipsoid_safety_distance
-from gp_reachability_casadi import multi_step_reachability as cas_multistep
-from uncertainty_propagation_casadi import mean_equivalent_multistep, \
+from .gp_reachability_casadi import lin_ellipsoid_safety_distance
+from .gp_reachability_casadi import multi_step_reachability as cas_multistep
+from .uncertainty_propagation_casadi import mean_equivalent_multistep, \
     multi_step_taylor_symbolic
-from utils import dlqr, feedback_ctrl, array_of_vec_to_array_of_mat
+from .utils import dlqr, feedback_ctrl, array_of_vec_to_array_of_mat
 
 ATTR_NAMES_PERF = ['type_perf_traj', 'n_perf', 'r', 'perf_has_fb']
 DEFAULT_OPT_PERF = {'type_perf_traj': 'mean_equivalent', 'n_perf': 5, 'r': 1,
@@ -455,7 +455,7 @@ class SimpleSafeMPC:
 
         if self.has_ctrl_bounds:
             print("What about the performance control bounds??")
-            print(self.has_ctrl_bounds)
+            print((self.has_ctrl_bounds))
             for i in range(self.n_perf - self.r):
                 g_u_i, lbu_i, ubu_i = self._generate_control_constraint(
                     k_ff_perf[i, :].T)
@@ -854,9 +854,9 @@ class SimpleSafeMPC:
             else:
                 # can apply previous solution
                 if self.verbosity > 1:
-                    print(
+                    print((
                         "Infeasible solution. Switching to previous solution, n_fail = {}, n_safe = {}".format(
-                            self.n_fail, self.n_safe))
+                            self.n_fail, self.n_safe)))
                 if sol_verbose:
                     u_apply, k_fb_safe_output, k_ff_safe_all, p_safe = self.get_old_solution(
                         x_0, get_ctrl_traj=True)
@@ -883,9 +883,9 @@ class SimpleSafeMPC:
         if terminal_only or self.h_mat_obs is None:
 
             if self.verbosity > 1:
-                print(
+                print((
                     "\n===== Evaluated terminal constraint values: FEASIBLE = {} =====".format(
-                        feasible))
+                        feasible)))
                 print(g_term_val)
                 print("\n===== ===== ===== ===== ===== ===== ===== =====")
 

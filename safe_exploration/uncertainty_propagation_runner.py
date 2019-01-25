@@ -7,8 +7,8 @@ Created on Thu Nov 23 09:42:40 2017
 import numpy as np
 from casadi import mtimes
 
-from gp_reachability import trajectory_inside_ellipsoid, multistep_reachability
-from utils_config import get_prior_model_from_conf
+from .gp_reachability import trajectory_inside_ellipsoid, multistep_reachability
+from .utils_config import get_prior_model_from_conf
 
 
 def run_uncertainty_propagation(env, safempc, conf):
@@ -107,5 +107,5 @@ def print_results(inside_ellipsoid_per_step, inside_ellipsoid_all, conf):
             perc_str += "| {} ".format(per_step_percentage[i])
         print(step_str)
         print(perc_str)
-        print(""" Trajectory safety percentage: {}""".format(
-            float(sum(inside_ellipsoid_all)) / conf.n_rollouts))
+        print((""" Trajectory safety percentage: {}""".format(
+            float(sum(inside_ellipsoid_all)) / conf.n_rollouts)))

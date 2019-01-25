@@ -13,8 +13,8 @@ import numpy as np
 from casadi import reshape as cas_reshape
 from casadi import sum1, sum2, SX, vertcat, mtimes
 
-from gp_reachability_casadi import lin_ellipsoid_safety_distance
-from gp_reachability_casadi import multi_step_reachability as cas_multistep
+from .gp_reachability_casadi import lin_ellipsoid_safety_distance
+from .gp_reachability_casadi import multi_step_reachability as cas_multistep
 
 
 class StaticSafeMPCExploration:
@@ -308,11 +308,11 @@ class StaticSafeMPCExploration:
 
                     z_i = np.vstack((x_best, u_best)).T
                     if verbosity > 0:
-                        print("New optimal sigma found at iteration {}".format(i))
+                        print(("New optimal sigma found at iteration {}".format(i)))
                         if verbosity > 1:
-                            print(
+                            print((
                                 "New feasible solution with sigma sum {} found".format(
-                                    str(sigm_i)))
+                                    str(sigm_i))))
 
         return x_best, u_best
 

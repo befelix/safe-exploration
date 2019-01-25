@@ -9,8 +9,8 @@ import numpy as np
 from casadi import SX, mtimes, vertcat, sum1, sqrt, Function
 from casadi import reshape as cas_reshape
 
-from utils_casadi import compute_remainder_overapproximations
-from utils_ellipsoid_casadi import sum_two_ellipsoids, ellipsoid_from_rectangle
+from .utils_casadi import compute_remainder_overapproximations
+from .utils_ellipsoid_casadi import sum_two_ellipsoids, ellipsoid_from_rectangle
 
 
 def onestep_reachability(p_center, gp, k_ff, l_mu, l_sigma,
@@ -236,4 +236,4 @@ if __name__ == "__main__":
     h_safe = np.array([0.5, 0.5])
     f = Function("f", [p, q], [lin_ellipsoid_safety_distance(p, q, h_mat_safe, h_safe)])
 
-    print(f(np.zeros((3, 1)), 0.25 * np.eye(3)))
+    print((f(np.zeros((3, 1)), 0.25 * np.eye(3))))

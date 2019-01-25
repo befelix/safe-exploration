@@ -37,7 +37,7 @@ def before_test_safempc(request):
         a,b = env.linearize_discretize()
         lin_model_param = (a,b)
 
-    train_data = dict(np.load(path).items())
+    train_data = dict(list(np.load(path).items()))
     X = train_data["X"]
     X = X[:80,:]
     y = train_data["y"]

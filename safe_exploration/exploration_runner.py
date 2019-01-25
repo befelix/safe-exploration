@@ -10,10 +10,10 @@ import warnings
 import matplotlib.pyplot as plt
 import numpy as np
 
-from gp_reachability import verify_trajectory_safety, trajectory_inside_ellipsoid
-from safempc_exploration import StaticSafeMPCExploration, DynamicSafeMPCExploration
-from utils import generate_initial_samples
-from utils_config import create_env, create_solver
+from .gp_reachability import verify_trajectory_safety, trajectory_inside_ellipsoid
+from .safempc_exploration import StaticSafeMPCExploration, DynamicSafeMPCExploration
+from .utils import generate_initial_samples
+from .utils_config import create_env, create_solver
 
 
 def run_exploration(conf):

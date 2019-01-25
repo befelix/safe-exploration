@@ -11,10 +11,10 @@ from collections import namedtuple
 import matplotlib.pyplot as plt
 import numpy as np
 
-import utils_ellipsoid
-from sampling_models import MonteCarloSafetyVerification
-from utils import generate_initial_samples
-from utils_config import create_solver, create_env
+from . import utils_ellipsoid
+from .sampling_models import MonteCarloSafetyVerification
+from .utils import generate_initial_samples
+from .utils_config import create_solver, create_env
 
 
 def run_episodic(conf):
@@ -148,16 +148,16 @@ def do_rollout(env, n_steps, solver=None, relative_dynamics=False, cost=None,
             t_solver = t_end_solver - t_start_solver
 
             if verbosity > 0:
-                print("total time solver in ms: {}".format(t_solver))
+                print(("total time solver in ms: {}".format(t_solver)))
 
         action, next_state, observation, done = env.step(action)
         if not cost is None:
             c = [cost(next_state)]
             cc += c
             if verbosity > 0:
-                print("Immediate cost for current step: {}".format(c))
+                print(("Immediate cost for current step: {}".format(c)))
         if verbosity > 0:
-            print("\n==== Applied normalized action at time step {} ====".format(i))
+            print(("\n==== Applied normalized action at time step {} ====".format(i)))
             print(action)
             print("\n==== Next state (normalized) ====")
             print(next_state)
@@ -202,8 +202,8 @@ def do_rollout(env, n_steps, solver=None, relative_dynamics=False, cost=None,
                                              n_samples=300)
             safety_ratio, _ = sampler.inside_ellipsoid_ratio(s_all, q_traj, p_traj)
             if verbosity > 0:
-                print("\n==== GP samples inside Safety Ellipsoids (time step {}) "
-                      "====".format(i))
+                print(("\n==== GP samples inside Safety Ellipsoids (time step {}) "
+                      "====".format(i)))
                 print(safety_ratio)
                 print("==========================\n")
 
@@ -222,9 +222,9 @@ def do_rollout(env, n_steps, solver=None, relative_dynamics=False, cost=None,
                 if bool_inside:
                     n_inside += 1
                 if verbosity > 0:
-                    print(
+                    print((
                         "\n==== Next state inside uncertainty ellipsoid:{}"
-                        " ====\n".format(bool_inside))
+                        " ====\n".format(bool_inside)))
 
         state_action = np.hstack((state, action))
         xx = np.vstack((xx, state_action))
@@ -252,18 +252,18 @@ def do_rollout(env, n_steps, solver=None, relative_dynamics=False, cost=None,
         yy = yy[1:-1:obs_frequency, :]
         exit_codes = exit_codes[1:, :]
 
-    print("Agent survived {} steps".format(n_successful))
+    print(("Agent survived {} steps".format(n_successful)))
     if verbosity > 0:
         print("========== State/Action Trajectory ===========")
         print(xx)
         if check_system_safety and n_test_safety > 0:
             print("\n======= percentage system steps inside safety bounds =======")
-            print(float(n_inside) / n_test_safety)
+            print((float(n_inside) / n_test_safety))
     return xx, yy, cc, exit_codes, safety_failure
 
 
 if __name__ == "__main__":
     env_options = namedtuple('conf', ['env_name'])
     conf = env_options(env_name="InvertedPendulum")
-    print(conf.env_name)
+    print((conf.env_name))
     run(data_safepath="inv_pend_no_rel_dyn", env_options=conf)  # )

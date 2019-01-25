@@ -8,7 +8,7 @@ Created on Wed Sep 20 10:37:51 2017
 import numpy as np
 from numpy.matlib import repmat
 
-from utils_ellipsoid import sample_inside_ellipsoid
+from .utils_ellipsoid import sample_inside_ellipsoid
 
 
 class MonteCarloSafetyVerification:

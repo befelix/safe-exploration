@@ -10,9 +10,9 @@ Created on Wed Sep 20 11:13:29 2017
 import numpy as np
 from numpy import zeros, diag
 
-from utils import compute_remainder_overapproximations, print_ellipsoid, feedback_ctrl, \
+from .utils import compute_remainder_overapproximations, print_ellipsoid, feedback_ctrl, \
     sample_inside_polytope
-from utils_ellipsoid import ellipsoid_from_rectangle, sum_two_ellipsoids, \
+from .utils_ellipsoid import ellipsoid_from_rectangle, sum_two_ellipsoids, \
     sample_inside_ellipsoid
 
 
@@ -146,7 +146,7 @@ def onestep_reachability(p_center, gp, k_ff, l_mu, l_sigma, q_shape=None, k_fb=N
             print_ellipsoid(p_1, q_1, text="accumulated uncertainty current step")
 
             print("volume of ellipsoid summed individually")
-            print(np.linalg.det(np.linalg.cholesky(q_1)))
+            print((np.linalg.det(np.linalg.cholesky(q_1))))
 
         return p_1, q_1
 

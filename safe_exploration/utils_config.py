@@ -10,11 +10,11 @@ from os.path import abspath, exists, split
 
 import numpy as np
 
-from cautious_mpc import CautiousMPC
-from environments import InvertedPendulum, CartPole
-from gp_models import SimpleGPModel
-from safempc_simple import SimpleSafeMPC
-from utils import dlqr
+from .cautious_mpc import CautiousMPC
+from .environments import InvertedPendulum, CartPole
+from .gp_models import SimpleGPModel
+from .safempc_simple import SimpleSafeMPC
+from .utils import dlqr
 
 
 def create_solver(conf, env, model_options=None):
@@ -163,7 +163,7 @@ def get_model_options_from_conf(conf, env):
 
 def loadConfig(conf_path):
     if not exists(abspath(conf_path)):
-        raise (ValueError("The specified configuration does not exist!"))
+        raise ValueError
     else:
 
         file_path, filename = split(conf_path)

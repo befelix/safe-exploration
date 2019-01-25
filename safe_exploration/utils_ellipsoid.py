@@ -251,4 +251,4 @@ if __name__ == "__main__":
 
     p = np.zeros((4, 3))
 
-    print(sum_ellipsoids(p, q))
+    print((sum_ellipsoids(p, q)))

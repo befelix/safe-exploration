@@ -12,7 +12,7 @@ import numpy as np
 import numpy.linalg as nLa
 from sklearn import cluster
 
-from utils import reshape_derivatives_3d_to_2d
+from .utils import reshape_derivatives_3d_to_2d
 
 
 class StateSpaceModel(object):

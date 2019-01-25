@@ -97,9 +97,9 @@ def compute_bounding_box_lagrangian(q, L, K, k, order=2, verbose=0):
         box_upper = L * l_max
 
     if verbose > 0:
-        print("\n=== bounding-box approximation of order {} ===".format(order))
-        print("largest eigenvalue of Q: {} \nlargest eigenvalue of KQK^T: {}".format(
-            s_max, sk_max))
+        print(("\n=== bounding-box approximation of order {} ===".format(order)))
+        print(("largest eigenvalue of Q: {} \nlargest eigenvalue of KQK^T: {}".format(
+            s_max, sk_max)))
 
     return box_lower, box_upper
 
@@ -167,12 +167,12 @@ def print_ellipsoid(p_center, q_shape, text="ellipsoid", visualize=False):
     """
 
     print("\n")
-    print("===== {} =====".format(text))
+    print(("===== {} =====".format(text)))
     print("center:")
     print(p_center)
     print("==========")
     print("diagonal of shape matrix:")
-    print(diag(q_shape))
+    print((diag(q_shape)))
     print("===============")
 
 
@@ -468,11 +468,11 @@ def generate_initial_samples(env, conf, relative_dynamics, solver, safe_policy):
 
         if conf.verbose > 1:
             print("==== Safety controller evaluation ====")
-            print(
-                "Ratio sample / inside safe set: {} / {}".format(n_inside_first, n_max))
-            print(
+            print((
+                "Ratio sample / inside safe set: {} / {}".format(n_inside_first, n_max)))
+            print((
                 "Ratio next state inside safe set / intial state in safe set: {} / {}".format(
-                    n_success, i))
+                    n_success, i)))
 
         X = X[1:, :]
         y = y[1:, :]

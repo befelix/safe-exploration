@@ -16,10 +16,10 @@ from scipy.integrate import ode, odeint
 from scipy.signal import cont2discrete
 from scipy.spatial import ConvexHull
 
-from visualization.utils_visualization import plot_ellipsoid_2D
+from .visualization.utils_visualization import plot_ellipsoid_2D
 
 
-class Environment:
+class Environment(metaclass=abc.ABCMeta):
     """ Base class for environments
 
 
@@ -46,7 +46,6 @@ class Environment:
         target
         verbosity
     """
-    __metaclass__ = abc.ABCMeta
 
     def __init__(self, name, n_s, n_u, dt, init_m, init_std, plant_noise,
                  u_min, u_max, target, verbosity=0, p_origin=None):
@@ -235,7 +234,7 @@ class Environment:
                 print("===Action unnormalized:")
                 print(action)
                 print("===Next state unnormalized:")
-                print(self.current_state)
+                print((self.current_state))
 
             return action_clipped, new_state_obs, new_state_noise_obs, done
         raise ValueError("Odesolver failed!")

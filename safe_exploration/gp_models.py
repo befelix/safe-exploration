@@ -13,8 +13,8 @@ from GPy.kern import RBF, Linear, Matern52
 from GPy.util.linalg import pdinv
 from sklearn import cluster
 
-from gp_models_utils_casadi import gp_pred_function
-from utils import rgetattr, rsetattr
+from .gp_models_utils_casadi import gp_pred_function
+from .utils import rgetattr, rsetattr
 
 
 class SimpleGPModel():
@@ -432,7 +432,7 @@ class SimpleGPModel():
                         "kernel type '{}' not supported".format(kern_types[i]))
 
                 if not hyp_i is None:
-                    for k, v in hyp_i.items():
+                    for k, v in list(hyp_i.items()):
                         try:
                             rsetattr(kern_i, k, v)
                             kern_hyp = rgetattr(kern_i, k)
