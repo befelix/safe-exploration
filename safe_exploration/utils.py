@@ -469,7 +469,8 @@ def generate_initial_samples(env, conf, relative_dynamics, solver, safe_policy):
         if conf.verbose > 1:
             print("==== Safety controller evaluation ====")
             print((
-                "Ratio sample / inside safe set: {} / {}".format(n_inside_first, n_max)))
+                "Ratio sample / inside safe set: {} / {}".format(n_inside_first,
+                                                                 n_max)))
             print((
                 "Ratio next state inside safe set / intial state in safe set: {} / {}".format(
                     n_success, i)))

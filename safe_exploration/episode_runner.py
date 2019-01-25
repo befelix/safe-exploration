@@ -203,7 +203,7 @@ def do_rollout(env, n_steps, solver=None, relative_dynamics=False, cost=None,
             safety_ratio, _ = sampler.inside_ellipsoid_ratio(s_all, q_traj, p_traj)
             if verbosity > 0:
                 print(("\n==== GP samples inside Safety Ellipsoids (time step {}) "
-                      "====".format(i)))
+                       "====".format(i)))
                 print(safety_ratio)
                 print("==========================\n")
 

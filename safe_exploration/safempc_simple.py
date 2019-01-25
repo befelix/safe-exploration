@@ -100,7 +100,8 @@ class SimpleSafeMPC:
         m_safe_mat, n_s_safe = np.shape(self.h_mat_safe)
         assert n_s_safe == self.n_s, " Wrong shape of safety matrix"
         assert np.shape(self.h_safe) == (
-        m_safe_mat, 1), " Shapes of safety linear inequality matrix/vector must match "
+            m_safe_mat,
+            1), " Shapes of safety linear inequality matrix/vector must match "
         self.m_safe = m_safe_mat
 
         # init safety constraints evaluator
@@ -892,7 +893,7 @@ class SimpleSafeMPC:
             return feasible, g_term_val
 
         g_interm_val = self.g_interm_cas(p_all[-1, :, None], cas_reshape(q_all[-1, :], (
-        self.n_s, self.n_s)))
+            self.n_s, self.n_s)))
 
         feasible_interm = np.all(
             lbg_interm - eps_constraints < g_interm_val) and np.all(

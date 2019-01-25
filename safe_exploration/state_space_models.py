@@ -281,8 +281,8 @@ class CasadiSSMEvaluator(cas.Callback):
                 """ """
                 if self.linearize_mu:
                     return cas.Sparsity.dense(2 * self.ssm.num_states + (
-                                self.ssm.num_states * (
-                                    self.ssm.num_states + self.ssm.num_actions)),
+                            self.ssm.num_states * (
+                            self.ssm.num_states + self.ssm.num_actions)),
                                               self.ssm.num_states + self.ssm.num_actions)
                 else:
                     return cas.Sparsity.dense(2 * self.ssm.num_states,

@@ -56,8 +56,9 @@ class MonteCarloSafetyVerification:
 
         assert n > 0, "The time horizon n for the multi-step sampling must be positive!"
         assert np.shape(K) == (
-        n, self.n_u, self.n_s), "Required shape of K is ({},{},{})".format(n, self.n_u,
-                                                                           self.n_s)
+            n, self.n_u, self.n_s), "Required shape of K is ({},{},{})".format(n,
+                                                                               self.n_u,
+                                                                               self.n_s)
         assert np.shape(k) == (n, self.n_u), "Required shape of k is ({},{})".format(n,
                                                                                      self.n_u)
 

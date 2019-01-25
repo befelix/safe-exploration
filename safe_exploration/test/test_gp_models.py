@@ -18,11 +18,11 @@ np.random.seed(125)
 a_tol = 1e-6
 r_tol = 1e-4
 
-@pytest.fixture(params = [("InvPend", ["rbf", "rbf"]),
-                          ("InvPend", ["lin_rbf", "lin_rbf"]),
-                          ("InvPend", ["lin_mat52", "lin_mat52"])])
-def before_gp_predict_test(request):
 
+@pytest.fixture(params=[("InvPend", ["rbf", "rbf"]),
+                        ("InvPend", ["lin_rbf", "lin_rbf"]),
+                        ("InvPend", ["lin_mat52", "lin_mat52"])])
+def before_gp_predict_test(request):
     env, kern_types = request.param
     n_s = 2
     n_u = 1
@@ -45,7 +45,7 @@ def test_predict_casadi_symbolic(before_gp_predict_test):
     x_new = SX.sym("x_new", (1, n_s + n_u))
 
     mu_pred, sigm_pred = gp.predict_casadi_symbolic(x_new)
-    f_nograd = Function("f_nograd",[x_new],[mu_pred,sigm_pred])
+    f_nograd = Function("f_nograd", [x_new], [mu_pred, sigm_pred])
 
     test_input = np.random.randn(n_s + n_u, 1)
     out_cas = f_nograd(test_input.T)
@@ -55,9 +55,3 @@ def test_predict_casadi_symbolic(before_gp_predict_test):
                     err_msg="Do the predictive means match?")
     assert_allclose(out_cas[1], out_numeric[1], r_tol, a_tol,
                     err_msg="Do the predictive vars match?")
-
-
-
-
-
-

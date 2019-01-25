@@ -16,13 +16,14 @@ def test_sample_inside_polytope():
         -.3 < x_1 < .4
         -.2 < x_2 < .2
     """
-    x = np.array([[0.1,0.15],[0.0,0.0],[.5,.15]])
+    x = np.array([[0.1, 0.15], [0.0, 0.0], [.5, .15]])
 
-    a = np.vstack((np.eye(2),-np.eye(2),-np.eye(2)))
-    b = np.array([.4,.2,.3,.2,.3,.2])[:,None]
+    a = np.vstack((np.eye(2), -np.eye(2), -np.eye(2)))
+    b = np.array([.4, .2, .3, .2, .3, .2])[:, None]
 
-    res = sample_inside_polytope(x,a,b)
+    res = sample_inside_polytope(x, a, b)
 
-    res_expect = np.array([True,True,False])#should be: inside, inside, not inside
+    res_expect = np.array([True, True, False])  # should be: inside, inside, not inside
 
-    assert np.all(res == res_expect), "Are the right samples inside/outside the polyope?"
+    assert np.all(
+        res == res_expect), "Are the right samples inside/outside the polyope?"
