@@ -2,7 +2,7 @@ version: 2
 jobs:
   build:
     docker:
-      - image: circleci/python:2.7
+      - image: circleci/python:3.6
     steps:
       - checkout
 
@@ -19,7 +19,7 @@ jobs:
           name: Install library
           command: |
             sudo pip install virtualenv
-            virtualenv -p python2.7 venv
+            virtualenv -p python3.6 venv
             . venv/bin/activate
             pip install --upgrade pip
             pip install numpy

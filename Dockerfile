@@ -1,4 +1,4 @@
-FROM continuumio/miniconda:4.5.11
+FROM continuumio/miniconda3:4.5.12
 
 # Install build essentials and clean up
 RUN apt-get update --quiet \
@@ -7,7 +7,7 @@ RUN apt-get update --quiet \
   && rm -rf /var/lib/apt/lists/*
 
 # Update conda, install packages, and clean up
-RUN conda install python=2.7 --yes --quiet \
+RUN conda install python=3.6 --yes --quiet \
   && conda clean --yes --all \
   && hash -r
 
