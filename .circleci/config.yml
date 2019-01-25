@@ -2,38 +2,35 @@ version: 2
 jobs:
   build:
     docker:
-      - image: circleci/python:3.6
+      - image: continuumio/miniconda3:4.5.4
+
     steps:
       - checkout
 
       - run:
           name: Install build dependencies
           command: |
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends --quiet build-essential
+            apt-get update
+            apt-get install -y --no-install-recommends --quiet build-essential
 
       - restore_cache:
-          keys: pip
+          keys: conda
 
       - run:
           name: Install library
           command: |
-            sudo pip install virtualenv
-            virtualenv -p python3.6 venv
-            . venv/bin/activate
-            pip install --upgrade pip
-            pip install numpy
-            pip install -e .[test]
+            conda install python=3.6 numpy pip --yes --quiet
+            pip install --progress-bar off -e .[test]
 
       - save_cache:
-          key: pip
+          key: conda
           paths:
             - ~/.cache/pip
+            - /opt/conda/pkgs
 
       - run:
           name: Run tests
           command: |
-            . venv/bin/activate
             bash scripts/test_code.sh
 
 workflows:
