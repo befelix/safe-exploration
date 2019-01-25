@@ -46,7 +46,7 @@ def before_test_safempc(request):
 
     m = None
     gp = gp_models.SimpleGPModel(n_s,n_s,n_u,X,y,m)
-    gp.train(X,y,m,False,None,False)
+    gp.train(X, y, m, opt_hyp=False, choose_data=False)
 
     n_safe = 3
     n_perf = None
@@ -81,15 +81,17 @@ def before_test_safempc(request):
     env_opts_safempc["lin_model"] = lin_model_param
 
 
-    safe_mpc = SimpleSafeMPC(n_safe,gp,env_opts_safempc,wx_cost,wu_cost,beta_safety = c_safety)
+    safe_mpc = SimpleSafeMPC(n_safe,gp,env_opts_safempc,wx_cost,wu_cost,
+                             beta_safety=c_safety)
 
     safe_mpc.init_solver()
 
-    x_0 = 0.2*np.random.randn(n_s,1)#np.zeros((n_s,1))
+    x_0 = 0.2*np.random.randn(n_s,1)
 
-    _,_,_,k_fb_apply, k_ff_apply, p_all,q_all, sol= safe_mpc.solve(x_0,sol_verbose = True)
+    _,_,_,k_fb_apply, k_ff_apply, p_all,q_all, sol = safe_mpc.solve(x_0,
+                                                                    sol_verbose=True)
 
-    return env, safe_mpc,None,None,k_fb_apply, k_ff_apply, p_all,q_all, sol
+    return env, safe_mpc, None, None, k_fb_apply, k_ff_apply, p_all, q_all, sol
 
 @pytest.mark.skip(reason="Not implemented yet")
 def test_mpc_casadi_same_objective_value_values_as_numeric_eval(before_test_safempc):

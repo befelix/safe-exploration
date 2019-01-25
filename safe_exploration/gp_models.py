@@ -206,7 +206,7 @@ class SimpleGPModel():
 
             post = model_gp.posterior
 
-            if noise_diag > 0.0:
+            if noise_diag > 0.:
                 model_gp.likelihood.variance.fix(noise_diag)
                 # inv_K[i] = pdinv(post._K+float(model_gp.Gaussian_noise.variance+noise_diag)*np.eye(n_beta))[0]
             # else:
