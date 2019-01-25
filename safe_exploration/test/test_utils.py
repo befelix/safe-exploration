@@ -5,7 +5,9 @@ Created on Sat Dec  2 18:20:28 2017
 @author: tkoller
 """
 import numpy as np
+
 from ..utils import sample_inside_polytope
+
 
 def test_sample_inside_polytope():
     """

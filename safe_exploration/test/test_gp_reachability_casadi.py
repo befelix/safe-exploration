@@ -6,14 +6,14 @@ Created on Thu Sep 28 16:12:30 2017
 """
 import os.path
 
-import pytest
 import numpy as np
-
-from .. import gp_models
-from .. import gp_reachability_casadi as reach_cas
-from .. import gp_reachability as reach_num
+import pytest
 from casadi import SX, Function
 from casadi import reshape as cas_reshape
+
+from .. import gp_models
+from .. import gp_reachability as reach_num
+from .. import gp_reachability_casadi as reach_cas
 from ..utils import array_of_vec_to_array_of_mat
 
 a_tol = 1e-5
@@ -86,7 +86,7 @@ def test_multistep_reachability(before_test_onestep_reachability):
     n_u,n_s = np.shape(k_fb)
 
     u_0 = .2*np.random.randn(n_u,1)
-    k_fb_0 = np.random.randn(T-1,n_s*n_u)#np.zeros((T-1,n_s*n_u))##np.random.randn(T-1,n_s*n_u)
+    k_fb_0 = np.random.randn(T-1,n_s*n_u)#np.zeros((T-1,n_s*n_u))# np.random.randn(T-1,n_s*n_u)
     k_ff = np.random.randn(T-1,n_u)
     #k_fb_ctrl = np.zeros((n_u,n_s))#np.random.randn(n_u,n_s)
 

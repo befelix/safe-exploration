@@ -5,12 +5,11 @@ Created on Mon Sep 25 09:18:58 2017
 @author: tkoller
 """
 
-import numpy as np
 from casadi import *
 
 
-
-def one_step_taylor(mu_x,gp, k_ff, sigma_x = None, k_fb = None, a = None, b = None, a_gp_inp_x = None):
+def one_step_taylor(mu_x, gp, k_ff, sigma_x=None, k_fb=None, a=None, b=None,
+                    a_gp_inp_x=None):
     """ One-step uncertainty propagation via first-order taylor approximation
 
     Parameters
@@ -40,56 +39,55 @@ def one_step_taylor(mu_x,gp, k_ff, sigma_x = None, k_fb = None, a = None, b = No
     if a_gp_inp_x is None:
         a_gp_inp_x = SX.eye(n_s)
 
-    n_gp_in,_ = np.shape(a_gp_inp_x)
+    n_gp_in, _ = np.shape(a_gp_inp_x)
 
-    z_bar = vertcat(mtimes(a_gp_inp_x,mu_x),u_p)
+    z_bar = vertcat(mtimes(a_gp_inp_x, mu_x), u_p)
     if a is None:
         a = SX.eye(n_s)
-        b = SX.zeros(n_s,n_u)
+        b = SX.zeros(n_s, n_u)
 
     if sigma_x is None:
         pred_mu, pred_var = gp.predict_casadi_symbolic(z_bar.T)
-        lin_prior = mtimes(a,mu_x) + mtimes(b,u_p)
+        lin_prior = mtimes(a, mu_x) + mtimes(b, u_p)
         mu_new = lin_prior + pred_mu.T
-
 
         return mu_new, diag(pred_var), pred_var
 
+    mu_g, sigma_g, jac_mu = gp.predict_casadi_symbolic(z_bar.T, True)
 
-    mu_g, sigma_g, jac_mu = gp.predict_casadi_symbolic(z_bar.T,True)
+    jac_mu = horzcat(mtimes(jac_mu[:, :n_gp_in], a_gp_inp_x), jac_mu[:, n_gp_in:])
+    # Compute taylor approximation of the posterior
+    sigma_u = mtimes(k_fb, mtimes(sigma_x, k_fb.T))  # covariance of control input
+    sigma_xu = mtimes(sigma_x, k_fb.T)  # cross-covariance between state and controls
 
-    jac_mu = horzcat(mtimes(jac_mu[:,:n_gp_in],a_gp_inp_x),jac_mu[:,n_gp_in:])
-    ## Compute taylor approximation of the posterior
-    sigma_u = mtimes(k_fb,mtimes(sigma_x,k_fb.T)) #covariance of control input
-    sigma_xu = mtimes(sigma_x,k_fb.T) #cross-covariance between state and controls
+    sigma_z_0 = horzcat(sigma_x, sigma_xu)
+    sigma_z_1 = horzcat(sigma_xu.T, sigma_u)
 
+    sigma_z = vertcat(sigma_z_0,
+                      sigma_z_1)  # covariance matrix of combined state-control input z
 
-    sigma_z_0 = horzcat(sigma_x, sigma_xu )
-    sigma_z_1 = horzcat(sigma_xu.T,  sigma_u)
+    sigma_zg = mtimes(sigma_z, jac_mu.T)  # cross-covariance between g and z
 
-    sigma_z = vertcat(sigma_z_0,sigma_z_1) #covariance matrix of combined state-control input z
+    sigma_g = diag(sigma_g) + mtimes(jac_mu, mtimes(sigma_z,
+                                                    jac_mu.T))  # The addtitional term stemming from the taylor approxiamtion
 
-    sigma_zg = mtimes(sigma_z,jac_mu.T) #cross-covariance between g and z
+    sigma_all_0 = horzcat(sigma_z, sigma_zg)
+    sigma_all_1 = horzcat(sigma_zg.T, sigma_g)
 
-    sigma_g = diag(sigma_g) + mtimes(jac_mu,mtimes(sigma_z,jac_mu.T)) # The addtitional term stemming from the taylor approxiamtion
+    sigma_all = vertcat(sigma_all_0, sigma_all_1)  # covariance of combined z and g
 
-    sigma_all_0 = horzcat(sigma_z,sigma_zg)
-    sigma_all_1 = horzcat(sigma_zg.T,sigma_g)
+    lin_trafo_mat = horzcat(a, b, SX.eye(n_s))  # linear trafo matrix
 
-    sigma_all = vertcat(sigma_all_0,sigma_all_1) #covariance of combined z and g
+    mu_zg = vertcat(mu_x, k_ff, mu_g.T)
+    mu_new = mtimes(lin_trafo_mat, mu_zg)
 
+    sigma_new = mtimes(lin_trafo_mat, mtimes(sigma_all, lin_trafo_mat.T))
 
-    lin_trafo_mat = horzcat(a,b,SX.eye(n_s)) # linear trafo matrix
-
-    mu_zg = vertcat(mu_x,k_ff,mu_g.T)
-    mu_new = mtimes(lin_trafo_mat,mu_zg)
-
-    sigma_new = mtimes(lin_trafo_mat,mtimes(sigma_all,lin_trafo_mat.T))
-
-    return mu_new , sigma_new, sigma_g
+    return mu_new, sigma_new, sigma_g
 
 
-def multi_step_taylor_symbolic(mu_0, gp, k_ff, k_fb , sigma_0 = None, a = None, b = None, a_gp_inp_x = None):
+def multi_step_taylor_symbolic(mu_0, gp, k_ff, k_fb, sigma_0=None, a=None, b=None,
+                               a_gp_inp_x=None):
     """ Multi step ahead predictions of the taylor uncertainty propagation
 
 
@@ -127,27 +125,31 @@ def multi_step_taylor_symbolic(mu_0, gp, k_ff, k_fb , sigma_0 = None, a = None, 
     n_s = np.shape(mu_0)[0]
     T, n_u = np.shape(k_ff)
 
-    mu_new, sigma_new, gp_sigma_pred = one_step_taylor(mu_0,gp,k_ff[0,:].reshape((n_u,1)),None,None,a,b,a_gp_inp_x)
+    mu_new, sigma_new, gp_sigma_pred = one_step_taylor(mu_0, gp,
+                                                       k_ff[0, :].reshape((n_u, 1)),
+                                                       None, None, a, b, a_gp_inp_x)
     mu_all = mu_new.T
-    sigma_all = sigma_new.reshape((1,n_s*n_s))
+    sigma_all = sigma_new.reshape((1, n_s * n_s))
     gp_sigma_pred_all = gp_sigma_pred
 
-    for i in range(T-1):
+    for i in range(T - 1):
         mu_old = mu_new
         sigma_old = sigma_new
-        k_ff_i = k_ff[i+1,:].reshape((n_u,1))
+        k_ff_i = k_ff[i + 1, :].reshape((n_u, 1))
 
-        mu_new, sigma_new, gp_sigma_pred = one_step_taylor(mu_old,gp,k_ff_i,sigma_old,k_fb[i],a,b,a_gp_inp_x)
+        mu_new, sigma_new, gp_sigma_pred = one_step_taylor(mu_old, gp, k_ff_i,
+                                                           sigma_old, k_fb[i], a, b,
+                                                           a_gp_inp_x)
 
-        mu_all = vertcat(mu_all,mu_new.T)
-        sigma_all = vertcat(sigma_all,sigma_new.reshape((1,n_s*n_s)))
-        gp_sigma_pred_all = vertcat(gp_sigma_pred_all,gp_sigma_pred)
-
+        mu_all = vertcat(mu_all, mu_new.T)
+        sigma_all = vertcat(sigma_all, sigma_new.reshape((1, n_s * n_s)))
+        gp_sigma_pred_all = vertcat(gp_sigma_pred_all, gp_sigma_pred)
 
     return mu_all, sigma_all, gp_sigma_pred_all
 
 
-def mean_equivalent_multistep(mu_0,gp,k_ff, k_fb,sigma_0 = None, a=None,b=None,a_gp_inp_x = None):
+def mean_equivalent_multistep(mu_0, gp, k_ff, k_fb, sigma_0=None, a=None, b=None,
+                              a_gp_inp_x=None):
     """ Compute the simple 'mean-equivalent' uncertainty propagation with GPs
 
     Parameters
@@ -181,25 +183,31 @@ def mean_equivalent_multistep(mu_0,gp,k_ff, k_fb,sigma_0 = None, a=None,b=None,a
     n_s = np.shape(mu_0)[0]
     T, n_u = np.shape(k_ff)
 
-    mu_new, sigma_new, gp_sigma_pred = one_step_mean_equivalent(mu_0,gp,k_ff[0,:].reshape((n_u,1)),None,None,a,b,a_gp_inp_x)
+    mu_new, sigma_new, gp_sigma_pred = one_step_mean_equivalent(mu_0, gp,
+                                                                k_ff[0, :].reshape(
+                                                                    (n_u, 1)), None,
+                                                                None, a, b, a_gp_inp_x)
     mu_all = mu_new.T
-    sigma_all = sigma_new.reshape((1,n_s*n_s))
+    sigma_all = sigma_new.reshape((1, n_s * n_s))
     gp_sigma_pred_all = gp_sigma_pred
-    for i in range(T-1):
+    for i in range(T - 1):
         mu_old = mu_new
         sigma_old = sigma_new
-        k_ff_i = k_ff[i+1,:].reshape((n_u,1))
+        k_ff_i = k_ff[i + 1, :].reshape((n_u, 1))
 
-        mu_new, sigma_new, gp_sigma_pred = one_step_mean_equivalent(mu_old,gp,k_ff_i,sigma_old,k_fb[i],a,b,a_gp_inp_x)
+        mu_new, sigma_new, gp_sigma_pred = one_step_mean_equivalent(mu_old, gp, k_ff_i,
+                                                                    sigma_old, k_fb[i],
+                                                                    a, b, a_gp_inp_x)
 
-        mu_all = vertcat(mu_all,mu_new.T)
-        sigma_all = vertcat(sigma_all,sigma_new.reshape((1,n_s*n_s)))
-        gp_sigma_pred_all = vertcat(gp_sigma_pred_all,gp_sigma_pred)
+        mu_all = vertcat(mu_all, mu_new.T)
+        sigma_all = vertcat(sigma_all, sigma_new.reshape((1, n_s * n_s)))
+        gp_sigma_pred_all = vertcat(gp_sigma_pred_all, gp_sigma_pred)
 
     return mu_all, sigma_all, gp_sigma_pred_all
 
 
-def one_step_mean_equivalent(mu_x,gp, k_ff, sigma_x = None, k_fb = None, a = None, b = None, a_gp_inp_x = None):
+def one_step_mean_equivalent(mu_x, gp, k_ff, sigma_x=None, k_fb=None, a=None, b=None,
+                             a_gp_inp_x=None):
     """ One-step uncertainty propagation via first-order taylor approximation
 
     Parameters
@@ -229,47 +237,42 @@ def one_step_mean_equivalent(mu_x,gp, k_ff, sigma_x = None, k_fb = None, a = Non
     n_u = np.shape(k_ff)[0]
 
     u_p = k_ff
-    z_bar = vertcat(mtimes(a_gp_inp_x,mu_x),u_p)
+    z_bar = vertcat(mtimes(a_gp_inp_x, mu_x), u_p)
     if a is None:
         a = SX.eye(n_s)
-        b = SX.zeros(n_s,n_u)
+        b = SX.zeros(n_s, n_u)
 
     if sigma_x is None:
         pred_mu, pred_var = gp.predict_casadi_symbolic(z_bar.T)
-        lin_prior = mtimes(a,mu_x) + mtimes(b,u_p)
+        lin_prior = mtimes(a, mu_x) + mtimes(b, u_p)
         mu_new = lin_prior + pred_mu.T
-
 
         return mu_new, diag(pred_var), pred_var
 
+    mu_g, sigma_g = gp.predict_casadi_symbolic(z_bar.T, False)
 
-    mu_g, sigma_g  = gp.predict_casadi_symbolic(z_bar.T,False)
+    # Compute taylor approximation of the posterior
+    sigma_u = mtimes(k_fb, mtimes(sigma_x, k_fb.T))  # covariance of control input
+    sigma_xu = mtimes(sigma_x, k_fb.T)  # cross-covariance between state and controls
 
+    sigma_z_0 = horzcat(sigma_x, sigma_xu)
+    sigma_z_1 = horzcat(sigma_xu.T, sigma_u)
 
+    sigma_z = vertcat(sigma_z_0,
+                      sigma_z_1)  # covariance matrix of combined state-control input z
 
-    ## Compute taylor approximation of the posterior
-    sigma_u = mtimes(k_fb,mtimes(sigma_x,k_fb.T)) #covariance of control input
-    sigma_xu = mtimes(sigma_x,k_fb.T) #cross-covariance between state and controls
+    sigma_zg = SX.zeros(n_s + n_u, n_s)  # cross-covariance between g and z
 
+    sigma_all_0 = horzcat(sigma_z, sigma_zg)
+    sigma_all_1 = horzcat(sigma_zg.T, diag(sigma_g))
 
-    sigma_z_0 = horzcat(sigma_x, sigma_xu )
-    sigma_z_1 = horzcat(sigma_xu.T,  sigma_u)
+    sigma_all = vertcat(sigma_all_0, sigma_all_1)  # covariance of combined z and g
 
-    sigma_z = vertcat(sigma_z_0,sigma_z_1) #covariance matrix of combined state-control input z
+    lin_trafo_mat = horzcat(a, b, SX.eye(n_s))  # linear trafo matrix
 
-    sigma_zg = SX.zeros(n_s+n_u,n_s) #cross-covariance between g and z
+    mu_zg = vertcat(mu_x, k_ff, mu_g.T)
+    mu_new = mtimes(lin_trafo_mat, mu_zg)
 
-    sigma_all_0 = horzcat(sigma_z,sigma_zg)
-    sigma_all_1 = horzcat(sigma_zg.T,diag(sigma_g))
+    sigma_new = mtimes(lin_trafo_mat, mtimes(sigma_all, lin_trafo_mat.T))
 
-    sigma_all = vertcat(sigma_all_0,sigma_all_1) #covariance of combined z and g
-
-
-    lin_trafo_mat = horzcat(a,b,SX.eye(n_s)) # linear trafo matrix
-
-    mu_zg = vertcat(mu_x,k_ff,mu_g.T)
-    mu_new = mtimes(lin_trafo_mat,mu_zg)
-
-    sigma_new = mtimes(lin_trafo_mat,mtimes(sigma_all,lin_trafo_mat.T))
-
-    return mu_new , sigma_new, sigma_g
+    return mu_new, sigma_new, sigma_g

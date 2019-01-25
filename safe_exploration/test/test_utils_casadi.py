@@ -5,12 +5,12 @@ Created on Thu Sep 28 15:21:10 2017
 @author: tkoller
 """
 
-from .. import utils_casadi as utils_cas
-from .. import utils
 import numpy as np
 import pytest
-
 from casadi import Function, SX
+
+from .. import utils
+from .. import utils_casadi as utils_cas
 
 
 @pytest.fixture(params = [2,3,5,8])
@@ -122,7 +122,7 @@ def test_remainder_overapproximation(before_test_remainder_overapproximation):
     q_num, k_fb_num, n_s, n_u, l_mu, l_sigma = before_test_remainder_overapproximation
 
     q_cas = SX.sym("q",(n_s,n_s))
-    ## test with numeric k_fb
+    # test with numeric k_fb
     u_mu_cas, u_sigma_cas = utils_cas.compute_remainder_overapproximations(q_cas,k_fb_num,l_mu,l_sigma)
     f = Function("f",[q_cas],[u_mu_cas,u_sigma_cas])
     f_out_cas = f(q_num)
@@ -131,7 +131,7 @@ def test_remainder_overapproximation(before_test_remainder_overapproximation):
     assert np.allclose(f_out_cas[0],f_out_py[0]), "are the overapproximations of mu the same"
     assert np.allclose(f_out_cas[1],f_out_py[1]), "are the overapproximations of sigma the same"
 
-    ## test with symbolic k_fb
+    # test with symbolic k_fb
     k_fb_cas = SX.sym("k_fb",(n_u,n_s))
 
     u_mu_cas_sym_kfb, u_sigma_cas_sym_kfb = utils_cas.compute_remainder_overapproximations(q_cas,k_fb_cas,l_mu,l_sigma)

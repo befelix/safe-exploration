@@ -6,10 +6,12 @@ Created on Wed Sep 27 13:01:18 2017
 """
 
 import os.path
-import pytest
-from numpy.testing import assert_allclose
+
 import numpy as np
+import pytest
 from casadi import Function, SX
+from numpy.testing import assert_allclose
+
 from ..gp_models import SimpleGPModel
 
 np.random.seed(125)

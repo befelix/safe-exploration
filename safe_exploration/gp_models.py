@@ -4,19 +4,17 @@ Created on Wed Sep 20 10:37:51 2017
 
 @author: tkoller
 """
-import sys
-import numpy as np
-import numpy.linalg as nLa
-import GPy
-import casadi as cas
-import casadi.tools as ctools
 import warnings
 
-from sklearn import cluster
-from utils import rgetattr,rsetattr
-from gp_models_utils_casadi import gp_pred_function
+import GPy
+import numpy as np
+import numpy.linalg as nLa
 from GPy.kern import RBF, Linear, Matern52
 from GPy.util.linalg import pdinv
+from sklearn import cluster
+
+from gp_models_utils_casadi import gp_pred_function
+from utils import rgetattr, rsetattr
 
 
 class SimpleGPModel():
@@ -36,7 +34,8 @@ class SimpleGPModel():
 
     """
 
-    def __init__(self,n_s_out,n_s_in,n_u,X=None,y=None,m=None,kern_types = None, hyp = None, train = False, Z = None):
+    def __init__(self, n_s_out, n_s_in, n_u, X=None, y=None, m=None, kern_types=None,
+                 hyp=None, train=False, Z=None):
         """ Initialize GP Model ( possibly without training set)
 
         Parameters
@@ -55,21 +54,21 @@ class SimpleGPModel():
         self.gp_trained = False
         self.m = m
         self.Z = Z
-        self._init_kernel_function(kern_types,hyp)
+        self._init_kernel_function(kern_types, hyp)
         self.do_sparse_gp = False
 
         self.z_fixed = False
         if not Z is None:
             self.z_fixed = True
 
-        if X is None or y is None: #initialize without training (no data available)
+        if X is None or y is None:  # initialize without training (no data available)
             train = False
 
         if train:
-            self.train(X,y,m,Z =Z)
+            self.train(X, y, m, Z=Z)
 
     @classmethod
-    def from_dict(cls,gp_dict):
+    def from_dict(cls, gp_dict):
         """ Initialize GP using data from a dict
 
         Initialized the SimpleGPModel from a dictionary containing
@@ -129,7 +128,7 @@ class SimpleGPModel():
         if "Z" in gp_dict:
             Z = gp_dict["Z"]
 
-        return cls(n_s_out,n_s_in,n_u,x,y,m,kern_types,hyp,train,Z)
+        return cls(n_s_out, n_s_in, n_u, x, y, m, kern_types, hyp, train, Z)
 
     def to_dict(self):
         """ return a dict summarizing the object """
@@ -143,7 +142,8 @@ class SimpleGPModel():
 
         return gp_dict
 
-    def train(self,X,y,m = None, opt_hyp = True, noise_diag = 1e-5, Z = None, choose_data = True):
+    def train(self, X, y, m=None, opt_hyp=True, noise_diag=1e-5, Z=None,
+              choose_data=True):
         """ Train a GP for each state dimension
 
         Args:
@@ -169,59 +169,60 @@ class SimpleGPModel():
                 else:
 
                     if choose_data:
-                        Z,y_z = self.choose_datapoints_maxvar(X_train,y_train,self.m)
+                        Z, y_z = self.choose_datapoints_maxvar(X_train, y_train, self.m)
 
                     else:
-                        idx = np.random.choice(n_data,size=m,replace = False)
-                        Z = X[idx,:]
-                        y_z = y[idx,:]
+                        idx = np.random.choice(n_data, size=m, replace=False)
+                        Z = X[idx, :]
+                        y_z = y[idx, :]
         else:
             if self.do_sparse_gp:
-                raise ValueError("Number of inducing points m needs to be specified for sparse gp regression")
+                raise ValueError(
+                    "Number of inducing points m needs to be specified for sparse gp regression")
 
             Z = X_train
             y_z = y_train
 
         n_beta = np.shape(Z)[0]
-        beta = np.empty((n_beta,self.n_s_out))
+        beta = np.empty((n_beta, self.n_s_out))
 
-        inv_K = [None]*self.n_s_out
+        inv_K = [None] * self.n_s_out
         process_noise = np.empty((self.n_s_out,))
-        gps = [None]*self.n_s_out
+        gps = [None] * self.n_s_out
 
         for i in range(self.n_s_out):
             kern = self.base_kerns[i]
 
             if self.do_sparse_gp:
-                y_i = y_train[:,i].reshape(-1,1)
-                model_gp = GPy.models.SparseGPRegression(X_train,y_i,kernel = kern, Z = Z)
+                y_i = y_train[:, i].reshape(-1, 1)
+                model_gp = GPy.models.SparseGPRegression(X_train, y_i, kernel=kern, Z=Z)
 
             else:
-                y_i = y_z[:,i].reshape(-1,1)
-                model_gp = GPy.models.GPRegression(Z,y_i,kernel = kern)
+                y_i = y_z[:, i].reshape(-1, 1)
+                model_gp = GPy.models.GPRegression(Z, y_i, kernel=kern)
 
             if opt_hyp:
-                model_gp.optimize(max_iters = 1000,messages=True)
+                model_gp.optimize(max_iters=1000, messages=True)
 
             post = model_gp.posterior
 
             if noise_diag > 0.0:
                 model_gp.likelihood.variance.fix(noise_diag)
-                #inv_K[i] = pdinv(post._K+float(model_gp.Gaussian_noise.variance+noise_diag)*np.eye(n_beta))[0]
-            #else:
+                # inv_K[i] = pdinv(post._K+float(model_gp.Gaussian_noise.variance+noise_diag)*np.eye(n_beta))[0]
+            # else:
             #    inv_K[i] = post.woodbury_inv
 
             post = model_gp.posterior
             inv_K[i] = post.woodbury_inv
 
-            beta[:,i] = post.woodbury_vector.reshape(-1,)
+            beta[:, i] = post.woodbury_vector.reshape(-1, )
             process_noise[i] = model_gp.Gaussian_noise.variance
             gps[i] = model_gp
 
         # create a dictionary of kernel paramters
-        self.hyp = self._create_hyp_dict(gps,self.kern_types)
+        self.hyp = self._create_hyp_dict(gps, self.kern_types)
 
-        #update the class attributes
+        # update the class attributes
         if self.z_fixed:
             self.z = self.Z
         else:
@@ -233,7 +234,7 @@ class SimpleGPModel():
         self.x_train = X_train
         self.y_train = y_train
 
-    def choose_datapoints_maxvar(self,x,y,m,k = 10,min_ratio_k = 0.25,n_reopt_gp = 1):
+    def choose_datapoints_maxvar(self, x, y, m, k=10, min_ratio_k=0.25, n_reopt_gp=1):
         """ Choose datapoints for the GP based on the maximum predicted variance criterion
 
         Parameters
@@ -248,61 +249,60 @@ class SimpleGPModel():
         """
         n_data = np.shape(x)[0]
 
-        if n_data <= m: ## we have less data than the subset m -> use the whole dataset
-            return x,y
+        if n_data <= m:  # we have less data than the subset m -> use the whole dataset
+            return x, y
 
         if not self.gp_trained:
-            self.train(x,y,m = None)
+            self.train(x, y, m=None)
 
+        k = np.minimum(int(n_data * min_ratio_k), k)
 
-        k = np.minimum(int(n_data*min_ratio_k),k)
-
-        ## get initial set of datapoints using k-means
-        km = cluster.KMeans(n_clusters = k)
+        # get initial set of datapoints using k-means
+        km = cluster.KMeans(n_clusters=k)
         clust_ids = km.fit_predict(x)
 
         sort_idx = np.argsort(clust_ids)
         clust_ids_sorted = clust_ids[sort_idx]
 
-        unq_first = np.concatenate(([True], clust_ids_sorted[1:] != clust_ids_sorted[:-1]))
+        unq_first = np.concatenate(
+            ([True], clust_ids_sorted[1:] != clust_ids_sorted[:-1]))
         unq_items = clust_ids_sorted[unq_first]
         unq_count = np.diff(np.nonzero(unq_first)[0])
-        unq_idx = np.split(sort_idx, np.cumsum(unq_count)) #list containing k arrays -> the indices of the samples in the corresponding classes
+        unq_idx = np.split(sort_idx, np.cumsum(
+            unq_count))  # list containing k arrays -> the indices of the samples in the corresponding classes
 
         unq_per_cluster_idx = [np.random.choice(clust_idx) for clust_idx in unq_idx]
-        idx_not_selected = np.setdiff1d(np.arange(n_data),unq_per_cluster_idx)
+        idx_not_selected = np.setdiff1d(np.arange(n_data), unq_per_cluster_idx)
 
-        x_chosen = x[np.array(unq_per_cluster_idx),:]
-        y_chosen = y[np.array(unq_per_cluster_idx),:]
+        x_chosen = x[np.array(unq_per_cluster_idx), :]
+        y_chosen = y[np.array(unq_per_cluster_idx), :]
 
-        x_pool = x[idx_not_selected,:]
-        y_pool = y[idx_not_selected,:]
+        x_pool = x[idx_not_selected, :]
+        y_pool = y[idx_not_selected, :]
 
-        chunks = int((m-k)/(n_reopt_gp+1))
+        chunks = int((m - k) / (n_reopt_gp + 1))
 
-        for i in range(m-k):
+        for i in range(m - k):
 
             if i % chunks == 0:
-                self.train(x_pool,y_pool,m=None)
+                self.train(x_pool, y_pool, m=None)
 
-            _ , pred_var_pool  =  self.predict(x_pool)
-            idx_max_sigma = np.argmax(np.sum(pred_var_pool,axis=1))
+            _, pred_var_pool = self.predict(x_pool)
+            idx_max_sigma = np.argmax(np.sum(pred_var_pool, axis=1))
 
+            x_chosen = np.vstack((x_chosen, x_pool[None, idx_max_sigma, :]))
+            y_chosen = np.vstack((y_chosen, y_pool[None, idx_max_sigma, :]))
 
-            x_chosen = np.vstack((x_chosen,x_pool[None,idx_max_sigma,:]))
-            y_chosen = np.vstack((y_chosen,y_pool[None,idx_max_sigma,:]))
-
-            x_pool = np.delete(x_pool,(idx_max_sigma),axis = 0)
-            y_pool = np.delete(y_pool,(idx_max_sigma),axis = 0)
+            x_pool = np.delete(x_pool, (idx_max_sigma), axis=0)
+            y_pool = np.delete(y_pool, (idx_max_sigma), axis=0)
 
             for j in range(self.n_s_out):
-                self.gps[j].set_XY(x_chosen,y_chosen[:,j,None])
+                self.gps[j].set_XY(x_chosen, y_chosen[:, j, None])
 
         return x_chosen, y_chosen
 
-
-
-    def update_model(self, x, y, opt_hyp = False, replace_old = True, noise_diag = 1e-5, choose_data = True):
+    def update_model(self, x, y, opt_hyp=False, replace_old=True, noise_diag=1e-5,
+                     choose_data=True):
         """ Update the model based on the current settings and new data
 
         Parameters
@@ -318,14 +318,14 @@ class SimpleGPModel():
             x_new = x
             y_new = y
         else:
-            x_new = np.vstack((self.x_train,x))
-            y_new = np.vstack((self.y_train,y))
+            x_new = np.vstack((self.x_train, x))
+            y_new = np.vstack((self.y_train, y))
 
         if opt_hyp or not self.gp_trained:
-            self.train(x_new,y_new,self.m,opt_hyp = opt_hyp,Z = self.Z)
+            self.train(x_new, y_new, self.m, opt_hyp=opt_hyp, Z=self.Z)
         else:
             n_data = np.shape(x_new)[0]
-            inv_K = [None]*self.n_s_out
+            inv_K = [None] * self.n_s_out
             if self.m is None:
                 n_beta = n_data
                 Z = x_new
@@ -340,33 +340,34 @@ class SimpleGPModel():
                     n_beta = n_data
                 else:
                     if choose_data:
-                        Z,y_z = self.choose_datapoints_maxvar(x_new,y_new,self.m)
+                        Z, y_z = self.choose_datapoints_maxvar(x_new, y_new, self.m)
 
                     else:
-                        idx = np.random.choice(n_data,size=self.m,replace = False)
-                        Z = x_new[idx,:]
-                        y_z = y_new[idx,:]
+                        idx = np.random.choice(n_data, size=self.m, replace=False)
+                        Z = x_new[idx, :]
+                        y_z = y_new[idx, :]
                     n_beta = self.m
 
-            beta = np.empty((n_beta,self.n_s_out))
-
+            beta = np.empty((n_beta, self.n_s_out))
 
             for i in range(self.n_s_out):
                 if self.do_sparse_gp:
-                    self.gps[i].set_XY(x_new,y_new[:,i].reshape(-1,1))
+                    self.gps[i].set_XY(x_new, y_new[:, i].reshape(-1, 1))
                     if not self.z_fixed:
                         self.gps[i].set_Z(Z)
                 else:
-                    self.gps[i].set_XY(Z,y_z[:,i].reshape(-1,1))
+                    self.gps[i].set_XY(Z, y_z[:, i].reshape(-1, 1))
 
                 post = self.gps[i].posterior
 
                 if noise_diag > 0.0:
-                    inv_K[i] = pdinv(post._K+float(self.gps[i].Gaussian_noise.variance+noise_diag)*np.eye(n_beta))[0]
+                    inv_K[i] = pdinv(post._K + float(
+                        self.gps[i].Gaussian_noise.variance + noise_diag) * np.eye(
+                        n_beta))[0]
                 else:
                     inv_K[i] = post.woodbury_inv
 
-                beta[:,i] = post.woodbury_vector.reshape(-1,)
+                beta[:, i] = post.woodbury_vector.reshape(-1, )
 
             self.x_train = x_new
             self.y_train = y_new
@@ -374,7 +375,7 @@ class SimpleGPModel():
             self.inv_K = inv_K
             self.beta = beta
 
-    def _init_kernel_function(self,kern_types = None, hyp = None):
+    def _init_kernel_function(self, kern_types=None, hyp=None):
         """ Initialize GPy kernel functions based on name. Check if supported.
 
         Utility function to return a kernel based on its type name.
@@ -391,12 +392,13 @@ class SimpleGPModel():
             The Gpy kernel function
         """
 
-        input_dim = self.n_s_in+self.n_u
-        kerns = [None]*self.n_s_out
+        input_dim = self.n_s_in + self.n_u
+        kerns = [None] * self.n_s_out
 
         if hyp is None:
-            hyp = [None]*self.n_s_out
-        warnings.warn("Changed the kernel structure from the cdc paper implementation, see old structure commented out")
+            hyp = [None] * self.n_s_out
+        warnings.warn(
+            "Changed the kernel structure from the cdc paper implementation, see old structure commented out")
 
         """
         if kern_types[i] == "rbf":
@@ -408,40 +410,43 @@ class SimpleGPModel():
                 else:
         """
 
-
         if kern_types is None:
-            kern_types = [None]*self.n_s_out
+            kern_types = [None] * self.n_s_out
             for i in range(self.n_s_out):
                 kern_types[i] = "rbf"
-                kerns[i] = RBF(input_dim, ARD = True)
+                kerns[i] = RBF(input_dim, ARD=True)
 
         else:
             for i in range(self.n_s_out):
                 hyp_i = hyp[i]
                 if kern_types[i] == "rbf":
-                    kern_i = RBF(input_dim, ARD = True)
+                    kern_i = RBF(input_dim, ARD=True)
                 elif kern_types[i] == "lin_rbf":
-                    kern_i = Linear(input_dim)*RBF(input_dim) + Linear(input_dim,ARD=True)
+                    kern_i = Linear(input_dim) * RBF(input_dim) + Linear(input_dim,
+                                                                         ARD=True)
                 elif kern_types[i] == "lin_mat52":
-                    kern_i = Linear(input_dim)*Matern52(input_dim) + Linear(input_dim,ARD=True)
+                    kern_i = Linear(input_dim) * Matern52(input_dim) + Linear(input_dim,
+                                                                              ARD=True)
                 else:
-                    raise ValueError("kernel type '{}' not supported".format(kern_types[i]))
+                    raise ValueError(
+                        "kernel type '{}' not supported".format(kern_types[i]))
 
                 if not hyp_i is None:
-                    for k,v in hyp_i.items():
+                    for k, v in hyp_i.items():
                         try:
-                            rsetattr(kern_i,k,v)
-                            kern_hyp = rgetattr(kern_i,k)
+                            rsetattr(kern_i, k, v)
+                            kern_hyp = rgetattr(kern_i, k)
                             kern_hyp.fix()
 
                         except:
-                            warnings.warn("Cannot set and fix hyperparameter: {}".format(k))
+                            warnings.warn(
+                                "Cannot set and fix hyperparameter: {}".format(k))
                 kerns[i] = kern_i
 
         self.base_kerns = kerns
         self.kern_types = kern_types
 
-    def _create_hyp_dict(self,gps,kern_types):
+    def _create_hyp_dict(self, gps, kern_types):
         """ Create a hyperparameter dict from the individual supported kernels
 
         Parameters
@@ -458,48 +463,52 @@ class SimpleGPModel():
             for each dimension.
         """
 
-        hyp = [None]*self.n_s_out
+        hyp = [None] * self.n_s_out
 
         for i in range(self.n_s_out):
-                hyp_i = dict()
-                if kern_types[i] == "rbf":
+            hyp_i = dict()
+            if kern_types[i] == "rbf":
 
-                    hyp_i["lengthscale"] = np.reshape(gps[i].kern.lengthscale,(-1,))
-                    hyp_i["variance"] = gps[i].kern.variance
+                hyp_i["lengthscale"] = np.reshape(gps[i].kern.lengthscale, (-1,))
+                hyp_i["variance"] = gps[i].kern.variance
 
-                elif kern_types[i] == "lin_rbf":
+            elif kern_types[i] == "lin_rbf":
 
-                    hyp_i["prod.rbf.lengthscale"] = np.array([gps[i].kern.mul.rbf.lengthscale])
-                    hyp_i["prod.rbf.variance"] = gps[i].kern.mul.rbf.variance
-                    hyp_i["prod.linear.variances"] = np.array(gps[i].kern.mul.linear.variances)
-                    hyp_i["linear.variances"] = np.array([gps[i].kern.linear.variances])
+                hyp_i["prod.rbf.lengthscale"] = np.array(
+                    [gps[i].kern.mul.rbf.lengthscale])
+                hyp_i["prod.rbf.variance"] = gps[i].kern.mul.rbf.variance
+                hyp_i["prod.linear.variances"] = np.array(
+                    gps[i].kern.mul.linear.variances)
+                hyp_i["linear.variances"] = np.array([gps[i].kern.linear.variances])
 
-                elif kern_types[i] == "lin_mat52":
-                    hyp_i["prod.mat52.lengthscale"] = np.array([gps[i].kern.mul.Mat52.lengthscale])
-                    hyp_i["prod.mat52.variance"] = gps[i].kern.mul.Mat52.variance
-                    hyp_i["prod.linear.variances"] = np.array(gps[i].kern.mul.linear.variances)
-                    hyp_i["linear.variances"] = np.array([gps[i].kern.linear.variances])
-                else:
-                    raise ValueError("kernel type not supported")
-                hyp[i] = hyp_i
+            elif kern_types[i] == "lin_mat52":
+                hyp_i["prod.mat52.lengthscale"] = np.array(
+                    [gps[i].kern.mul.Mat52.lengthscale])
+                hyp_i["prod.mat52.variance"] = gps[i].kern.mul.Mat52.variance
+                hyp_i["prod.linear.variances"] = np.array(
+                    gps[i].kern.mul.linear.variances)
+                hyp_i["linear.variances"] = np.array([gps[i].kern.linear.variances])
+            else:
+                raise ValueError("kernel type not supported")
+            hyp[i] = hyp_i
         return hyp
 
-    def predict(self,x_new,quantiles = None,compute_gradients = False):
+    def predict(self, x_new, quantiles=None, compute_gradients=False):
         """ Compute the predictive mean and variance for a set of test inputs
 
 
         """
-        assert self.gp_trained,"Cannot predict, need to train the GP first!"
+        assert self.gp_trained, "Cannot predict, need to train the GP first!"
 
         T = np.shape(x_new)[0]
-        y_mu_pred = np.empty((T,self.n_s_out))
-        y_sigm_pred = np.empty((T,self.n_s_out))
-
+        y_mu_pred = np.empty((T, self.n_s_out))
+        y_sigm_pred = np.empty((T, self.n_s_out))
 
         for i in range(self.n_s_out):
 
             if quantiles is None:
-                y_mu_pred[:,None,i],y_sigm_pred[:,None,i] = self.gps[i].predict_noiseless(x_new)
+                y_mu_pred[:, None, i], y_sigm_pred[:, None, i] = self.gps[
+                    i].predict_noiseless(x_new)
             else:
                 raise NotImplementedError()
 
@@ -507,15 +516,16 @@ class SimpleGPModel():
             grad_mu = self.predictive_gradients(x_new)
             return y_mu_pred, y_sigm_pred, grad_mu
 
-        return y_mu_pred,y_sigm_pred
+        return y_mu_pred, y_sigm_pred
 
-    def predict_casadi_symbolic(self,x_new,compute_grads = False):
+    def predict_casadi_symbolic(self, x_new, compute_grads=False):
         """ Return a symbolic casadi function representing predictive mean/variance
 
         """
-        assert self.gp_trained,"Cannot predict, need to train the GP first!"
+        assert self.gp_trained, "Cannot predict, need to train the GP first!"
 
-        out_dict = gp_pred_function(x_new,self.z,self.beta,self.hyp,self.kern_types,self.inv_K,True,compute_grads)
+        out_dict = gp_pred_function(x_new, self.z, self.beta, self.hyp, self.kern_types,
+                                    self.inv_K, True, compute_grads)
         mu_new = out_dict["pred_mu"]
         sigma_new = out_dict["pred_sigma"]
         if compute_grads:
@@ -524,7 +534,7 @@ class SimpleGPModel():
 
         return mu_new, sigma_new
 
-    def predictive_gradients(self,x_new,grad_sigma = False):
+    def predictive_gradients(self, x_new, grad_sigma=False):
         """ Compute the gradients of the predictive mean/variance w.r.t. inputs
 
         Parameters
@@ -538,21 +548,21 @@ class SimpleGPModel():
         """
 
         if grad_sigma:
-            ## would be easy to implement since it is returend by GPys predictive gradient
-            ## but we dont need it right now
+            # would be easy to implement since it is returend by GPys predictive gradient
+            # but we dont need it right now
             raise NotImplementedError("Gradient of sigma not implemented")
 
         T = np.shape(x_new)[0]
 
-        grad_mu_pred = np.empty([T,self.n_s_out,self.n_s_in+self.n_u])
+        grad_mu_pred = np.empty([T, self.n_s_out, self.n_s_in + self.n_u])
 
         for i in range(self.n_s_out):
-            g_mu_pred,_ = self.gps[i].predictive_gradients(x_new)
-            grad_mu_pred[:,i,:] = g_mu_pred[:,:,0]
+            g_mu_pred, _ = self.gps[i].predictive_gradients(x_new)
+            grad_mu_pred[:, i, :] = g_mu_pred[:, :, 0]
 
         return grad_mu_pred
 
-    def sample_from_gp(self, inp, size = 10):
+    def sample_from_gp(self, inp, size=10):
         """ Sample from GP predictive distribution
 
 
@@ -568,23 +578,24 @@ class SimpleGPModel():
         """
 
         n = np.shape(inp)[0]
-        S = np.empty((n,size,self.n_s_out))
+        S = np.empty((n, size, self.n_s_out))
 
         for i in range(self.n_s_out):
-            S[:,:,i] = self.gps[i].posterior_samples_f(inp,size=size,full_cov = False)
+            S[:, :, i] = self.gps[i].posterior_samples_f(inp, size=size, full_cov=False)
 
         return S
 
-    def information_gain(self,x = None):
+    def information_gain(self, x=None):
         """ Mutual information between samples and system """
 
         if x is None:
             x = self.z
 
         n_data = np.shape(x)[0]
-        inf_gain_x_f = [None]*self.n_s_out
+        inf_gain_x_f = [None] * self.n_s_out
         for i in range(self.n_s_out):
             noise_var_i = float(self.gps[i].Gaussian_noise.variance)
-            inf_gain_x_f[i] = np.log(nLa.det(np.eye(n_data) + (1/noise_var_i)*self.gps[i].posterior._K))
+            inf_gain_x_f[i] = np.log(
+                nLa.det(np.eye(n_data) + (1 / noise_var_i) * self.gps[i].posterior._K))
 
         return inf_gain_x_f

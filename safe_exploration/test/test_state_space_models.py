@@ -4,13 +4,15 @@ Created on Mon Dec  4 13:24:39 2017
 
 @author: tkoller
 """
-import numpy as np
-import pytest
 import re
 
-from ..state_space_models import StateSpaceModel, CasadiSSMEvaluator
 import casadi as cas
+import numpy as np
+import pytest
 from casadi.tools import capture_stdout
+
+from ..state_space_models import StateSpaceModel, CasadiSSMEvaluator
+
 
 def pytest_namespace():
     return {"ipopt_output": None}

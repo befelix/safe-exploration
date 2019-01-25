@@ -6,18 +6,16 @@ Created on Fri Sep 29 12:03:39 2017
 """
 import os.path
 
-import pytest
-from ..safempc_simple import SimpleSafeMPC
-from ..environments import CartPole
-from .. import gp_models
-from ..gp_reachability import multistep_reachability, lin_ellipsoid_safety_distance
-from ..gp_reachability_casadi import multi_step_reachability as ms_cas
 import numpy as np
-from ..utils import array_of_vec_to_array_of_mat
+import pytest
+from casadi import reshape as cas_reshape
 from numpy.testing import assert_allclose
 
-from casadi import SX, Function
-from casadi import reshape as cas_reshape
+from .. import gp_models
+from ..environments import CartPole
+from ..gp_reachability import lin_ellipsoid_safety_distance
+from ..safempc_simple import SimpleSafeMPC
+
 a_tol = 1e-5
 r_tol = 1e-4
 

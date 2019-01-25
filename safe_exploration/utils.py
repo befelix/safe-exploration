@@ -1,22 +1,22 @@
-#-*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 Created on Wed Sep 20 10:43:16 2017
 
 @author: tkoller
 """
 
-import numpy as np
-import numpy.linalg as nLa
-import scipy.linalg as sLa
-import warnings
 import functools
+import warnings
 
-from numpy.linalg import solve,norm
-from numpy import sqrt,trace,zeros,diag, eye
-from numpy.matlib import repmat
+import numpy as np
+import scipy.linalg as sLa
 from casadi import reshape as cas_reshape
+from numpy import diag, eye
+from numpy.linalg import solve, norm
+from numpy.matlib import repmat
 
-def dlqr(a,b,q,r):
+
+def dlqr(a, b, q, r):
     """ Get the feedback controls from linearized system at the current time step
 
     for a discrete time system Ax+Bu
@@ -27,13 +27,14 @@ def dlqr(a,b,q,r):
     """
     x = np.matrix(sLa.solve_discrete_are(a, b, q, r))
 
-    k = np.matrix(sLa.inv(b.T*x*b+r)*(b.T*x*a))
+    k = np.matrix(sLa.inv(b.T * x * b + r) * (b.T * x * a))
 
-    eigVals, eigVecs = sLa.eig(a-b*k)
+    eigVals, eigVecs = sLa.eig(a - b * k)
 
     return np.asarray(k), np.asarray(x), eigVals
 
-def sample_inside_polytope(x,a,b):
+
+def sample_inside_polytope(x, a, b):
     """
     for a set of samples x = [x_1,..,x_k]^T
     check sample_wise
@@ -47,59 +48,63 @@ def sample_inside_polytope(x,a,b):
         the vector of the linear inequality
 
     """
-    k,_ = x.shape
+    k, _ = x.shape
 
-    c = np.dot(a,x.T) - repmat(b,1,k)
+    c = np.dot(a, x.T) - repmat(b, 1, k)
 
-    return np.all(c < 0, axis = 0).squeeze()
+    return np.all(c < 0, axis=0).squeeze()
 
-def feedback_ctrl(x,k_ff,k_fb = None,p=None):
+
+def feedback_ctrl(x, k_ff, k_fb=None, p=None):
     """ The feedback control structure """
 
     if k_fb is None:
         return k_ff
 
-    return np.dot(k_fb,(x-p)) + k_ff
+    return np.dot(k_fb, (x - p)) + k_ff
 
 
-def compute_bounding_box_lagrangian(q,L,K,k,order = 2, verbose = 0):
+def compute_bounding_box_lagrangian(q, L, K, k, order=2, verbose=0):
     """ Compute lagrangian remainder using lipschitz constants
         and ellipsoidal input set with affine control law
 
     """
     warnings.warn("Function is deprecated")
 
-    SUPPORTED_TAYLOR_ORDER = [1,2]
+    SUPPORTED_TAYLOR_ORDER = [1, 2]
     if not (order in SUPPORTED_TAYLOR_ORDER):
-        raise ValueError("Cannot compute lagrangian remainder bounds for the given order")
+        raise ValueError(
+            "Cannot compute lagrangian remainder bounds for the given order")
 
     if order == 2:
-        s_max = norm(q,ord =  2)
-        QK = np.dot(K,np.dot(q,K.T))
-        sk_max = norm(QK,ord =  2)
+        s_max = norm(q, ord=2)
+        QK = np.dot(K, np.dot(q, K.T))
+        sk_max = norm(QK, ord=2)
 
-        l_max = s_max**2 + sk_max**2
+        l_max = s_max ** 2 + sk_max ** 2
 
-        box_lower = -L*l_max * (1./order)
-        box_upper =  L*l_max * (1./order)
+        box_lower = -L * l_max * (1. / order)
+        box_upper = L * l_max * (1. / order)
 
     if order == 1:
-        s_max = norm(q,ord =  2)
-        QK = np.dot(K,np.dot(q,K.T))
-        sk_max = norm(QK,ord =  2)
+        s_max = norm(q, ord=2)
+        QK = np.dot(K, np.dot(q, K.T))
+        sk_max = norm(QK, ord=2)
 
         l_max = s_max + sk_max
 
-        box_lower = -L*l_max
-        box_upper =  L*l_max
+        box_lower = -L * l_max
+        box_upper = L * l_max
 
     if verbose > 0:
         print("\n=== bounding-box approximation of order {} ===".format(order))
-        print("largest eigenvalue of Q: {} \nlargest eigenvalue of KQK^T: {}".format(s_max,sk_max))
+        print("largest eigenvalue of Q: {} \nlargest eigenvalue of KQK^T: {}".format(
+            s_max, sk_max))
 
-    return box_lower,box_upper
+    return box_lower, box_upper
 
-def compute_remainder_overapproximations(q,k_fb,l_mu,l_sigma):
+
+def compute_remainder_overapproximations(q, k_fb, l_mu, l_sigma):
     """ Compute the (hyper-)rectangle over-approximating the lagrangians of mu and sigma
 
     Parameters
@@ -120,24 +125,22 @@ def compute_remainder_overapproximations(q,k_fb,l_mu,l_sigma):
     u_sigma: n_s x 0 numpy 1darray[float]
         The upper bound of the over-approximation of the variance lagrangian remainder
     """
-    n_u,n_s = np.shape(k_fb)
-    s = np.hstack((np.eye(n_s),k_fb.T))
-    b = np.dot(s,s.T)
-    qb = np.dot(q,b)
-    evals,_ = sLa.eig(qb)
+    n_u, n_s = np.shape(k_fb)
+    s = np.hstack((np.eye(n_s), k_fb.T))
+    b = np.dot(s, s.T)
+    qb = np.dot(q, b)
+    evals, _ = sLa.eig(qb)
     r_sqr = np.max(evals)
-    ## This is equivalent to:
+    # This is equivalent to:
     # q_inv = sLA.inv(q)
     # evals,_,_ = sLA.eig(b,q_inv)
     # however we prefer to avoid the inversion
     # and breaking the symmetry of b and q
 
-    u_mu = l_mu*r_sqr
-    u_sigma = l_sigma*np.sqrt(r_sqr)
+    u_mu = l_mu * r_sqr
+    u_sigma = l_sigma * np.sqrt(r_sqr)
 
     return u_mu, u_sigma
-
-
 
 
 def all_elements_equal(x):
@@ -155,9 +158,10 @@ def all_elements_equal(x):
         Returns true if all elements in array are equal
 
     """
-    return np.allclose(x,x[0])
+    return np.allclose(x, x[0])
 
-def print_ellipsoid(p_center,q_shape,text = "ellipsoid",visualize = False):
+
+def print_ellipsoid(p_center, q_shape, text="ellipsoid", visualize=False):
     """
 
     """
@@ -171,7 +175,8 @@ def print_ellipsoid(p_center,q_shape,text = "ellipsoid",visualize = False):
     print(diag(q_shape))
     print("===============")
 
-def vec_to_mat(v,n,tril_vec = True):
+
+def vec_to_mat(v, n, tril_vec=True):
     """ Reshape vector into square matrix
 
     Inputs:
@@ -186,19 +191,20 @@ def vec_to_mat(v,n,tril_vec = True):
     n_vec = len(v)
 
     if tril_vec:
-        A = np.empty((n,n))
-        c=0
+        A = np.empty((n, n))
+        c = 0
         for i in range(n):
-            for j in range(i,n):
-                A[i,j] = v[c]
-                A[j,i] = A[i,j]
+            for j in range(i, n):
+                A[i, j] = v[c]
+                A[j, i] = A[i, j]
                 c += 1
     else:
-        A = cas_reshape(v,(n,n))
+        A = cas_reshape(v, (n, n))
 
     return A
 
-def array_of_vec_to_array_of_mat(array_of_vec,n,m):
+
+def array_of_vec_to_array_of_mat(array_of_vec, n, m):
     """ Convert multiple vectorized matrices to 3-dim numpy array
 
 
@@ -217,22 +223,20 @@ def array_of_vec_to_array_of_mat(array_of_vec,n,m):
         The 3D-array containing the matrices
     """
 
-    return np.reshape(array_of_vec,(-1,n,m))
-
+    return np.reshape(array_of_vec, (-1, n, m))
 
     T, size_vec = np.shape(array_of_vec)
 
-    assert size_vec == n*m, "Are the shapes of the vectorized and output matrix the same?"
+    assert size_vec == n * m, "Are the shapes of the vectorized and output matrix the same?"
 
-    array_of_mat = np.empty((T,n,m))
+    array_of_mat = np.empty((T, n, m))
     for i in range(T):
-        array_of_mat[i,:,:] = cas_reshape(array_of_mat[i,:],(n,m))
+        array_of_mat[i, :, :] = cas_reshape(array_of_mat[i, :], (n, m))
 
     return array_of_mat
 
 
-
-def _get_edges_hyperrectangle(l_b,u_b,m = None):
+def _get_edges_hyperrectangle(l_b, u_b, m=None):
     """ Generate set of points from box-bounds
 
     Given a set of lower and upper bounds l_b,u_b
@@ -255,19 +259,19 @@ def _get_edges_hyperrectangle(l_b,u_b,m = None):
 
     """
 
-    assert(len(l_b) == len(u_b))
+    assert (len(l_b) == len(u_b))
 
     n = len(l_b)
-    L = [None]*n
+    L = [None] * n
 
     for i in range(n):
-        L[i] = [l_b[i],u_b[i]]
+        L[i] = [l_b[i], u_b[i]]
     result = list(itertools.product(*L))
 
     P = np.array(result)
     if not m is None:
-        assert m  <= np.pow(2,n) ,"Cannot extract that many points"
-        P = P[:m,:]
+        assert m <= np.pow(2, n), "Cannot extract that many points"
+        P = P[:m, :]
 
     return P
 
@@ -285,16 +289,16 @@ def _prod_combinations_1darray(v):
             vector containing the product of all pairs in v
     """
     n = len(v)
-    v_combined = np.empty((n*(n+1)/2,))
-    c=0
+    v_combined = np.empty((n * (n + 1) / 2,))
+    c = 0
     for i in range(n):
-        for j in range(i,n):
-            v_combined[c] = v[i]*v[j]
-            c+=1
+        for j in range(i, n):
+            v_combined[c] = v[i] * v[j]
+            c += 1
     return v_combined
 
 
-def solve_LLS(A,b,eps_mp = 0.0):
+def solve_LLS(A, b, eps_mp=0.0):
     """ Solve Linear Least Squares Problem
 
     solve problem of the form
@@ -314,14 +318,14 @@ def solve_LLS(A,b,eps_mp = 0.0):
         x: m x 1 array[float]
             Solution to the above problem
     """
-    m,n = np.shape(A)
+    m, n = np.shape(A)
 
-    A_tilde = np.dot(A.T,A)
+    A_tilde = np.dot(A.T, A)
     if eps_mp > 0.0:
-        A_tilde += eps_mp*eye(n)
-    b_tilde = np.dot(A.T,b)
+        A_tilde += eps_mp * eye(n)
+    b_tilde = np.dot(A.T, b)
 
-    x = solve(A_tilde,b_tilde)
+    x = solve(A_tilde, b_tilde)
 
     return x
 
@@ -332,6 +336,7 @@ def rsetattr(obj, attr, val):
     """
     pre, _, post = attr.rpartition('.')
     return setattr(rgetattr(obj, pre) if pre else obj, post, val)
+
 
 sentinel = object()
 
@@ -345,7 +350,8 @@ def rgetattr(obj, attr, default=sentinel):
     else:
         def _getattr(obj, name):
             return getattr(obj, name, default)
-    return functools.reduce(_getattr, [obj]+attr.split('.'))
+    return functools.reduce(_getattr, [obj] + attr.split('.'))
+
 
 def reshape_derivatives_3d_to_2d(derivative_3d):
     """ Reshape 3D derivative tensor to 2D derivative
@@ -368,11 +374,12 @@ def reshape_derivatives_3d_to_2d(derivative_3d):
     derivative_2d:
         A (r*s,n_in) array representing the reshaped, evaluated derivative tenor df_{2d}
     """
-    r,s,n_in = np.shape(derivative_3d)
+    r, s, n_in = np.shape(derivative_3d)
 
-    return np.reshape(derivative_3d,(r*s,n_in))
+    return np.reshape(derivative_3d, (r * s, n_in))
 
-def generate_initial_samples(env,conf,relative_dynamics,solver,safe_policy):
+
+def generate_initial_samples(env, conf, relative_dynamics, solver, safe_policy):
     """ Generate initial samples from the system
 
     Generate samples with two different modes:
@@ -406,70 +413,74 @@ def generate_initial_samples(env,conf,relative_dynamics,solver,safe_policy):
 
     if conf.init_mode == "random_rollouts":
 
-        X,y,_,_ = do_rollout(env, conf.n_steps_init,plot_trajectory=conf.plot_trajectory,render = conf.render,mean = mean, std = std)
-        for i in range(1,conf.n_rollouts_init):
-            xx,yy, _,_ = do_rollout(env, conf.n_steps_init,plot_trajectory=conf.plot_trajectory,render = conf.render)
-            X = np.vstack((X,xx))
-            y = np.vstack((y,yy))
+        X, y, _, _ = do_rollout(env, conf.n_steps_init,
+                                plot_trajectory=conf.plot_trajectory,
+                                render=conf.render, mean=mean, std=std)
+        for i in range(1, conf.n_rollouts_init):
+            xx, yy, _, _ = do_rollout(env, conf.n_steps_init,
+                                      plot_trajectory=conf.plot_trajectory,
+                                      render=conf.render)
+            X = np.vstack((X, xx))
+            y = np.vstack((y, yy))
 
     elif conf.init_mode == "safe_samples":
 
         n_samples = conf.n_safe_samples
-        n_max = conf.c_max_probing_init*n_samples
-        n_max_next_state = conf.c_max_probing_next_state *n_samples
+        n_max = conf.c_max_probing_init * n_samples
+        n_max_next_state = conf.c_max_probing_next_state * n_samples
 
-        states_probing = env._sample_start_state(n_samples = n_max,mean= mean,std= std).T
+        states_probing = env._sample_start_state(n_samples=n_max, mean=mean, std=std).T
 
+        h_mat_safe, h_safe, _, _ = env.get_safety_constraints(normalize=True)
 
-        h_mat_safe, h_safe,_,_ = env.get_safety_constraints(normalize = True)
-
-        bool_mask_inside = np.argwhere(sample_inside_polytope(states_probing,solver.h_mat_safe,solver.h_safe))
-        states_probing_inside = states_probing[bool_mask_inside,:]
+        bool_mask_inside = np.argwhere(
+            sample_inside_polytope(states_probing, solver.h_mat_safe, solver.h_safe))
+        states_probing_inside = states_probing[bool_mask_inside, :]
 
         n_inside_first = np.shape(states_probing_inside)[0]
 
         i = 0
         cont = True
 
-        X = np.zeros((1,env.n_s+env.n_u))
-        y = np.zeros((1,env.n_s))
+        X = np.zeros((1, env.n_s + env.n_u))
+        y = np.zeros((1, env.n_s))
 
         n_success = 0
         while cont:
-            state = states_probing_inside[i,:]
+            state = states_probing_inside[i, :]
             action = safe_policy(state.T)
-            next_state, next_observation = env.simulate_onestep(state.squeeze(),action)
+            next_state, next_observation = env.simulate_onestep(state.squeeze(), action)
 
-
-
-            if sample_inside_polytope(next_state[None,:],h_mat_safe,h_safe):
-                state_action = np.hstack((state.squeeze(),action.squeeze()))
-                X = np.vstack((X,state_action))
+            if sample_inside_polytope(next_state[None, :], h_mat_safe, h_safe):
+                state_action = np.hstack((state.squeeze(), action.squeeze()))
+                X = np.vstack((X, state_action))
                 if relative_dynamics:
-                    y = np.vstack((y,next_observation - state))
+                    y = np.vstack((y, next_observation - state))
 
                 else:
-                    y = np.vstack((y,next_observation))
+                    y = np.vstack((y, next_observation))
                 n_success += 1
 
             i += 1
 
-            if i >= n_inside_first  or n_success >= n_samples:
+            if i >= n_inside_first or n_success >= n_samples:
                 cont = False
-
-
 
         if conf.verbose > 1:
             print("==== Safety controller evaluation ====")
-            print("Ratio sample / inside safe set: {} / {}".format(n_inside_first,n_max))
-            print("Ratio next state inside safe set / intial state in safe set: {} / {}".format(n_success,i))
+            print(
+                "Ratio sample / inside safe set: {} / {}".format(n_inside_first, n_max))
+            print(
+                "Ratio next state inside safe set / intial state in safe set: {} / {}".format(
+                    n_success, i))
 
-        X = X[1:,:]
-        y = y[1:,:]
+        X = X[1:, :]
+        y = y[1:, :]
 
-        return X,y
+        return X, y
 
     else:
-        raise NotImplementedError("Unknown option initialization mode: {}".format(conf.init_mode))
+        raise NotImplementedError(
+            "Unknown option initialization mode: {}".format(conf.init_mode))
 
-    return X,y
+    return X, y

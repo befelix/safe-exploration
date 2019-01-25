@@ -7,12 +7,13 @@ show the same behaviour as the gpy implementation
 @author: tkoller
 """
 
-import pytest
 import numpy as np
-
-from casadi import Function, SX
-from ..gp_models_utils_casadi import _unscaled_dist, _k_rbf, _k_lin, _k_lin_rbf, _k_mat52, _k_lin_mat52
+import pytest
 from GPy.kern import RBF, Linear, Matern52
+from casadi import Function, SX
+
+from ..gp_models_utils_casadi import _unscaled_dist, _k_rbf, _k_lin, _k_lin_rbf, \
+    _k_mat52
 
 
 @pytest.fixture(params = [(1,10,3),(5,1,3),(10,20,5),(10,0,5)])

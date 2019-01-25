@@ -5,10 +5,10 @@ Created on Fri Sep 22 11:08:49 2017
 @author: tkoller
 
 """
-from casadi import sqrt, trace, diag
 from casadi.tools import *
 
-def sum_two_ellipsoids(p_1,q_1,p_2,q_2,c=None):
+
+def sum_two_ellipsoids(p_1, q_1, p_2, q_2, c=None):
     """ overapproximation of sum of two ellipsoids
 
     Computes the ellipsoidal overapproximation of the sum of two n-dimensional
@@ -32,12 +32,12 @@ def sum_two_ellipsoids(p_1,q_1,p_2,q_2,c=None):
         The shape matrix of the resulting ellipsoid
     """
 
-    ## choose p s.t. the trace of the new shape matrix is minimized
+    # choose p s.t. the trace of the new shape matrix is minimized
     if c is None:
-        c = sqrt(trace(q_1)/trace(q_2))
+        c = sqrt(trace(q_1) / trace(q_2))
 
-    p_new = p_1+p_2
-    q_new = (1+(1./c))*q_1 + (1+c)*q_2
+    p_new = p_1 + p_2
+    q_new = (1 + (1. / c)) * q_1 + (1 + c) * q_2
 
     return p_new, q_new
 
@@ -66,12 +66,8 @@ def ellipsoid_from_rectangle(u_b):
             The (diagonal) shape matrix of covering ellipsoid
 
     """
-    n,_ = u_b.shape
-    d = n*u_b**2
+    n, _ = u_b.shape
+    d = n * u_b ** 2
     q = diag(d)
 
     return q
-
-
-
-

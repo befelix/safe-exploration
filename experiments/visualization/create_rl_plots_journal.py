@@ -45,7 +45,7 @@ def cost_per_episode_scenario(cost_array,safety_failures,shapes, count_safe_only
 
 
 def _get_failure_ratio(failures,per_episode = False):
-    """ Return the failure ratio of all rollouts 
+    """ Return the failure ratio of all rollouts
 
     Returns the ratio of failed rollout among all rollouts
     and all episodes
@@ -76,8 +76,8 @@ def _get_failure_ratio(failures,per_episode = False):
 
 plot_trainset = False
 set_figure_params()
-h_fig_rl_episodes_cm = 3.6 
-h_fig_bar_cm = 3.6 
+h_fig_rl_episodes_cm = 3.6
+h_fig_bar_cm = 3.6
 w_figure_cm = 8.63477
 w_full_figure_cm = 17.77747
 x_lim_samples = [-1,1]
@@ -92,7 +92,7 @@ w_fig_samples = (w_full_figure_cm - w_fig_colorbar) /num_fig_samples
 
 
 results_path = "results_journal" #"thesis_results_dynamic_exploration" #
-sub_folder_path = "results_rl"#"res_dynamic_exploration"# 
+sub_folder_path = "results_rl"#"res_dynamic_exploration"#
 
 
 colorbar_label = "Iterations" #"Time step"
@@ -122,7 +122,7 @@ a_safe_4_perf_10 = np.load("{}/{}/{}/results_episode.npy".format(results_path,su
 safe_perf_10_list = [a_safe_1_perf_10,a_safe_2_perf_10,a_safe_3_perf_10,a_safe_4_perf_10]
 #safe_perf_10_list = [a_safe_1_perf_10,a_safe_2_perf_10,a_safe_3_perf_10,a_safe_4_perf_10]#,a_safe_5_perf_10]
 
-for k,v in a_safe_1_perf_0.items(): 
+for k,v in a_safe_1_perf_0.items():
     print(k)
 #print(np.array(a_safe_1_perf_10["cc_all"])[0,0])
 #print(np.array(a_safe_1_perf_10["safety_failure_all"]))
@@ -130,7 +130,7 @@ for k,v in a_safe_1_perf_0.items():
 #print(np.array(a_safe_1_perf_10["X_all"])[0,2][:,2])
 
 
-## Compute average cost per episode for each n_safe with n_perf=0 and n_perf=10 (two plots)
+# Compute average cost per episode for each n_safe with n_perf=0 and n_perf=10 (two plots)
 n_settings_safe = 4
 #_, n_ep,_ = np.array(a_safe_1_perf_0["cc_all"]).shape
 
@@ -210,7 +210,7 @@ ax = fig.add_subplot(111)
 y_lim = [100,450]
 
 ax.set_xlabel('Episode')
-ax.set_ylabel('$C_{ep}$')    
+ax.set_ylabel('$C_{ep}$')
 #ax.set_yscale('log')
 
 ax.plot(np.arange(1,n_it+1),avg_cost_10_perf[0],"--o",label = "T=1",linewidth = 1)
@@ -272,5 +272,5 @@ caut_mpc_H_10["safety_failure_all"]
 caut_mpc_H_12["safety_failure_all"]
 
 
- 
+
 

@@ -21,13 +21,13 @@ class Config(DefaultConfigExploration):
     verbose = 2
     static_exploration = False 
 
-    ##safempc
+    # safempc
     beta_safety = 2.0
     n_safe = 1
     n_perf = 0
     r = 1
     
-    ##GP
+    # GP
     gp_data_path = "random_rollouts_25.npz"
     m = 25 #subset of data of size m for training
     #kern_types = ["rbf","rbf"]

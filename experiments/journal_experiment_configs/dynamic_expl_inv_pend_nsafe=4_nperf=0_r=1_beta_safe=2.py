@@ -21,7 +21,7 @@ class Config(DefaultConfigExploration):
     verbose = 2
     static_exploration = False 
 
-    ##safempc
+    # safempc
     beta_safety = 2.0
     n_safe = 4
     n_perf = 0

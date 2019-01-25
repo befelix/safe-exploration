@@ -14,11 +14,11 @@ def plot_sample_set(x_train,z_all,env):
     fig, ax = env.plot_safety_bounds(color = "r")
     
     c_spectrum = viridis(np.arange(n_it))
-    ##plot initial dataset    
+    # plot initial dataset    
     for i in range(n_train):
         ax = env.plot_state(ax,s_train[i,:env.n_s],color = c_spectrum[0])
     
-    ##plot the data gatehred
+    # plot the data gatehred
     for i in range(n_it):
         ax = env.plot_state(ax,s_expl[i,:env.n_s],color = c_spectrum[i])
         

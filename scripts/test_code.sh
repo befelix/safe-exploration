@@ -8,7 +8,8 @@ get_script_dir () {
      while [ -h "$SOURCE" ]; do
           DIR="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
           SOURCE="$( readlink "$SOURCE" )"
-          # If $SOURCE was a relative symlink (so no "/" as prefix, need to resolve it relative to the symlink base directory
+          # If $SOURCE was a relative symlink (so no "/" as prefix, need to resolve it
+          # relative to the symlink base directory
           [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
      done
      DIR="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
@@ -22,10 +23,10 @@ NC='\033[0m'
 
 # Run style tests
 #echo -e "${GREEN}Running style tests.${NC}"
-#flake8 $module --exclude '__init__.py' --show-source || { exit 1; }
+#flake8 $module --exclude '__init__.py,test_*.py' --show-source || { exit 1; }
 
 # Ignore import errors for __init__
-#flake8 $module --filename=__init__.py  --ignore=F --show-source || { exit 1; }
+flake8 $module --filename=__init__.py  --ignore=F --show-source || { exit 1; }
 
 echo -e "${GREEN}Testing docstring conventions.${NC}"
 # Test docstring conventions

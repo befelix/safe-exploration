@@ -6,8 +6,8 @@ Created on Thu Sep 28 16:12:30 2017
 """
 import os.path
 
-import pytest
 import numpy as np
+import pytest
 from casadi import SX, Function, vertcat
 from casadi import reshape as cas_reshape
 
@@ -77,13 +77,13 @@ def test_multistep_trajectory(before_test_onestep_reachability):
     multi_step = Function("multi_step",[mu_0_cas,k_ff_cas_all,k_fb_cas_all],[mu_multistep,sigma_multistep])
 
 
-    ## TODO: Need mu, sigma as input aswell
+    # TODO: Need mu, sigma as input aswell
     mu_1, sigma_1 = on_step_no_var_in(mu_0,k_ff)
 
     mu_2, sigma_2 = one_step(mu_1,sigma_1,k_ff,k_fb)
     mu_3, sigma_3 = one_step(mu_2,sigma_2,k_ff,k_fb)
 
-    ## TODO: stack k_ff and k_fb
+    # TODO: stack k_ff and k_fb
     k_fb_mult = np.array(cas_reshape(k_fb,(1,n_u*n_s)))
     k_fb_mult = np.array(vertcat(*[k_fb_mult]*(T-1)))
 

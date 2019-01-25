@@ -40,14 +40,14 @@ def plot_sample_set(z_all,env,y_label = False, x_train = None):
     fig, ax = env.plot_safety_bounds(color = "r")
     
     c_spectrum = viridis(np.arange(n_it))
-    ##plot initial dataset    
+    # plot initial dataset    
     if not x_train is None:
 	s_train = x_train[:,:env.n_s]
         n_train = np.shape(s_train)[0]
         for i in range(n_train):
             ax = env.plot_state(ax,s_train[i,:env.n_s],color = c_spectrum[0])
     
-    ##plot the data gatehred
+    # plot the data gatehred
     for i in range(n_it):
         ax = env.plot_state(ax,s_expl[i,:env.n_s],color = c_spectrum[i])
         

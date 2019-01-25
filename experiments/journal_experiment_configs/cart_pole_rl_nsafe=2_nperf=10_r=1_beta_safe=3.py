@@ -22,10 +22,10 @@ class Config(DefaultConfigEpisode):
 
 
     
-    ##environment
+    # environment
 
     
-    ##safempc
+    # safempc
     beta_safety=3.0
     n_safe = 2
     n_perf = 10
