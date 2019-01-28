@@ -2,7 +2,7 @@ version: 2
 jobs:
   build:
     docker:
-      - image: continuumio/miniconda3:4.5.4
+      - image: python:3.6
 
     steps:
       - checkout
@@ -11,25 +11,28 @@ jobs:
           name: Install build dependencies
           command: |
             apt-get update
-            apt-get install -y --no-install-recommends --quiet build-essential
+            apt-get install -y --no-install-recommends --quiet build-essential libopenblas-dev
 
       - restore_cache:
-          keys: conda
+          keys: 
+            - pip3.6--{{ checksum ".circleci/config.yml" }}--{{ checksum "setup.py" }}
+            - pip3.6
 
       - run:
           name: Install library
           command: |
-            conda install python=3.6 numpy pip --yes --quiet
+            pip install --progress-bar off numpy
             pip install --progress-bar off -e .[test]
 
       - save_cache:
-          key: conda
+          key: pip3.6--{{ checksum ".circleci/config.yml" }}--{{ checksum "setup.py" }}
           paths:
             - ~/.cache/pip
-            - /opt/conda/pkgs
 
       - run:
           name: Run tests
+          environment:
+            OPENBLAS_NUM_THREADS: 2
           command: |
             bash scripts/test_code.sh
 
