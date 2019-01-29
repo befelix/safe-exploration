@@ -4,11 +4,18 @@ Created on Thu Sep 21 15:49:49 2017
 
 @author: tkoller
 """
-import matplotlib.pyplot as plt
+
 import numpy as np
 import numpy.linalg as nLa
 
+from ..utils import unavailable
+try:
+    import matplotlib.pyplot as plt
+    _has_matplotlib = True
+except:
+    _has_matplotlib = False
 
+@unavailable(not _has_matplotlib,"matplotlib")
 def plot_ellipsoid_3D(p, q, ax, n_points=100):
     """ Plot an ellipsoid in 3D
 
@@ -32,6 +39,7 @@ def plot_ellipsoid_3D(p, q, ax, n_points=100):
         The Ax containing the ellipsoid
 
     """
+
     assert np.shape(p) == (3, 1), "p needs to be a 3x1 vector"
     assert np.shape(q) == (3, 3), "q needs to be a spd 3x3 matrix"
     assert np.allclose(q, 0.5 * (q + q.T), "q needs to be spd")
@@ -55,7 +63,7 @@ def plot_ellipsoid_3D(p, q, ax, n_points=100):
     ax.plot_wireframe(x, y, z, rstride=4, cstride=4, color='b', alpha=0.2)
     return ax
 
-
+@unavailable(not _has_matplotlib,"matplotlib")
 def plot_ellipsoid_2D(p, q, ax, n_points=100, color="r"):
     """ Plot an ellipsoid in 2D
 
