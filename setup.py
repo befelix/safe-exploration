@@ -11,14 +11,13 @@ setup(
                       'casadi',
                       'GPy',
                       'scikit-learn',
-                      'deepdish',
-                      'scipy',
-                      'matplotlib',
-                      'pygame'],
+                      'scipy'],
     extras_require={'test': ['pytest>=4,<5',
                              'flake8==3.6.0',
                              'pydocstyle==3.0.0',
-                             'pytest_cov>=2.0']},
+                             'pytest_cov>=2.0'],
+                    'visualization': ['matplotlib',
+                             'pygame']},
     classifiers=[
         # How mature is this project? Common values are
         #   3 - Alpha
