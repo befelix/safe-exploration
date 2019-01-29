@@ -274,8 +274,7 @@ class CasadiSSMEvaluator(cas.Callback):
                         cas.Sparsity.dense(self.ssm.num_states, 1),
                         cas.Sparsity.dense(self.ssm.num_states, 1),
                         cas.Sparsity.dense(self.ssm.num_states,
-                                           self.ssm.num_states + self.ssm.num_actions)][
-                    i]
+                                           self.ssm.num_states + self.ssm.num_actions)][i]
 
             def get_sparsity_out(self, i):
                 """ """
