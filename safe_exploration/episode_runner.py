@@ -8,16 +8,27 @@ import time
 import warnings
 from collections import namedtuple
 
-import matplotlib.pyplot as plt
 import numpy as np
 
+from utils import unavailable
 from . import utils_ellipsoid
 from .sampling_models import MonteCarloSafetyVerification
-from .utils import generate_initial_samples
+from .utils import generate_initial_samples,unavailable
 from .utils_config import create_solver, create_env
 
+try:
+    import matplotlib.pyplot as plt
+    _has_matplotlib = True
+except:
+    _has_matplotlib = False
 
-def run_episodic(conf):
+try:
+    import pygame
+    _has_pygame = True
+except:
+    _has_pygame = False
+
+def run_episodic(conf,visualize = False):
     """ Run episode setting """
 
     warnings.warn("Need to check relative dynamics")
@@ -89,7 +100,6 @@ def run_episodic(conf):
         results_dict["y_all"] = y_all
         results_dict["exit_codes"] = exit_codes_all
         results_dict["safety_failure_all"] = safety_failure_all
-        print(savepath_results)
 
         np.save(savepath_results, results_dict)
 
@@ -98,7 +108,8 @@ def run_episodic(conf):
         # save_data_gp_path = "{}/res_gp".format(save_path)
         # np.save(save_data_gp_path,gp_dict)
 
-
+@unavailable(not _has_pygame, "pygame", conditionals = ["render"])
+@unavailable(not _has_matplotlib,"matplotlib",conditionals = ["plot_ellipsoids,plot_trajectory"])
 def do_rollout(env, n_steps, solver=None, relative_dynamics=False, cost=None,
                plot_trajectory=True,
                verbosity=1, sampling_verification=False,
