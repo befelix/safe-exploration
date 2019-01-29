@@ -19,10 +19,10 @@ def create_parser():
 
     parser = argparse.ArgumentParser(description=""" Library for MPC-base Safe Exploration
     of unknown Dynamic Systems using Gaussian Processes \n\n
-    
+
     Default configurations for the following scenarios exist:
-        
-    
+
+
     """)
     parser.add_argument("--scenario_config",
                         default= "example_configs/static_mpc_exploration.py", type = str,
@@ -81,7 +81,7 @@ def run_scenario(args):
 
     task = conf.task
     if task == "exploration":
-        run_exploration(conf)#,conf.static_exploration,conf.n_iterations,
+        run_exploration(conf,conf.visualize)#,conf.static_exploration,conf.n_iterations,
                         #conf.n_restarts_optimizer,conf.visualize,conf.save_vis,conf.save_path,conf.verify_safety,conf.n_experiments)
     elif task == "episode_setting":
         run_episodic(conf)
