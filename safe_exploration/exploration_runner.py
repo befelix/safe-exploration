@@ -6,17 +6,21 @@ Created on Tue Nov 21 09:37:59 2017
 """
 
 import warnings
-
-import matplotlib.pyplot as plt
 import numpy as np
 
 from .gp_reachability import verify_trajectory_safety, trajectory_inside_ellipsoid
 from .safempc_exploration import StaticSafeMPCExploration, DynamicSafeMPCExploration
-from .utils import generate_initial_samples
+from .utils import generate_initial_samples, unavailable
 from .utils_config import create_env, create_solver
 
+try:
+    import matplotlib.pyplot as plt
+    _has_matplotlib = True
+except:
+    _has_matplotlib = False
 
-def run_exploration(conf):
+@unavailable(not _has_matplotlib,"matplotlib",conditionals = ["visualize"])
+def run_exploration(conf,visualize = False):
     """ Runs exploration algorithm for static and dynamic exploration
 
     Implementation of the exploration experiments, where we learn about the underlying system as
@@ -39,6 +43,7 @@ def run_exploration(conf):
     """
 
     # Get configs (see DefaultConfigExploration for Details)
+
     static_exploration = conf.static_exploration
     n_iterations = conf.n_iterations
     n_restarts_optimizer = conf.n_restarts_optimizer
