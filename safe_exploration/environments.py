@@ -6,7 +6,6 @@ Created on Mon Sep 25 17:16:45 2017
 """
 import abc
 import warnings
-import inspect
 import numpy as np
 
 from .utils import unavailable
@@ -19,7 +18,6 @@ from .visualization.utils_visualization import plot_ellipsoid_2D
 
 
 try:
-    import matplotlib
     import matplotlib.pyplot as plt
     _has_matplotlib = True
 except:
@@ -30,6 +28,7 @@ try:
     _has_pygame = True
 except:
     _has_pygame = False
+
 
 class Environment(metaclass=abc.ABCMeta):
     """ Base class for environments
@@ -438,7 +437,7 @@ class InvertedPendulum(Environment):
 
         return state_norm
 
-    @unavailable(not _has_matplotlib,"matplotlib")
+    @unavailable(not _has_matplotlib, "matplotlib")
     def plot_state(self, ax, x=None, color="b", normalize=True):
         """ Plot the current state or a given state vector
 
@@ -463,7 +462,7 @@ class InvertedPendulum(Environment):
         ax.plot(x[0], x[1], color=color, marker="o", mew=1.2)
         return ax
 
-    @unavailable(not _has_matplotlib,"matplotlib")
+    @unavailable(not _has_matplotlib, "matplotlib")
     def plot_ellipsoid_trajectory(self, p, q, vis_safety_bounds=True, ax=None,
                                   color="r"):
         """ Plot the reachability ellipsoids given in observation space
@@ -504,7 +503,7 @@ class InvertedPendulum(Environment):
 
         return ax, handles
 
-    @unavailable(not _has_matplotlib,"matplotlib")
+    @unavailable(not _has_matplotlib, "matplotlib")
     def plot_safety_bounds(self, ax=None, plot_safe_bounds=True,
                            plot_obs=False, normalize=True, color=(0., 0., 0.)):
         """ Given a 2D axes object, plot the safety bounds on it
@@ -790,7 +789,7 @@ class CartPole(Environment):
 
         return sat, failure_code
 
-    @unavailable(not _has_pygame,"pygame")
+    @unavailable(not _has_pygame, "pygame")
     def render(self):
         if not self._vis_initialized:
             self._init_vis()
