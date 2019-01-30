@@ -19,8 +19,9 @@ try:
 except:
     _has_matplotlib = False
 
-@unavailable(not _has_matplotlib,"matplotlib",conditionals = ["visualize"])
-def run_exploration(conf,visualize = False):
+
+@unavailable(not _has_matplotlib, "matplotlib", conditionals=["visualize"])
+def run_exploration(conf, visualize=False):
     """ Runs exploration algorithm for static and dynamic exploration
 
     Implementation of the exploration experiments, where we learn about the underlying system as

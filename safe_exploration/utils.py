@@ -487,19 +487,19 @@ def generate_initial_samples(env, conf, relative_dynamics, solver, safe_policy):
 
     return X, y
 
+
 class unavailable:
     """ Decorator to check for dependencies
 
     """
 
-    def __init__(self, when, library, conditionals = None):
+    def __init__(self, when, library, conditionals=None):
         self.when = when
         self.library = library
         self.conditionals = conditionals
         self.has_conditionals = True
         if conditionals is None:
             self.has_conditionals = False
-
 
     def __call__(self, func):
         if self.when:
@@ -521,25 +521,23 @@ class unavailable:
                 args_dict = dict(zip(args_name, args))
 
                 default_kwargs = self.get_default_kwargs(func)
-                check_kwargs = {**default_kwargs,**args_dict}
+                check_kwargs = {**default_kwargs, **args_dict}
 
                 if self._check_conditionals(check_kwargs):
                     def error_throwing(*args, **kwargs):
                         """ Throw dependency error """
                         raise ImportError(f"Optional dependency {self.library} required to execute this function")
 
-
-                    return error_throwing(*args,**kwargs)
+                    return error_throwing(*args, **kwargs)
                 else:
-                    return func(*args,**kwargs)
-
+                    return func(*args, **kwargs)
 
             return checked_func
 
         else:
             return func
 
-    def _check_conditionals(self,keywargs):
+    def _check_conditionals(self, keywargs):
         """ Compare function arguments with condtiionals
 
         Check if any of the specifiec conditionals that
@@ -569,7 +567,7 @@ class unavailable:
 
         return check_result
 
-    def get_default_kwargs(self,func):
+    def get_default_kwargs(self, func):
         """ Get the default values of the kwargs of a function
 
         Parameters
@@ -588,6 +586,6 @@ class unavailable:
         n_kwargs = len(f_defaults)
         def_kwargs = dict()
         for i in range(n_kwargs):
-            def_kwargs[f_vars[-i]]= f_defaults[-i]
+            def_kwargs[f_vars[-i]] = f_defaults[-i]
 
         return def_kwargs

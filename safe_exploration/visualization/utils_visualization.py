@@ -15,7 +15,8 @@ try:
 except:
     _has_matplotlib = False
 
-@unavailable(not _has_matplotlib,"matplotlib")
+
+@unavailable(not _has_matplotlib, "matplotlib")
 def plot_ellipsoid_3D(p, q, ax, n_points=100):
     """ Plot an ellipsoid in 3D
 
@@ -63,7 +64,8 @@ def plot_ellipsoid_3D(p, q, ax, n_points=100):
     ax.plot_wireframe(x, y, z, rstride=4, cstride=4, color='b', alpha=0.2)
     return ax
 
-@unavailable(not _has_matplotlib,"matplotlib")
+
+@unavailable(not _has_matplotlib, "matplotlib")
 def plot_ellipsoid_2D(p, q, ax, n_points=100, color="r"):
     """ Plot an ellipsoid in 2D
 

@@ -10,10 +10,10 @@ from collections import namedtuple
 
 import numpy as np
 
-from utils import unavailable
+from .utils import unavailable
 from . import utils_ellipsoid
 from .sampling_models import MonteCarloSafetyVerification
-from .utils import generate_initial_samples,unavailable
+from .utils import generate_initial_samples, unavailable
 from .utils_config import create_solver, create_env
 
 try:
@@ -22,13 +22,8 @@ try:
 except:
     _has_matplotlib = False
 
-try:
-    import pygame
-    _has_pygame = True
-except:
-    _has_pygame = False
 
-def run_episodic(conf,visualize = False):
+def run_episodic(conf, visualize=False):
     """ Run episode setting """
 
     warnings.warn("Need to check relative dynamics")
@@ -108,8 +103,8 @@ def run_episodic(conf,visualize = False):
         # save_data_gp_path = "{}/res_gp".format(save_path)
         # np.save(save_data_gp_path,gp_dict)
 
-@unavailable(not _has_pygame, "pygame", conditionals = ["render"])
-@unavailable(not _has_matplotlib,"matplotlib",conditionals = ["plot_ellipsoids,plot_trajectory"])
+
+@unavailable(not _has_matplotlib, "matplotlib", conditionals=["plot_ellipsoids,plot_trajectory"])
 def do_rollout(env, n_steps, solver=None, relative_dynamics=False, cost=None,
                plot_trajectory=True,
                verbosity=1, sampling_verification=False,
