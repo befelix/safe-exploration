@@ -6,8 +6,6 @@ Created on Mon Sep 25 17:16:45 2017
 """
 import abc
 import warnings
-
-
 import numpy as np
 
 from .utils import unavailable
@@ -20,7 +18,6 @@ from .visualization.utils_visualization import plot_ellipsoid_2D
 
 
 try:
-    import matplotlib
     import matplotlib.pyplot as plt
     _has_matplotlib = True
 except:
