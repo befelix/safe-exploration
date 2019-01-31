@@ -11,7 +11,8 @@ import pytest
 from casadi import SX, Function, vertcat
 from casadi import reshape as cas_reshape
 
-from .. import gp_models
+from safe_exploration.ssm_gpy.gp_models_old import SimpleGPModel
+
 from .. import uncertainty_propagation_casadi as prop_casadi
 
 
@@ -34,7 +35,7 @@ def before_test_onestep_reachability(request):
     X = train_data["X"]
     y = train_data["y"]
     m = 50
-    gp = gp_models.SimpleGPModel(n_s, n_s, n_u, X, y, m, train=True)
+    gp = SimpleGPModel(n_s, n_s, n_u, X, y, m, train=True)
     L_mu = np.array([0.1] * n_s)
     L_sigm = np.array([0.1] * n_s)
     k_fb = .1 * np.random.rand(n_u, n_s)  # need to choose this appropriately later

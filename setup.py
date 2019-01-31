@@ -9,7 +9,6 @@ setup(
     packages=find_packages(exclude=['docs', 'mps']),
     install_requires=['numpy>=1.0,<2',
                       'casadi',
-                      'GPy',
                       'scikit-learn',
                       'scipy'],
     extras_require={'test': ['pytest>=4,<5',
@@ -17,7 +16,8 @@ setup(
                              'pydocstyle==3.0.0',
                              'pytest_cov>=2.0'],
                     'visualization': ['matplotlib',
-                             'pygame']},
+                             'pygame'],
+                    'GPy':['GPy']},
     classifiers=[
         # How mature is this project? Common values are
         #   3 - Alpha

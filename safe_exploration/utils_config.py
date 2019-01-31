@@ -12,7 +12,7 @@ import numpy as np
 
 from .cautious_mpc import CautiousMPC
 from .environments import InvertedPendulum, CartPole
-from .gp_models import SimpleGPModel
+from safe_exploration.ssm_gpy.gaussian_process import GaussianProcess
 from .safempc_simple import SimpleSafeMPC
 from .utils import dlqr
 
@@ -44,10 +44,10 @@ def create_solver(conf, env, model_options=None):
     safe_policy = lambda x: np.dot(k_fb, x)
 
     if model_options is None:
-        gp = SimpleGPModel(conf.gp_ns_out, conf.gp_ns_in, env.n_u, m=conf.m,
+        gp = GaussianProcess(conf.gp_ns_out, conf.gp_ns_in, env.n_u, m=conf.m,
                            kern_types=conf.kern_types, Z=conf.Z)
     else:
-        gp = SimpleGPModel.from_dict(model_options)
+        gp = GaussianProcess.from_dict(model_options)
 
     dt = env.dt
     ctrl_bounds = np.hstack(

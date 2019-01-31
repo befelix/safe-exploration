@@ -11,7 +11,7 @@ import pytest
 from casadi import SX, Function
 from casadi import reshape as cas_reshape
 
-from .. import gp_models
+from safe_exploration.ssm_gpy.gp_models_old import SimpleGPModel
 from .. import gp_reachability as reach_num
 from .. import gp_reachability_casadi as reach_cas
 from ..utils import array_of_vec_to_array_of_mat
@@ -24,7 +24,7 @@ r_tol = 1e-4
 @pytest.fixture(params=[("InvPend", True, True), ("InvPend", False, True),
                         ("InvPend", True, True), ("InvPend", False, True)])
 def before_test_onestep_reachability(request):
-    np.random.seed(50)
+    np.random.seed(125)
 
     env, init_uncertainty, lin_model = request.param
     n_s = 2
@@ -40,7 +40,7 @@ def before_test_onestep_reachability(request):
     X = train_data["X"]
     y = train_data["y"]
     m = 50
-    gp = gp_models.SimpleGPModel(n_s, n_s, n_u, X, y, m, train=False)
+    gp = SimpleGPModel(n_s, n_s, n_u, X, y, m, train=False)
     gp.train(X, y, m, opt_hyp=True, choose_data=False)
     L_mu = np.array([0.001] * n_s)
     L_sigm = np.array([0.001] * n_s)
