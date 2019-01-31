@@ -11,6 +11,7 @@ import pytest
 from casadi import SX, Function
 from casadi import reshape as cas_reshape
 
+
 try:
     from safe_exploration.ssm_gpy.gp_models_old import SimpleGPModel
     _has_ssm_gpy = True

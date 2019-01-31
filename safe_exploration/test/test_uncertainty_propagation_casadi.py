@@ -11,12 +11,16 @@ import pytest
 from casadi import SX, Function, vertcat
 from casadi import reshape as cas_reshape
 
+<<<<<<< 65d09a7c037c9076eb0cd94755097ccc7d2b5172
 try:
     import safe_exploration.ssm_gpy
     from safe_exploration.ssm_gpy.gp_models_old import SimpleGPModel
     _has_ssm_gpy = True
 except:
     _has_ssm_gpy = False
+=======
+from safe_exploration.ssm_gpy.gp_models_old import SimpleGPModel
+>>>>>>> Moved the gpy-based casadi GPModel to optional subpackage ssm_gpy to deal with the hidden dependency of GPy on matplotlib, adjusted the rest of the code. However, needed to create gp_models_old.py. Will be removed once state space model integration works
 
 from .. import uncertainty_propagation_casadi as prop_casadi
 

@@ -18,8 +18,6 @@ try:
 except:
     _has_ssm_gp = False
 
-
-
 np.random.seed(125)
 a_tol = 1e-6
 r_tol = 1e-4

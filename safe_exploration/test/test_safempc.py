@@ -10,8 +10,6 @@ import numpy as np
 import pytest
 from casadi import reshape as cas_reshape
 from numpy.testing import assert_allclose
-
-
 from ..environments import CartPole
 from ..gp_reachability import lin_ellipsoid_safety_distance
 from ..safempc_simple import SimpleSafeMPC
