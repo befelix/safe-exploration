@@ -12,7 +12,7 @@ import pytest
 from casadi import Function, SX
 from numpy.testing import assert_allclose
 
-from ..gp_models import SimpleGPModel
+from safe_exploration.ssm_gpy.gp_models_old import SimpleGPModel
 
 np.random.seed(125)
 a_tol = 1e-6

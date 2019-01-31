@@ -11,7 +11,7 @@ import pytest
 from casadi import reshape as cas_reshape
 from numpy.testing import assert_allclose
 
-from .. import gp_models
+from safe_exploration.ssm_gpy.gp_models_old import SimpleGPModel
 from ..environments import CartPole
 from ..gp_reachability import lin_ellipsoid_safety_distance
 from ..safempc_simple import SimpleSafeMPC
@@ -45,7 +45,7 @@ def before_test_safempc(request):
     y = y[:80, :]
 
     m = None
-    gp = gp_models.SimpleGPModel(n_s, n_s, n_u, X, y, m)
+    gp = SimpleGPModel(n_s, n_s, n_u, X, y, m)
     gp.train(X, y, m, opt_hyp=False, choose_data=False)
 
     n_safe = 3
