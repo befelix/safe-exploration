@@ -1,11 +1,9 @@
 # content of conftest.py
-
 import pytest
 
 try:
     import safe_exploration.ssm_gpy
     safe_exploration.ssm_gpy.__name__
-
     _has_ssm_gpy_ = True
 except:
     _has_ssm_gpy_ = False
@@ -34,4 +32,3 @@ def check_has_ssm_pytorch():
 def check_has_ssm_gpy():
     if not _has_ssm_gpy_:
         pytest.skip("Optional package 'ssm_gpy' required to run this test")
-

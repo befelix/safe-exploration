@@ -10,6 +10,11 @@ import numpy as np
 import pytest
 from casadi import reshape as cas_reshape
 from numpy.testing import assert_allclose
+<<<<<<< 7cd9098bad63f42963a0fb5170cbf6f6c521a69b
+=======
+
+
+>>>>>>> Made tests robust against optional ssm_gpy not being installed. However, this drops coverage significantly
 from ..environments import CartPole
 from ..gp_reachability import lin_ellipsoid_safety_distance
 from ..safempc_simple import SimpleSafeMPC
