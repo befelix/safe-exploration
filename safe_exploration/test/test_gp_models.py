@@ -12,7 +12,13 @@ import pytest
 from casadi import Function, SX
 from numpy.testing import assert_allclose
 
-from safe_exploration.ssm_gpy.gp_models_old import SimpleGPModel
+try:
+    from safe_exploration.ssm_gpy.gp_models_old import SimpleGPModel
+    _has_ssm_gp = True
+except:
+    _has_ssm_gp = False
+
+
 
 np.random.seed(125)
 a_tol = 1e-6
@@ -23,6 +29,10 @@ r_tol = 1e-4
                         ("InvPend", ["lin_rbf", "lin_rbf"]),
                         ("InvPend", ["lin_mat52", "lin_mat52"])])
 def before_gp_predict_test(request):
+
+    if not _has_ssm_gp:
+        pytest.skip("Test requires optional dependencies 'ssm_gp'")
+
     env, kern_types = request.param
     n_s = 2
     n_u = 1

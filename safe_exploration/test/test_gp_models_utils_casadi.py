@@ -9,15 +9,26 @@ show the same behaviour as the gpy implementation
 
 import numpy as np
 import pytest
-from GPy.kern import RBF, Linear, Matern52
+
 from casadi import Function, SX
 
-from safe_exploration.ssm_gpy.gp_models_utils_casadi import _unscaled_dist, _k_rbf, _k_lin, _k_lin_rbf, \
+try:
+    from safe_exploration.ssm_gpy.gp_models_utils_casadi import _unscaled_dist, _k_rbf, _k_lin, _k_lin_rbf, \
     _k_mat52
+
+    from GPy.kern import RBF, Linear, Matern52
+    _has_ssm_gp = True
+except:
+    _has_ssm_gp = False
+
 
 @pytest.fixture(params=[(1, 10, 3), (5, 1, 3), (10, 20, 5), (10, 0, 5)])
 def before_gp_utils_casadi_test_rbf(request):
     """ """
+
+    if not _has_ssm_gp:
+        pytest.skip("Test requires optional dependencies 'ssm_gp'")
+
     n_x, n_y, n_dim = request.param
     x = np.random.rand(n_x, n_dim)
     y = None

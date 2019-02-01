@@ -11,7 +11,12 @@ import pytest
 from casadi import SX, Function, vertcat
 from casadi import reshape as cas_reshape
 
-from safe_exploration.ssm_gpy.gp_models_old import SimpleGPModel
+try:
+    import safe_exploration.ssm_gpy
+    from safe_exploration.ssm_gpy.gp_models_old import SimpleGPModel
+    _has_ssm_gpy = True
+except:
+    _has_ssm_gpy = False
 
 from .. import uncertainty_propagation_casadi as prop_casadi
 
@@ -19,6 +24,9 @@ from .. import uncertainty_propagation_casadi as prop_casadi
 @pytest.fixture(params=[("InvPend", True, True), ("InvPend", False, True),
                         ("InvPend", True, True), ("InvPend", False, True)])
 def before_test_onestep_reachability(request):
+    if not _has_ssm_gpy:
+        pytest.skip("Test requires optional dependencies 'ssm_gpy'")
+
     env, init_uncertainty, lin_model = request.param
     if env == "InvPend":
         n_s = 2
