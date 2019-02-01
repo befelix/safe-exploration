@@ -11,10 +11,17 @@ import pytest
 from casadi import reshape as cas_reshape
 from numpy.testing import assert_allclose
 
-from safe_exploration.ssm_gpy.gp_models_old import SimpleGPModel
+
 from ..environments import CartPole
 from ..gp_reachability import lin_ellipsoid_safety_distance
 from ..safempc_simple import SimpleSafeMPC
+
+try:
+    import safe_exploration.ssm_gpy
+    from safe_exploration.ssm_gpy.gp_models_old import SimpleGPModel
+    _has_ssm_gpy = True
+except:
+    _has_ssm_gpy = False
 
 a_tol = 1e-5
 r_tol = 1e-4
@@ -22,6 +29,11 @@ r_tol = 1e-4
 
 @pytest.fixture(params=[("CartPole", True)])
 def before_test_safempc(request):
+
+    if not _has_ssm_gpy:
+        pytest.skip("Test requires optional dependencies 'ssm_gp'")
+
+
     np.random.seed(12345)
     env, lin_model = request.param
     if env == "CartPole":
