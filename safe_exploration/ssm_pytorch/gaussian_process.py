@@ -2,14 +2,17 @@
 
 
 import torch
-from torch.nn import ModuleList
+import hessian
 import gpytorch
+import numpy as np
+
+from torch.nn import ModuleList
 from gpytorch.distributions import MultivariateNormal
 from safe_exploration.state_space_models import StateSpaceModel
-from hessian import compute_hessian
+
 from .utilities import compute_jacobian
 
-__all__ = ['BatchMean', 'BatchKernel', 'LinearMean', 'MultiOutputGP']
+__all__ = ['BatchMean', 'BatchKernel', 'LinearMean', 'MultiOutputGP', 'GPyTorchSSM']
 
 
 class BatchMean(gpytorch.means.Mean):
@@ -79,6 +82,7 @@ class BatchKernel(gpytorch.kernels.Kernel):
     def size(self, x1, x2):
         """Return the size of the resulting covariance matrix."""
         non_batch_size = (x1.size(-2), x2.size(-2))
+
         return torch.Size((x1.size(0),) + non_batch_size)
 
 
@@ -118,6 +122,7 @@ class LinearMean(gpytorch.means.Mean):
 
 class WrappedNormal(object):
     """A wrapper around gpytorch.NormalDistribution that doesn't squeeze empty dims."""
+
     def __init__(self, normal):
         super().__init__()
         self.normal = normal
@@ -207,22 +212,25 @@ class MultiOutputGP(gpytorch.models.ExactGP):
         return MultivariateNormal(self.mean(x), self.kernel(x))
 
 
-def GPytorchSSM(StateSpaceModel):
+class GPyTorchSSM(StateSpaceModel):
     """ A Gaussian process state space model based on GPytorch.
 
     We approximate the function x_{t+1} = f(x_t, u_t) with x in (1 x n) and u in (1 x m)
     based on noisy observations of f.
 
     """
+
     def __init__(self, num_states, num_actions, train_x, train_y, kernel, likelihood, mean=None):
         """ """
 
-        ## check compatability of the parameters required for super classes
+        # check compatability of the parameters required for super classes
         assert np.shape(train_x)[1] == num_states + num_actions, "Input needs to have dimensions N x(n + m)"
         assert np.shape(train_y)[1] == num_states, "Input needs to have dimensions N x n"
 
-        self.pytorch_gp = MultiOutputGP(train_x,train_y,kernel,likelihood,mean)
-        StateSpaceModel.__init__(self,num_states,num_actions)
+        self.pytorch_gp = MultiOutputGP(train_x, train_y, kernel, likelihood, mean)
+        self.pytorch_gp.eval()
+
+        StateSpaceModel.__init__(self, num_states, num_actions)
 
     def _compute_hessian_mean(self, states, actions):
         """ Generate the hessian of the mean prediction
@@ -239,15 +247,16 @@ def GPytorchSSM(StateSpaceModel):
         hess_mean:
 
         """
-        inp = torch.stack((torch.from_numpy(states),torch.from_numpy(actions)),dim=1)
-        n_in = self.num_states+self.num_actions
-        hess_mean = torch.empty(self.num_states,n_in,n_in)
+
+        inp = torch.cat((torch.from_numpy(states), torch.from_numpy(actions)), dim=1)
+        n_in = self.num_states + self.num_actions
+        hess_mean = torch.empty(self.num_states, n_in, n_in)
         for i in range(self.num_states):
-            hess_mean[i,:,:] = hessian.hessian(self.pytorch_gp.mean(inp)[0,i],inp)
+            hess_mean[i, :, :] = hessian.hessian(self.pytorch_gp.mean(inp)[0, i], inp)
 
         return hess_mean.numpy()
 
-    def predict(self, states, actions, jacobians = False, full_cov = False):
+    def predict(self, states, actions, jacobians=False, full_cov=False):
         """Predict the next states and uncertainty.
 
         Parameters
@@ -274,9 +283,12 @@ def GPytorchSSM(StateSpaceModel):
         jacobian_variance : np.ndarray
             Only supported without the full_cov flag.
         """
-        inp = torch.stack((torch.from_numpy(states),torch.from_numpy(actions)),dim=1)
-        pred_mean = self.pytorch_gp.mean(inp).numpy()
-        pred_var = self.pytorch_gp.kernel(inp).numpy()
+
+        inp = torch.cat((torch.from_numpy(np.array(states, dtype=np.float32)), torch.from_numpy(np.array(actions, dtype=np.float32))), dim=1)
+
+        pred = self.pytorch_gp(inp)
+        pred_mean = pred.mean
+        pred_var = pred.var
 
         if jacobians:
             jac_mean = compute_jacobian(self.pytorch_gp.mean, inp)
@@ -317,17 +329,16 @@ def GPytorchSSM(StateSpaceModel):
         hessian_mean: np.ndarray
             A (N x n*(n+m) x (n+m)) Array with the derivatives of each entry in the jacobian for each input
         """
-        N , n = np.shape(state)
+        N, n = np.shape(state)
 
         if jacobians and n > 1:
             raise NotImplementedError("""'linearize_predict' currently only allows for single
                                           inputs, i.e. (1 x n) arrays, when computing jacobians.""")
 
-
-        out = self.predict(states,actions,jacobians,False)
+        out = self.predict(states, actions, jacobians, False)
 
         if jacobians:
-            hess_mean = self._compute_hessian_mean(states,actions)
+            hess_mean = self._compute_hessian_mean(states, actions)
 
             return out[0], out[1], out[2], out[3], hess_mean
 
