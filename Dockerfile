@@ -17,7 +17,7 @@ COPY . /code
 RUN cd /code \
   && pip install --upgrade pip \
   && pip install numpy \
-  && pip install -e .[test] \
+  && pip install -e .[test,ssm_gpy,ssm_pytorch] \
   && rm -rf /root/.cache
 
 WORKDIR /code
