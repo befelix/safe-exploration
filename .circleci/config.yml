@@ -20,7 +20,7 @@ jobs:
           name: Install library
           command: |
             conda install python=3.6 numpy pip --yes --quiet
-            pip install --progress-bar off -e .[test]
+            pip install --progress-bar off -e .[test,ssm_gpy,ssm_pytorch]
 
       - save_cache:
           key: conda
