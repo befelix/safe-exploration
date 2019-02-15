@@ -14,15 +14,17 @@ jobs:
             apt-get install -y --no-install-recommends --quiet build-essential libopenblas-dev
 
       - restore_cache:
-          keys: 
+          keys:
             - pip3.6--{{ checksum ".circleci/config.yml" }}--{{ checksum "setup.py" }}
             - pip3.6
 
       - run:
           name: Install library
           command: |
-            pip install --progress-bar off numpy
-            pip install --progress-bar off -e .[test]
+
+            conda install python=3.6 numpy pip --yes --quiet
+            pip install --progress-bar off -e .[test,ssm_gpy,ssm_pytorch]
+
 
       - save_cache:
           key: pip3.6--{{ checksum ".circleci/config.yml" }}--{{ checksum "setup.py" }}

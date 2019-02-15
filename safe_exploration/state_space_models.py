@@ -209,11 +209,12 @@ class CasadiSSMEvaluator(cas.Callback):
         """
         state = arg[0]
         action = arg[1]
+
         if self.linearize_mu:
-            mu, sigma, jac_mu, _ = self.ssm.predict(state, action, True, False)
+            mu, sigma, jac_mu, _ = self.ssm.predict(state.T, action.T, True, False)
             return [mu, sigma, jac_mu]
         else:
-            mu, sigma = self.ssm.predict(state, action)
+            mu, sigma = self.ssm.predict(state.T, action.T)
             return [mu, sigma]
 
     def get_jacobian(self, name, inames, onames, opts):
@@ -304,14 +305,14 @@ class CasadiSSMEvaluator(cas.Callback):
 
                 if self.linearize_mu:
                     mu, sigma, jac_mu, jac_sigma, gradients_jac_mu = self.ssm.linearize_predict(
-                        state, action, True, False)
+                        state.T, action.T, True, False)
 
                     gradient_jac_mu_compressed = reshape_derivatives_3d_to_2d(
                         gradients_jac_mu)
                     jac_pred = np.vstack(
                         (jac_mu, jac_sigma, gradient_jac_mu_compressed))
                 else:
-                    mu, sigma, jac_mu, jac_sigma = self.ssm.predict(state, action, True,
+                    mu, sigma, jac_mu, jac_sigma = self.ssm.predict(state.T, action.T, True,
                                                                     False)
                     jac_pred = np.vstack((jac_mu, jac_sigma))
                 return [jac_pred]

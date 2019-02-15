@@ -17,7 +17,9 @@ setup(
                              'pytest_cov>=2.0'],
                     'visualization': ['matplotlib',
                              'pygame'],
-                    'GPy':['GPy']},
+                    'ssm_gpy':  ['GPy'],
+                    'ssm_pytorch': ['gpytorch','hessian @ https://github.com/mariogeiger/hessian/tarball/master#egg=hessian']},
+
     classifiers=[
         # How mature is this project? Common values are
         #   3 - Alpha
@@ -33,5 +35,8 @@ setup(
         'Programming Language :: Python :: 3.6',
         'Programming Language :: Python :: 3.7'
     ],
-    package_data={'safe_exploration': ['test/*.npz']},
+    package_data={'safe_exploration': ['test/*.npz']}
+
+
+
 )

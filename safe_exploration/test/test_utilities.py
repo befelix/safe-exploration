@@ -1,9 +1,18 @@
 """Test the functions in utilities.py"""
 
 import pytest
-import torch
 
-from mps import compute_jacobian, update_cholesky, SetTorchDtype
+try:
+    import torch
+    from safe_exploration.ssm_pytorch import compute_jacobian, update_cholesky, SetTorchDtype
+except:
+    pass
+
+
+
+@pytest.fixture(autouse = True)
+def check_has_ssm_pytorch_module(check_has_ssm_pytorch):
+    pass
 
 
 class TestJacobian(object):
