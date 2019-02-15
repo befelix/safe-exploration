@@ -28,9 +28,9 @@ def gpy_torch_ssm_init(request,check_has_ssm_pytorch):
     n_s, n_u, linearize_mean = request.param
 
     n_data = 10
-    kernel = BatchKernel([gpytorch.kernels.RBFKernel()]*n_s)
+    kernel = [gpytorch.kernels.RBFKernel()]*n_s
 
-    likelihood = gpytorch.likelihoods.GaussianLikelihood(batch_size = n_s)
+    likelihood = [gpytorch.likelihoods.GaussianLikelihood()]*n_s
     train_x = torch.randn((n_data,n_s+n_u))
     train_y = torch.randn((n_data,n_s))
     ssm = GPyTorchSSM(n_s,n_u,train_x,train_y,kernel,likelihood)
@@ -84,7 +84,7 @@ class TestDerivativesCasadiSSMEvaluator(object):
 
         self.compute_jacobians(dummy_ssm,casadi_ssm,n_s,n_u)
 
-    @pytest.mark.skip(reason = "Still need to fully implement the GPytorchSSM to fit the CasadiSSMEvaluator")
+    #@pytest.mark.skip(reason = "Still need to fully implement the GPytorchSSM to fit the CasadiSSMEvaluator")
     def test_jacobians_no_error_thrown_gpytorch_ssm(self,gpy_torch_ssm_init):
         """ """
         ssm, n_s, n_u, linearize_mean = gpy_torch_ssm_init
@@ -112,7 +112,7 @@ class TestDerivativesCasadiSSMEvaluator(object):
         ssm, n_s, n_u, linearize_mean = dummy_ssm_init
 
         #self.ipopt_output += [tuple(run_ipopt_ssmevaluator(ssm,n_s,n_u,linearize_mean))]
-    @pytest.mark.skip(reason = "Still need to fully implement the GPytorchSSM to fit the CasadiSSMEvaluator")
+    #@pytest.mark.skip(reason = "Still need to fully implement the GPytorchSSM to fit the CasadiSSMEvaluator")
     def test_integration_gpytorch_ssm_casadissm_evaluator_casadi_no_error_thrown(self,gpy_torch_ssm_init):
         ssm, n_s, n_u, linearize_mean = gpy_torch_ssm_init
         self.ipopt_output += [tuple(run_ipopt_ssmevaluator(ssm,n_s,n_u,linearize_mean))]
@@ -175,6 +175,7 @@ def run_ipopt_ssmevaluator(ssm,n_s,n_u,linearize_mean):
 
     with capture_stdout() as out:
         res = solver(x0=np.random.randn(5, 1))
+    res = solver(x0=np.random.randn(5, 1))
 
     return str(type(ssm)),linearize_mean,out[0]
 
@@ -199,14 +200,26 @@ def _parse_derivative_checker_output(out):
         The number of errors thrown by the derivative checker
     """
 
-    exp = r'Derivative checker detected ([0-9]+)'  # error(s)'
+    exp_n_err = r'Derivative checker detected ([0-9]+)'  # error(s)'
+    exp_no_err_detected = r'No errors detected by derivative checker'
+    m_n_err = re.search(exp_n_err, out)
+    m_no_err_detected = re.search(exp_n_err, out)
 
-    m = re.search(exp, out)
-    if m:
-        n_fails = m.group(1)
+    n_err_found = False
+    if m_n_err:
+        n_fails = m_n_err.group(1)
     else:
-        pytest.fail(
-            "Different error occured or the output is different when there are 0 errors!")
+        n_fails = 0
+        n_err_found = True
+
+    no_err_detected_found = False
+    if m_no_err_detected:
+        no_err_detected_found = True
+
+    if not n_err_found and not no_err_detected_found:
+        pytest.fail("""Neither the number of errors nor the message 'No errors detected..'
+         was found in output. Test seems to be broken""")
+
 
     return int(n_fails)
 
