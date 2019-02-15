@@ -8,11 +8,13 @@ import numpy as np
 
 from torch.nn import ModuleList
 from gpytorch.distributions import MultivariateNormal
+from gpytorch.mlls import SumMarginalLogLikelihood
+from gpytorch.models import IndependentModelList
 from safe_exploration.state_space_models import StateSpaceModel
 
 from .utilities import compute_jacobian
 
-__all__ = ['BatchMean', 'BatchKernel', 'LinearMean', 'MultiOutputGP', 'GPyTorchSSM']
+__all__ = ['BatchMean', 'BatchKernel', 'LinearMean', 'MultiOutputGP', 'GPyTorchSSM', 'MultiOutputGPNew']
 
 
 class BatchMean(gpytorch.means.Mean):
@@ -168,7 +170,7 @@ class MultiOutputGP(gpytorch.models.ExactGP):
             train_y = train_y.squeeze(0)
 
         if train_y.dim() > 1:
-            train_x = train_x.expand(len(train_y), *train_x.shape)
+            train_x = train_x.expand(train_y.shape[1], *train_x.shape)
 
         super(MultiOutputGP, self).__init__(train_x, train_y, likelihood)
 
@@ -200,6 +202,7 @@ class MultiOutputGP(gpytorch.models.ExactGP):
             args = [arg.unsqueeze(-1) if arg.ndimension() == 1 else arg for arg in args]
             # Expand input arguments across batches
             args = list(map(lambda x: x.expand(self.batch_size, *x.shape), args))
+
         normal = super().__call__(*args, **kwargs)
 
         if self.batch_size > 1:
@@ -210,6 +213,77 @@ class MultiOutputGP(gpytorch.models.ExactGP):
     def forward(self, x):
         """Compute the resulting batch-distribution."""
         return MultivariateNormal(self.mean(x), self.kernel(x))
+
+
+class MultiOutputGPNew(IndependentModelList):
+    def __init__(self, train_x, train_y, covs, likelihoods, means=None):
+
+        if train_y.dim() == 1:
+            train_y = train_y.unsqueeze(-1)
+
+        n_out = train_y.size()[1]
+
+        if n_out == 1:
+            try:  # check if the covs/likelihoods is iterable (e.g. list)
+                iter(covs)
+            except:  # make it a list
+                covs = [covs]
+                likelihoods = [likelihoods]
+                if not means is None:
+                    means = [means]
+
+        if means is None:
+            means = [gpytorch.means.ZeroMean()] * n_out
+
+        assert n_out == len(covs), "Number of covariance functions needs to be the same as number of outputs!"
+        assert n_out == len(likelihoods), "Number of likelihood functions needs to be the same as number of outputs!"
+        assert n_out == len(means), "Number of mean functions needs to be the same as number of outputs!"
+
+        models = [ExactGPModel(train_x, train_y[:, i], cov, likelihood, mean) for i, (mean, cov, likelihood) in enumerate(zip(means, covs, likelihoods))]
+        self.n_out = n_out
+        super(MultiOutputGPNew, self).__init__(*models)
+        self.likelihood = likelihood = gpytorch.likelihoods.LikelihoodList(*[single_model.likelihood for single_model in models])
+
+    def loss(self):
+        mll = SumMarginalLogLikelihood(self.likelihood, self)
+        outputs = super().__call__(*self.train_inputs)
+
+        targets = self.train_targets[0]
+
+        return -mll(outputs, self.train_targets)
+
+    def train(self, *args, **kwargs):
+        self.likelihood.train(*args, **kwargs)
+        super().train(*args, **kwargs)
+
+    def __call__(self, x, diag_only=True):
+        """
+
+        """
+
+        outputs = super().__call__(*[x] * self.n_out, diag_only=True)
+
+        means = torch.stack([out.mean for out in outputs], dim=1)
+        variances = torch.stack([out.variance for out in outputs], dim=1)
+
+        return MultivariateNormal(means, torch.diag_embed(variances))
+
+
+class ExactGPModel(gpytorch.models.ExactGP):
+    def __init__(self, train_x, train_y, cov, likelihood, mean=None):
+        super().__init__(train_x, train_y, likelihood)
+        if mean is None:
+            mean = gpytorch.means.ConstantMean()
+        self.mean_module = mean
+        self.covar_module = cov
+
+    def forward(self, x, diag_only=False):
+
+        mean_x = self.mean_module(x)
+
+        covar_x = self.covar_module(x)
+
+        return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
 
 
 class GPyTorchSSM(StateSpaceModel):
@@ -227,10 +301,10 @@ class GPyTorchSSM(StateSpaceModel):
         assert np.shape(train_x)[1] == num_states + num_actions, "Input needs to have dimensions N x(n + m)"
         assert np.shape(train_y)[1] == num_states, "Input needs to have dimensions N x n"
 
-        self.pytorch_gp = MultiOutputGP(train_x, train_y, kernel, likelihood, mean)
+        self.pytorch_gp = MultiOutputGPNew(train_x, train_y, kernel, likelihood, mean)
         self.pytorch_gp.eval()
 
-        StateSpaceModel.__init__(self, num_states, num_actions)
+        super(GPyTorchSSM, self).__init__(num_states, num_actions)
 
     def _compute_hessian_mean(self, states, actions):
         """ Generate the hessian of the mean prediction
@@ -248,11 +322,13 @@ class GPyTorchSSM(StateSpaceModel):
 
         """
 
-        inp = torch.cat((torch.from_numpy(states), torch.from_numpy(actions)), dim=1)
+        inp = torch.cat((torch.from_numpy(np.array(states, dtype=np.float32)), torch.from_numpy(np.array(actions, dtype=np.float32))), dim=1)
+        inp.requires_grad = True
         n_in = self.num_states + self.num_actions
+
         hess_mean = torch.empty(self.num_states, n_in, n_in)
-        for i in range(self.num_states):
-            hess_mean[i, :, :] = hessian.hessian(self.pytorch_gp.mean(inp)[0, i], inp)
+        for i in range(self.num_states):  # unfortunately hessian only works for scalar outputs
+            hess_mean[i, :, :] = hessian.hessian(self.pytorch_gp(inp).mean[0, i], inp)
 
         return hess_mean.numpy()
 
@@ -285,19 +361,20 @@ class GPyTorchSSM(StateSpaceModel):
         """
 
         inp = torch.cat((torch.from_numpy(np.array(states, dtype=np.float32)), torch.from_numpy(np.array(actions, dtype=np.float32))), dim=1)
+        inp.requires_grad = True
 
         pred = self.pytorch_gp(inp)
-        pred_mean = pred.mean
-        pred_var = pred.var
+        pred_mean = pred.mean.t()
+        pred_var = pred.variance.t()
 
         if jacobians:
-            jac_mean = compute_jacobian(self.pytorch_gp.mean, inp)
-            jac_var = compute_jacobian(self.pytorch_gp.kernel, inp)
+            jac_mean = compute_jacobian(pred_mean, inp).squeeze()
+            jac_var = compute_jacobian(pred_var, inp).squeeze()
 
-            return pred_mean, pred_var, jac_mean, jac_var
+            return pred_mean.detach().numpy(), pred_var.detach().numpy(), jac_mean.detach().numpy(), jac_var.detach().numpy()
 
         else:
-            pred_mean, pred_var
+            return pred_mean.detach().numpy(), pred_var.detach().numpy()
 
     def linearize_predict(self, states, actions, jacobians=False, full_cov=False):
         """Predict the next states and uncertainty.
@@ -329,9 +406,9 @@ class GPyTorchSSM(StateSpaceModel):
         hessian_mean: np.ndarray
             A (N x n*(n+m) x (n+m)) Array with the derivatives of each entry in the jacobian for each input
         """
-        N, n = np.shape(state)
+        N, n = np.shape(states)
 
-        if jacobians and n > 1:
+        if jacobians and N > 1:
             raise NotImplementedError("""'linearize_predict' currently only allows for single
                                           inputs, i.e. (1 x n) arrays, when computing jacobians.""")
 
