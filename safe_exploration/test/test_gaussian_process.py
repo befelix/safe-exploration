@@ -2,13 +2,16 @@
 
 
 import pytest
-
+import numpy as np
 
 try:
     import torch
-    from safe_exploration.ssm_pytorch import BatchMean, BatchKernel, MultiOutputGP, LinearMean, GPyTorchSSM
+    from safe_exploration.ssm_pytorch import BatchMean, BatchKernel, MultiOutputGP, LinearMean, GPyTorchSSM,MultiOutputGPNew
     import gpytorch
+    from torch.nn.functional import softplus
 except Exception as e:
+    print("no pytorch?")
+    assert False
     pass
 
 
@@ -126,13 +129,12 @@ try: # This requires the ssm_pytorch dependencies and throws an error.
      # However we do not use it anyways in this case hence no exception
      # handling required
     class ExactGPModel(gpytorch.models.ExactGP):
-
-        def __init__(self, train_x, train_y, kernel, likelihood, mean=None):
-            super(ExactGPModel, self).__init__(train_x, train_y, likelihood)
+        def __init__(self, train_x, train_y, cov, likelihood, mean = None):
+            super().__init__(train_x, train_y, likelihood)
             if mean is None:
-                mean = gpytorch.means.ZeroMean()
+                mean = gpytorch.means.ConstantMean()
             self.mean_module = mean
-            self.covar_module = kernel
+            self.covar_module = cov
 
         def forward(self, x):
             mean_x = self.mean_module(x)
@@ -141,7 +143,99 @@ try: # This requires the ssm_pytorch dependencies and throws an error.
 except:
     pass
 
+class TestMultiOutputGPNew(object):
+
+    def test_single_output_gp(self):
+        kernel = gpytorch.kernels.MaternKernel(nu=2.5, ard_num_dims=None, batch_size=1, active_dims=None, lengthscale_prior=None, param_transform=softplus, inv_param_transform=None, eps=1e-6)
+        mean = LinearMean(torch.tensor([[0.5]]))
+        likelihood = gpytorch.likelihoods.GaussianLikelihood()
+        #likelihood.noise = torch.tensor(0.01 ** 2)
+
+        train_x = torch.tensor([-0.5, -0.1, 0., 0.1, 1.])[:, None]
+        train_y = 0.5 * train_x
+
+        model = MultiOutputGPNew(train_x, train_y, kernel, likelihood, means=mean)
+        model.eval()
+
+        test_x = torch.linspace(-1, 2, 5)
+        pred = model(test_x)
+
+        true_mean = torch.tensor([-0.5, -0.125, 0.25, 0.6250, 1.0])[:, None]
+        torch.testing.assert_allclose(pred.mean, true_mean)
+
+    def test_multi_output_gp(self):
+        # Setup composite mean
+        mean1 = gpytorch.means.ConstantMean()
+        mean2 = gpytorch.means.ConstantMean()
+        mean = BatchMean([mean1, mean2])
+
+        # Setup composite kernel
+        cov1 = gpytorch.kernels.RBFKernel()
+        cov2 = gpytorch.kernels.RBFKernel()
+        kernel = BatchKernel([cov1, cov2])
+
+        # Training data
+        train_x = torch.linspace(2, 4, 10).unsqueeze(-1)
+        train_y = torch.cat([train_x, train_x],dim = 1)
+
+        # Combined GP
+        likelihood = gpytorch.likelihoods.GaussianLikelihood()
+        likelihoods = [likelihood]*2
+        covs = [cov1,cov2]
+        means = [mean1,mean2]
+
+        gp = MultiOutputGPNew(train_x, train_y, covs, likelihoods, means=means)
+
+        # Individual GPs
+        likelihood1 = gpytorch.likelihoods.GaussianLikelihood()
+        gp1 = ExactGPModel(train_x, train_y[:,0], cov1, likelihood1, mean=mean1)
+        gp2 = ExactGPModel(train_x, train_y[:,1], cov2, likelihood1, mean=mean2)
+
+        # Evaluation mode
+        gp.eval()
+        gp1.eval()
+        gp2.eval()
+
+        # Evaluate
+        test_x = torch.linspace(2, 4, 5)[:,None]
+        pred = gp(test_x)
+
+        pred1 = gp1(test_x)
+        pred2 = gp2(test_x)
+
+
+        torch.testing.assert_allclose(pred.mean[:,0], pred1.mean)
+        torch.testing.assert_allclose(pred.mean[:,1], pred2.mean)
+
+        torch.testing.assert_allclose(pred.covariance_matrix[:,0,0],
+                                      torch.diag(pred1.covariance_matrix))
+        torch.testing.assert_allclose(pred.covariance_matrix[:,1,1],
+                                      torch.diag(pred2.covariance_matrix))
+
+
+        torch.testing.assert_allclose(pred.variance[:,0], pred1.variance)
+        torch.testing.assert_allclose(pred.variance[:,1], pred2.variance)
+
+        # Test optimization
+        gp.train()
+
+        optimizer = torch.optim.Adam([{'params': gp.parameters()}], lr=0.1)
+
+        loss = gp.loss()
+        loss_pre_step = loss.item()
+        for i in range(10):
+            optimizer.zero_grad()
+            loss = gp.loss()
+            loss.backward()
+            optimizer.step()
+        loss_after_step = loss.item()
+
+        #Check if we make any progress on the objective
+        assert not np.allclose(loss_pre_step,loss_after_step)
+
+
 class TestMultiOutputGP(object):
+
     @pytest.mark.xfail(reason=""" With gpytorch=0.1.1 the line likelihood.noise =
 
         throws 'TypeError: initialize() takes 1 positional argument but 2 were given'
@@ -152,7 +246,7 @@ class TestMultiOutputGP(object):
         kernel = gpytorch.kernels.MaternKernel(nu=2.5, ard_num_dims=None, batch_size=1, active_dims=None, lengthscale_prior=None, param_transform=softplus, inv_param_transform=None, eps=1e-6)
         mean = LinearMean(torch.tensor([[0.5]]))
         likelihood = gpytorch.likelihoods.GaussianLikelihood()
-        likelihood.noise = torch.tensor(0.01 ** 2)
+        #likelihood.noise = torch.tensor(0.01 ** 2)
 
         train_x = torch.tensor([-0.5, -0.1, 0., 0.1, 1.])[:, None]
         train_y = 0.5 * train_x.t()
@@ -223,6 +317,57 @@ class TestMultiOutputGP(object):
         loss.backward()
         optimizer.step()
 
+    @pytest.mark.xfail(reason=" With gpytorch=0.1.1 this throws an error. And probably the test itself is broken")
+    def test_multi_input_multi_output_gp(self):
+        n_inp = 3
+        n_train = 5
+        n_out = n_inp
+
+        # Setup composite mean and kernel
+        means = []
+        covs = []
+        for i in range(n_inp):
+            covs += [gpytorch.kernels.RBFKernel()]
+            means += [gpytorch.means.ConstantMean()]
+        kernel = BatchKernel(covs)
+        mean = BatchMean(means)
+
+        # Training data
+        train_x = torch.randn(n_train,n_inp)
+        train_y = train_x
+
+        # Combined GP
+        likelihood = gpytorch.likelihoods.GaussianLikelihood(batch_size=n_out)
+        gp = MultiOutputGP(train_x, train_y, kernel, likelihood, mean=mean)
+
+        # Individual GPs
+        likelihood1 = gpytorch.likelihoods.GaussianLikelihood()
+        gp1 = ExactGPModel(train_x, train_y[0], covs[0], likelihood1, mean=means[0])
+        gp2 = ExactGPModel(train_x, train_y[1], covs[1], likelihood1, mean=means[1])
+
+        # Evaluation mode
+        gp.eval()
+        gp1.eval()
+        gp2.eval()
+
+        # Evaluate
+        n_test = 3
+        test_x = torch.randn(1,n_inp)
+        pred = gp(test_x)
+        pred1 = gp1(test_x)
+        pred2 = gp2(test_x)
+
+
+        torch.testing.assert_allclose(pred.mean[0], pred1.mean)
+        torch.testing.assert_allclose(pred.mean[1], pred2.mean)
+
+        torch.testing.assert_allclose(pred.covariance_matrix[0],
+                                      pred1.covariance_matrix)
+        torch.testing.assert_allclose(pred.covariance_matrix[1],
+                                      pred2.covariance_matrix)
+
+        torch.testing.assert_allclose(pred.variance[0], pred1.variance)
+        torch.testing.assert_allclose(pred.variance[1], pred2.variance)
 
 @pytest.fixture()
 def before_test_gpytorchssm(check_has_ssm_pytorch):
