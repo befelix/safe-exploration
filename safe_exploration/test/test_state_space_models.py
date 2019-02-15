@@ -100,7 +100,7 @@ class TestDerivativesCasadiSSMEvaluator(object):
 
         n_in = casadi_ssm.get_n_in()
         n_out = casadi_ssm.get_n_out()
-        print(type(ssm))
+
         for i in range(n_in):
             for j in range(n_out):
                 f_jac = casadi_ssm.jacobian_old(i, j)
@@ -126,11 +126,9 @@ class TestDerivativesCasadiSSMEvaluator(object):
         specific to the SSM. We only check here, if we correctly pass the jacobians to casadi.
 
         """
-        #print(self.ipopt_output)
 
         ipopt_output = self.ipopt_output
         for i in range(len(ipopt_output)):
-            print(len(self.ipopt_output[i]))
             model_name, lin_mean, out = ipopt_output[i]
             n_errors = _parse_derivative_checker_output(out)
 
