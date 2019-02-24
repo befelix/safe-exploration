@@ -65,12 +65,10 @@ class BatchKernel(gpytorch.kernels.Kernel):
 
     def forward(self, x1, x2, diag=False, batch_dims=None, **params):
         """Evaluate the kernel functions and combine them."""
-        kernels = [kernel(x1[i], x2[i], **params)
+        kernels = [kernel.forward(x1[i], x2[i], **params).squeeze(0)
                    for i, kernel in enumerate(self.base_kernels)]
         if diag:
             kernels = [kernel.diag() for kernel in kernels]
-        else:
-            kernels = [kernel.evaluate() for kernel in kernels]
 
         return torch.stack(kernels)
 
