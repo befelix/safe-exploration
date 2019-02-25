@@ -18,12 +18,6 @@ except:
 class TestSampleTrajectoriesIndependent(object):
     """Test independent state trajectory prediction."""
 
-    @pytest.mark.xfail(reason=""" With gpytorch=0.1.1 the line likelihood.noise =
-
-        throws 'TypeError: initialize() takes 1 positional argument but 2 were given'
-        Not sure which package(s) and version(s) are required to make this work.
-
-        """)
     def test_2d(self, check_has_ssm_pytorch):
         with torch.no_grad():
             kernel = mps.BatchKernel([gpytorch.kernels.MaternKernel(active_dims=[0]),
@@ -64,12 +58,6 @@ class TestSampleTrajectoriesIndependent(object):
             assert_allclose(trajs.shape, [3, 11, 2])
             assert_allclose(trajs[:, 0, :], 0.5)
 
-    @pytest.mark.xfail(reason=""" With gpytorch=0.1.1 the line likelihood.noise =
-
-        throws 'TypeError: initialize() takes 1 positional argument but 2 were given'
-        Not sure which package(s) and version(s) are required to make this work.
-
-        """)
     def test_1d(self, check_has_ssm_pytorch):
         with torch.no_grad():
             kernel = gpytorch.kernels.MaternKernel()

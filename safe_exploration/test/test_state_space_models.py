@@ -8,29 +8,135 @@ import re
 import casadi as cas
 import numpy as np
 import pytest
+import os.path
 from casadi.tools import capture_stdout
+from casadi import MX,vertcat,sum1,sum2
 
+from ..gp_reachability_casadi import lin_ellipsoid_safety_distance
 from ..state_space_models import StateSpaceModel, CasadiSSMEvaluator
+from .. import gp_reachability_casadi as reach_cas
+from .. import uncertainty_propagation_casadi as prop_casadi
+
+try:
+    import safe_exploration.ssm_gpy
+    from safe_exploration.ssm_gpy import SimpleGPModel
+    from GPy.kern import RBF
+    _has_ssm_gpy = True
+except:
+    _has_ssm_gpy = False
 
 try:
     from safe_exploration.ssm_pytorch import GPyTorchSSM, BatchKernel
     import gpytorch
     import torch
+
+    _has_ssm_gpytorch = True
 except:
-    pass
+    _has_ssm_gpytorch = False
+
+
+def get_gpy_ssm(path,n_s,n_u):
+
+    train_data = dict(list(np.load(path).items()))
+    X = train_data["X"]
+    X = X[:80, :]
+    y = train_data["y"]
+    y = y[:80, :]
+
+    kerns = ["rbf"]*n_s
+    m = None
+    gp = SimpleGPModel(n_s, n_s, n_u, kerns, X, y, m)
+    gp.train(X, y, m, opt_hyp=False, choose_data=False)
+
+    return gp
+
+
+def get_gpytorch_ssm(path,n_s,n_u):
+
+    kernel = BatchKernel([gpytorch.kernels.RBFKernel()]*n_s)
+
+    likelihood = gpytorch.likelihoods.GaussianLikelihood(batch_size=n_s)
+
+    train_data = dict(list(np.load(path).items()))
+    X = np.array(train_data["X"],dtype=np.float32)
+    train_x = torch.from_numpy(X[:80, :])
+    y = np.array(train_data["y"],dtype=np.float32)
+    train_y = torch.from_numpy(y[:80, :])
+    print(train_x.dtype)
+    print(train_y.dtype)
+
+    ssm = GPyTorchSSM(n_s,n_u,train_x,train_y,kernel,likelihood)
+
+    return ssm
+
+
+@pytest.fixture(params=[("CartPole", True,"gpytorch",True),("CartPole", True,"GPy",True)])
+def before_test_casadissm(request):
+    np.random.seed(12345)
+    env, lin_model, ssm, init_uncertainty = request.param
+
+    if env == "CartPole":
+        n_s = 4
+        n_u = 1
+        path = os.path.join(os.path.dirname(__file__), "data_cartpole.npz")
+        c_safety = 0.5
+
+    if ssm == "GPy":
+        if not _has_ssm_gpy:
+            pytest.skip("Test requires optional dependencies 'ssm_gp'")
+
+        ssm = get_gpy_ssm(path,n_s,n_u)
+
+    elif ssm == "gpytorch":
+        pytest.xfail(reason="Requires multi-input multi-output GP fix!")
+        if not _has_ssm_gpytorch:
+            pytest.skip("Test requires optional dependencies 'ssm_gp'")
+        ssm = get_gpytorch_ssm(path,n_s,n_u)
+    else:
+        pytest.fail("unknown ssm")
+
+    a = None
+    b = None
+    lin_model_param = None
+    if lin_model:
+        #a, b = env.linearize_discretize()
+        a = np.eye(n_s)
+        b = np.zeros((n_s,1))
+        lin_model_param = (a, b)
+
+    n_safe = 1
+    n_perf = 2
+
+    L_mu = np.array([0.001] * n_s)
+    L_sigm = np.array([0.001] * n_s)
+    k_fb = np.random.rand(n_u, n_s)  # need to choose this appropriately later
+    k_ff = np.random.rand(n_u, 1)
+
+    p = .1 * np.random.randn(n_s, 1)
+    if init_uncertainty:
+        q = .2 * np.array(
+            [[.5, .2], [.2, .65]])  # reachability based on previous uncertainty
+    else:
+        q = None  # no initial uncertainty
+
+    return p, q, ssm, k_fb, k_ff, L_mu, L_sigm, c_safety, a, b
+
 
 def pytest_namespace():
     return {"ipopt_output": []}
 
+
 @pytest.fixture(params=[(2, 3, False),
                     (2, 3, True)])
 def gpy_torch_ssm_init(request,check_has_ssm_pytorch):
+
+    pytest.xfail(reason= "Requires multi-input multi-output GP fix!")
     n_s, n_u, linearize_mean = request.param
 
     n_data = 10
-    kernel = [gpytorch.kernels.RBFKernel()]*n_s
+    kernel = BatchKernel([gpytorch.kernels.RBFKernel()]*n_s)
 
-    likelihood = [gpytorch.likelihoods.GaussianLikelihood()]*n_s
+    likelihood = gpytorch.likelihoods.GaussianLikelihood(batch_size=n_s)
     train_x = torch.randn((n_data,n_s+n_u))
     train_y = torch.randn((n_data,n_s))
     ssm = GPyTorchSSM(n_s,n_u,train_x,train_y,kernel,likelihood)
@@ -106,12 +212,6 @@ class TestDerivativesCasadiSSMEvaluator(object):
                 f_jac = casadi_ssm.jacobian_old(i, j)
                 f_jac(x_in_dummy, u_in_dummy)
 
-
-
-    def test_integration_dummy_ssm_casadissm_evaluator_casadi_no_error_thrown(self,dummy_ssm_init):
-        ssm, n_s, n_u, linearize_mean = dummy_ssm_init
-
-        #self.ipopt_output += [tuple(run_ipopt_ssmevaluator(ssm,n_s,n_u,linearize_mean))]
     #@pytest.mark.skip(reason = "Still need to fully implement the GPytorchSSM to fit the CasadiSSMEvaluator")
     def test_integration_gpytorch_ssm_casadissm_evaluator_casadi_no_error_thrown(self,gpy_torch_ssm_init):
         ssm, n_s, n_u, linearize_mean = gpy_torch_ssm_init
@@ -150,7 +250,6 @@ def test_jacobian_ssm_evaluator_same_as_ssm(dummy_ssm_init):
     raise NotImplementedError("Still need to implement this")
 
 
-
 def run_ipopt_ssmevaluator(ssm,n_s,n_u,linearize_mean):
     casadi_ssm = CasadiSSMEvaluator(ssm, linearize_mean)
 
@@ -173,12 +272,144 @@ def run_ipopt_ssmevaluator(ssm,n_s,n_u,linearize_mean):
 
     with capture_stdout() as out:
         res = solver(x0=np.random.randn(5, 1))
-    res = solver(x0=np.random.randn(5, 1))
 
     return str(type(ssm)),linearize_mean,out[0]
 
 
 
+
+#def test_
+
+def test_ipopt_ssmevaluator_multistep_ahead(before_test_casadissm):
+
+    p_0, q_0, ssm, k_fb, k_ff, L_mu, L_sigm, c_safety, a, b = before_test_casadissm
+    T = 3
+
+    n_u, n_s = np.shape(k_fb)
+
+    u_0 = .2 * np.random.randn(n_u, 1)
+    k_fb_0 = np.random.randn(T - 1,
+                             n_s * n_u)  # np.zeros((T-1,n_s*n_u))# np.random.randn(T-1,n_s*n_u)
+    k_ff = np.random.randn(T - 1, n_u)
+    # k_fb_ctrl = np.zeros((n_u,n_s))#np.random.randn(n_u,n_s)
+
+    u_0_cas = MX.sym("u_0", (n_u, 1))
+    k_fb_cas_0 = MX.sym("k_fb", (T - 1, n_u * n_s))
+    k_ff_cas = MX.sym("k_ff", (T - 1, n_u))
+
+    ssm_forward = ssm.get_forward_model_casadi(True)
+
+    p_new_cas, q_new_cas, pred_sigm_all = reach_cas.multi_step_reachability(p_0, u_0, k_fb_cas_0,
+                                                                k_ff_cas, ssm_forward, L_mu,
+                                                                L_sigm, c_safety, a, b)
+
+    h_mat_safe = np.hstack((np.eye(n_s, 1), -np.eye(n_s, 1))).T
+    h_safe = np.array([300, 300]).reshape((2, 1))
+    h_mat_obs = np.copy(h_mat_safe)
+    h_obs = np.array([300, 300]).reshape((2, 1))
+
+    g = []
+    lbg = []
+    ubg = []
+    for i in range(T):
+        p_i = p_new_cas[i, :].T
+        q_i = q_new_cas[i, :].reshape((n_s, n_s))
+        g_state = lin_ellipsoid_safety_distance(p_i, q_i, h_mat_obs,
+                                                h_obs,
+                                                c_safety=2.0)
+        g = vertcat(g, g_state)
+        lbg += [-cas.inf] * 2
+        ubg += [0] * 2
+
+
+
+    x_safe = vertcat(u_0_cas,k_ff_cas.reshape((-1,1)))
+    params_safe = vertcat(k_fb_cas_0.reshape((-1,1)))
+    f_safe = sum1(sum2(p_new_cas)) + sum1(sum2(q_new_cas)) + sum1(sum2(pred_sigm_all))
+
+    k_ff_cas_all = MX.sym("k_ff_single", (T, n_u))
+
+    k_fb_cas_all = MX.sym("k_fb_all", (T - 1, n_s * n_u))
+    k_fb_cas_all_inp = [k_fb_cas_all[i, :].reshape((n_u, n_s)) for i in range(T - 1)]
+
+
+    ssm_forward1 = ssm.get_forward_model_casadi(True)
+    mu_multistep, sigma_multistep, sigma_pred_perf = prop_casadi.multi_step_taylor_symbolic(p_0,
+                                                                              ssm_forward1,
+                                                                              k_ff_cas_all,
+                                                                              k_fb_cas_all_inp,
+                                                                              a=a, b=b)
+    x_perf = vertcat(k_ff_cas_all.reshape((-1,1)))
+    params_perf = vertcat(k_fb_cas_all.reshape((-1,1)))
+    f_perf = sum1(sum2(mu_multistep)) + sum1(sum2(sigma_multistep)) + sum1(sum2(sigma_pred_perf))
+
+    f_both = f_perf + f_safe
+    x_both =  vertcat(x_safe,x_perf)
+    params_both = vertcat(params_safe,params_perf)
+
+
+    options = {"ipopt": {"hessian_approximation": "limited-memory", "max_iter": 1},'error_on_fail': False}
+
+
+
+    #raise NotImplementedError("""Need to parse output to get fail/pass signal!
+    #                         Either 'Maximun Number of Iterations..' or 'Optimal solution found' are result of
+    #                         a successful run""")
+    #safe only
+    n_x = np.shape(x_safe)[0]
+    n_p = np.shape(params_safe)[0]
+    solver = cas.nlpsol("solver", "ipopt", {"x": x_safe, "f": f_safe, "p":params_safe,"g":g}, options)
+    with capture_stdout() as out:
+        solver(x0=np.random.randn(n_x,1),p = np.random.randn(n_p,1),lbg=lbg,ubg=ubg)
+
+    opt_sol_found = solver.stats()
+    if not opt_sol_found:
+        max_numb_exceeded = parse_solver_output_pass(out)
+        if not max_numb_exceeded:
+            pytest.fail("Neither optimal solution found, nor maximum number of iterations exceeded. Sth. is wrong")
+
+
+    n_x = np.shape(x_perf)[0]
+    n_p = np.shape(params_perf)[0]
+    solver = cas.nlpsol("solver", "ipopt", {"x": x_perf, "f": f_perf, "p":params_perf}, options)
+    with capture_stdout() as out:
+        solver(x0=np.random.randn(n_x,1),p = np.random.randn(n_p,1))
+    opt_sol_found = solver.stats()
+    if not opt_sol_found:
+        max_numb_exceeded = parse_solver_output_pass(out)
+        if not max_numb_exceeded:
+            pytest.fail("Neither optimal solution found, nor maximum number of iterations exceeded. Sth. is wrong")
+
+    #both
+    n_x = np.shape(x_both)[0]
+    n_p = np.shape(params_both)[0]
+    solver = cas.nlpsol("solver", "ipopt", {"x": x_both, "f": f_both, "p":params_both}, options)
+    with capture_stdout() as out:
+        solver(x0=np.random.randn(n_x,1),p = np.random.randn(n_p,1))
+    opt_sol_found = solver.stats()
+    if not opt_sol_found:
+        max_numb_exceeded = parse_solver_output_pass(out)
+        if not max_numb_exceeded:
+            pytest.fail("Neither optimal solution found, nor maximum number of iterations exceeded. Sth. is wrong")
+
+
+def parse_solver_output_pass(out):
+    """ Check if the solver exited without crash
+
+    We define a run to be successful if either of the following messages appear:
+        * "Maximum number of iterations exceeded"
+
+    """
+
+    # Check for max number of iterations message
+    exp_max_number = r"Maximum Number of Iterations Exceeded"
+    m_max_number = re.earch(exp_max_number,out)
+
+    m_max_numb_found = False
+    if m_max_number:
+        m_max_numb_found = True
+
+    return m_max_numb_found
 
 
 def _parse_derivative_checker_output(out):

@@ -13,7 +13,7 @@ from casadi import Function, SX
 from numpy.testing import assert_allclose
 
 try:
-    from safe_exploration.ssm_gpy.gp_models_old import SimpleGPModel
+    from safe_exploration.ssm_gpy.gaussian_process import SimpleGPModel
     _has_ssm_gp = True
 except:
     _has_ssm_gp = False
@@ -59,7 +59,7 @@ def test_predict_casadi_symbolic(before_gp_predict_test):
     out_cas = f_nograd(test_input.T)
     out_numeric = gp.predict(test_input.T)
 
-    assert_allclose(out_cas[0], out_numeric[0], r_tol, a_tol,
+    assert_allclose(out_cas[0].T, out_numeric[0], r_tol, a_tol,
                     err_msg="Do the predictive means match?")
-    assert_allclose(out_cas[1], out_numeric[1], r_tol, a_tol,
+    assert_allclose(out_cas[1].T, out_numeric[1], r_tol, a_tol,
                     err_msg="Do the predictive vars match?")

@@ -9,38 +9,132 @@ import os.path
 import numpy as np
 import pytest
 from casadi import reshape as cas_reshape
+from casadi import MX
 from numpy.testing import assert_allclose
 
 from ..environments import CartPole
-from ..gp_reachability import lin_ellipsoid_safety_distance
 from ..safempc_simple import SimpleSafeMPC
+from ..state_space_models import CasadiSSMEvaluator
+
+import safe_exploration.ssm_gpy
+from safe_exploration.state_space_models import StateSpaceModel
+from safe_exploration.ssm_gpy import SimpleGPModel
+from safe_exploration.gp_reachability_casadi import lin_ellipsoid_safety_distance
+from GPy.kern import RBF
 
 try:
     import safe_exploration.ssm_gpy
-    from safe_exploration.ssm_gpy.gp_models_old import SimpleGPModel
+    from safe_exploration.ssm_gpy import SimpleGPModel
+    from GPy.kern import RBF
     _has_ssm_gpy = True
 except:
     _has_ssm_gpy = False
 
+try:
+    from safe_exploration.ssm_pytorch import GPyTorchSSM, BatchKernel
+    import gpytorch
+    import torch
+
+    _has_ssm_gpytorch = True
+except:
+    _has_ssm_gpytorch = False
+
+
 a_tol = 1e-5
 r_tol = 1e-4
 
+def get_gpy_ssm(path,n_s,n_u):
 
-@pytest.fixture(params=[("CartPole", True)])
+    train_data = dict(list(np.load(path).items()))
+    X = train_data["X"]
+    X = X[:80, :]
+    y = train_data["y"]
+    y = y[:80, :]
+
+    kerns = ["rbf"]*n_s
+    m = None
+    gp = SimpleGPModel(n_s, n_s, n_u, kerns, X, y, m)
+    gp.train(X, y, m, opt_hyp=False, choose_data=False)
+
+    return gp
+
+
+class DummySSM(StateSpaceModel):
+    """
+
+
+    """
+
+    def __init__(self, n_s, n_u):
+        super(DummySSM, self).__init__(n_s, n_u)
+
+    def predict(self, states, actions, jacobians=False, full_cov=False):
+        """
+        """
+
+        if jacobians:
+            return np.random.randn(self.num_states, 1), np.ones(
+                (self.num_states, 1)), np.zeros(
+                (self.num_states, self.num_states + self.num_actions)), np.zeros(
+                (self.num_states, self.num_states + self.num_actions))
+        return np.random.randn(self.num_states, 1), np.ones((self.num_states, 1))
+
+    def linearize_predict(self, states, actions, jacobians=False, full_cov=True):
+        if jacobians:
+            return np.random.randn(self.num_states, 1), np.ones(
+                (self.num_states, 1)), np.zeros(
+                (self.num_states, self.num_states + self.num_actions)), np.zeros(
+                (self.num_states, self.num_states + self.num_actions)), np.random.randn(
+                self.num_states, self.num_actions + self.num_states,
+                self.num_states + self.num_actions)
+        return np.random.randn(self.num_states, 1), np.ones((self.num_states, 1))
+
+@pytest.mark.xfail("This is still bugged!")
+def get_gpytorch_ssm(path,n_s,n_u):
+    kernel = BatchKernel([gpytorch.kernels.RBFKernel()]*n_s)
+
+    likelihood = gpytorch.likelihoods.GaussianLikelihood(batch_size=n_s)
+
+    train_data = dict(list(np.load(path).items()))
+    X = train_data["X"]
+    train_x = torch.from_numpy(np.array(X[:80, :],dtype=np.float32))
+    y = train_data["y"]
+    train_y = torch.from_numpy(np.array(y[:80, :],dtype=np.float32))
+
+    ssm = GPyTorchSSM(n_s,n_u,train_x,train_y,kernel,likelihood)
+
+    return ssm
+
+
+#@pytest.fixture(params=[("CartPole", True,"gpytorch")])
+@pytest.fixture(params=[("CartPole", True,"gpytorch"),("CartPole", True,"GPy")])#,("CartPole", True,"dummy")])
 def before_test_safempc(request):
-
-    if not _has_ssm_gpy:
-        pytest.skip("Test requires optional dependencies 'ssm_gp'")
-
-
     np.random.seed(12345)
-    env, lin_model = request.param
+    env, lin_model, ssm = request.param
+
     if env == "CartPole":
         env = CartPole()
         n_s = env.n_s
         n_u = env.n_u
         path = os.path.join(os.path.dirname(__file__), "data_cartpole.npz")
         c_safety = 0.5
+
+    if ssm == "GPy":
+        if not _has_ssm_gpy:
+            pytest.skip("Test requires optional dependencies 'ssm_gpy'")
+
+        ssm = get_gpy_ssm(path,env.n_s,env.n_u)
+
+    elif ssm == "gpytorch":
+        pytest.xfail(reason="Requires multi-input multi-output GP fix!")
+        if not _has_ssm_gpytorch:
+            pytest.skip("Test requires optional dependencies 'ssm_gpytorch'")
+        ssm = get_gpytorch_ssm(path,env.n_s,env.n_u)
+    elif ssm == "dummy":
+        ssm = DummySSM(n_s,n_u)
+
+    else:
+        pytest.fail("unknown ssm")
 
     a = None
     b = None
@@ -49,18 +143,8 @@ def before_test_safempc(request):
         a, b = env.linearize_discretize()
         lin_model_param = (a, b)
 
-    train_data = dict(list(np.load(path).items()))
-    X = train_data["X"]
-    X = X[:80, :]
-    y = train_data["y"]
-    y = y[:80, :]
-
-    m = None
-    gp = SimpleGPModel(n_s, n_s, n_u, X, y, m)
-    gp.train(X, y, m, opt_hyp=False, choose_data=False)
-
     n_safe = 3
-    n_perf = None
+    n_perf = 1
 
     l_mu = np.array([0.01] * n_s)
     l_sigma = np.array([0.01] * n_s)
@@ -75,6 +159,9 @@ def before_test_safempc(request):
 
     dt = 0.1
     ctrl_bounds = np.hstack((np.reshape(-1, (-1, 1)), np.reshape(1, (-1, 1))))
+
+    opt_perf = {'type_perf_traj': 'mean_equivalent', 'n_perf': n_perf, 'r': 1,
+                    'perf_has_fb': True}
 
     safe_policy = None
     env_opts_safempc = dict()
@@ -91,9 +178,16 @@ def before_test_safempc(request):
     env_opts_safempc["l_sigma"] = l_sigma
     env_opts_safempc["lin_model"] = lin_model_param
 
-    safe_mpc = SimpleSafeMPC(n_safe, gp, env_opts_safempc, wx_cost, wu_cost,
-                             beta_safety=c_safety)
+    safe_mpc = SimpleSafeMPC(n_safe, ssm, env_opts_safempc, wx_cost, wu_cost,
+                             beta_safety = c_safety, opt_perf_trajectory = opt_perf)
 
+    #if n_perf > 1:
+    #    cost = lambda p_0, u_0, p_all, q_all, k_ff_safe, k_fb_safe, \
+    #                                    sigma_safe, mu_perf, sigma_perf, \
+    #                                    gp_pred_sigma_perf, k_fb_perf, k_ff_perf: MX(1)
+    #else:
+    #    cost = lambda p_0, u_0, p_all, q_all, k_ff_safe, k_fb_safe, \
+    #                                    sigma_safe: MX(1)
     safe_mpc.init_solver()
 
     x_0 = 0.2 * np.random.randn(n_s, 1)
@@ -103,6 +197,10 @@ def before_test_safempc(request):
 
     return env, safe_mpc, None, None, k_fb_apply, k_ff_apply, p_all, q_all, sol
 
+def test_run_safempc(before_test_safempc):
+    """ """
+    env, safe_mpc, k_ff_perf_traj, k_fb_perf_traj, k_fb_apply, k_ff_apply, p_all, q_all, sol = before_test_safempc
+    safe_mpc.solve(np.random.randn(env.n_s,1))
 
 @pytest.mark.skip(reason="Not implemented yet")
 def test_mpc_casadi_same_objective_value_values_as_numeric_eval(before_test_safempc):
@@ -133,6 +231,7 @@ def test_mpc_casadi_same_constraint_values_as_numeric_eval(before_test_safempc):
 
     n_s = env.n_s
     n_u = env.n_u
+
     g_0 = lin_ellipsoid_safety_distance(p_all[0, :].reshape(n_s, 1),
                                         q_all[0, :].reshape(n_s, n_s),
                                         safe_mpc.h_mat_obs, safe_mpc.h_obs)
@@ -158,3 +257,7 @@ def test_mpc_casadi_same_constraint_values_as_numeric_eval(before_test_safempc):
     assert_allclose(g_safe, constr_values[
                             idx_state_constraints + 2 * safe_mpc.m_obs:idx_state_constraints + 2 * safe_mpc.m_obs + safe_mpc.m_safe],
                     r_tol, a_tol)
+
+@pytest.mark.xfail(reason="There is a bug in custom cost right now, need to write test before debugging.")
+def test_safempc_custom_cost(before_test_safempc):
+    raise NotImplementedError("Need to test this")
