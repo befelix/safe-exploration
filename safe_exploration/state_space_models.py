@@ -5,9 +5,10 @@ Created on Wed Sep 20 10:37:51 2017
 @author: tkoller
 """
 import warnings
-
+import numpy as np
 import numpy as np
 import casadi as cas
+import copy
 
 
 from .utils import reshape_derivatives_3d_to_2d
@@ -31,6 +32,30 @@ class StateSpaceModel(object):
     def __init__(self, num_states, num_actions):
         self.num_states = num_states
         self.num_actions = num_actions
+
+    def __call__(self, states, actions):
+        """
+
+        Parameters
+        ----------
+        states : np.ndarray
+            A (N x n) array of states.
+        actions : np.ndarray
+            A (N x m) array of actions.
+
+        Returns
+        -------
+        mean : np.ndarray
+            A (N x n) mean prediction for the next states.
+        variance : np.ndarray
+            A (N x n) variance prediction for the next states. If full_cov is True,
+            then instead returns the (n x N x N) covariance matrix for each independent
+            output of the GP model.
+        jacobian_mean : np.ndarray
+            A (N x n x n + m) array with the jacobians for each datapoint on the axes.
+
+        """
+        return self.predict(states, actions, True, False)
 
     def predict(self, states, actions, jacobians=False, full_cov=False):
         """Predict the next states and uncertainty.
@@ -127,7 +152,26 @@ class StateSpaceModel(object):
             that returns the jacobian of te predictive mean of the SSM evaluated at (x,u).
 
         """
-        return CasadiSSMEvaluator(self, True)
+        return CasadiSSMEvaluator(copy.deepcopy(self), linearize_mu)
+
+    def update_model(self, train_x, train_y, opt_hyp=False, replace_old=False):
+        """ Update the state space model
+
+        Parameters
+        ----------
+        train_x: np.ndarray
+            A (N x (n+m)) array of state-action pairs as training inputs
+        train_y: np.ndarray
+            A (N x n) array of states as training targets
+
+        opt_hyp: Bool
+            True, if we want to reoptimize hyperparameters
+        replace_old: Bool
+            True, if we want to replace previous training data with
+            the current set of train_x/train_y data
+
+        """
+        raise NotImplementedError("Need to implement this in subclass")
 
 
 class CasadiSSMEvaluator(cas.Callback):
@@ -212,6 +256,7 @@ class CasadiSSMEvaluator(cas.Callback):
 
         if self.linearize_mu:
             mu, sigma, jac_mu, _ = self.ssm.predict(state.T, action.T, True, False)
+
             return [mu, sigma, jac_mu]
         else:
             mu, sigma = self.ssm.predict(state.T, action.T)
@@ -265,6 +310,18 @@ class CasadiSSMEvaluator(cas.Callback):
             def get_n_out(self):
                 """ """
                 return 1
+
+            def has_reverse(self, nadj):
+                """ """
+                return False
+
+            def has_forward(self, nfwd):
+                """ """
+                return False
+
+            def has_jacobian(self):
+                """ """
+                return False
 
             def get_sparsity_in(self, i):
                 """ """
