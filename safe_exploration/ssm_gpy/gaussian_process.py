@@ -4,6 +4,9 @@ import GPy
 import numpy as np
 from .gp_models_utils_casadi import gp_pred_function
 from ..state_space_models import StateSpaceModel
+from casadi import horzcat
+import warnings
+from GPy.kern import RBF, Matern52, Linear
 
 
 class GaussianProcess(StateSpaceModel):
@@ -52,6 +55,7 @@ class GaussianProcess(StateSpaceModel):
             train = False
         if train:
             self.train(X, y, m, Z=Z)
+        super(GaussianProcess, self).__init__(n_s_in, n_u)
 
     def train(self, X, y, m=None, opt_hyp=True, noise_diag=1e-5, Z=None,
               choose_data=True):
@@ -189,27 +193,13 @@ class GaussianProcess(StateSpaceModel):
 
         return x_chosen, y_chosen
 
-    def get_forward_model_casadi(self, compute_grads=False):
-        """ Return a symbolic casadi function representing predictive mean/variance
+    def __call__(self, states, actions):
+        """ Single input predictions
+
 
         """
-        assert self.gp_trained, "Cannot predict, need to train the GP first!"
 
-        return lambda x_new, u_new: self._predict_casadi_symbolic(x_new, u_new, compute_grads)
-
-    def _predict_casadi_symbolic(self, x_new, u_new, compute_grads):
-        """ """
-        z_new = vertcat(x_new, u_new)
-
-        out_dict = gp_pred_function(z_new, self.z, self.beta, self.hyp, self.kern_types,
-                                    self.inv_K, True, compute_grads)
-        mu_new = out_dict["pred_mu"]
-        sigma_new = out_dict["pred_sigma"]
-        if compute_grads:
-            jac_mu = out_dict["jac_mu"]
-            return mu_new, sigma_new, jac_mu
-
-        return mu_new, sigma_new
+        return self.linearize_predict(states, actions)
 
     def update_model(self, x, y, opt_hyp=False, replace_old=True, noise_diag=1e-5,
                      choose_data=True):
@@ -366,7 +356,7 @@ class GaussianProcess(StateSpaceModel):
         return inf_gain_x_f
 
 
-class SimpleGPModel():
+class SimpleGPModel(StateSpaceModel):
     """ Simple Wrapper around GPy
 
     Wrapper around the GPy library
@@ -415,6 +405,8 @@ class SimpleGPModel():
 
         if train:
             self.train(X, y, m, Z=Z)
+
+        super(SimpleGPModel, self).__init__(n_s_out, n_u)
 
     @classmethod
     def from_dict(cls, gp_dict):
@@ -478,6 +470,43 @@ class SimpleGPModel():
             Z = gp_dict["Z"]
 
         return cls(n_s_out, n_s_in, n_u, x, y, m, kern_types, hyp, train, Z)
+
+    def __call__(self, states, actions):
+        """ Single input predictions
+
+
+        """
+
+        N, n = np.shape(states)
+        if N > 1:
+            raise NotImplementedError("Currently do not support multiple state-action pairs to evaluate on.")
+
+        return self.predict_casadi_symbolic(horzcat(states, actions), True)
+
+    def get_forward_model_casadi(self, compute_grads=False):
+        """ Return a symbolic casadi function representing predictive mean/variance
+
+        """
+        assert self.gp_trained, "Cannot predict, need to train the GP first!"
+
+        return lambda x_new, u_new: self.predict_casadi_symbolic(horzcat(x_new, u_new), compute_grads)
+
+    def predict_casadi_symbolic(self, x_new, compute_grads=False):
+        """ Return a symbolic casadi function representing predictive mean/variance
+
+        """
+        assert self.gp_trained, "Cannot predict, need to train the GP first!"
+        assert np.shape(x_new)[0] == 1, "We only support this for a single input vector right now"
+
+        out_dict = gp_pred_function(x_new, self.z, self.beta, self.hyp, self.kern_types,
+                                    self.inv_K, True, compute_grads)
+        mu_new = out_dict["pred_mu"]
+        sigma_new = out_dict["pred_sigma"]
+        if compute_grads:
+            jac_mu = out_dict["jac_mu"]
+            return mu_new.T, sigma_new.T, jac_mu
+
+        return mu_new.T, sigma_new.T
 
     def to_dict(self):
         """ return a dict summarizing the object """
