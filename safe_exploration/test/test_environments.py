@@ -27,7 +27,7 @@ def no_matplotlib(monkeypatch):
     """ Mock an import error for matplotlib"""
     import_orig = builtins.__import__
     def mocked_import(name, globals, locals, fromlist, level):
-    """ """
+        """ """
         if name == 'matplotlib.pyplot':
 
             raise ImportError("This is a mocked import error")
