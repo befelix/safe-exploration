@@ -16,7 +16,7 @@ from .utils_ellipsoid import ellipsoid_from_rectangle, sum_two_ellipsoids, \
     sample_inside_ellipsoid
 
 
-def onestep_reachability(p_center, gp, k_ff, l_mu, l_sigma, q_shape=None, k_fb=None,
+def onestep_reachability(p_center, ssm, k_ff, l_mu, l_sigma, q_shape=None, k_fb=None,
                          c_safety=1., verbose=1, a=None, b=None):
     """ Overapproximate the reachable set of states under affine control law
 
@@ -70,7 +70,7 @@ def onestep_reachability(p_center, gp, k_ff, l_mu, l_sigma, q_shape=None, k_fb=N
             print(u_p)
 
         z_bar = np.vstack((p_center, u_p))
-        mu_0, sigm_0 = gp.predict(z_bar.T)
+        mu_0, sigm_0, _ = ssm(z_bar.T)
         rkhs_bounds = c_safety * np.sqrt(sigm_0).reshape((n_s,))
 
         q_1 = ellipsoid_from_rectangle(rkhs_bounds)
@@ -94,13 +94,12 @@ def onestep_reachability(p_center, gp, k_ff, l_mu, l_sigma, q_shape=None, k_fb=N
             print("\nApplying action:")
             print(u_bar)
         # compute the zero and first order matrices
-        mu_0, sigm_0 = gp.predict(z_bar.T)
+        mu_0, sigm_0, jac_mu = ssm(z_bar.T)
 
         if verbose > 0:
             print_ellipsoid(mu_0, diag(sigm_0.squeeze()),
                             text="predictive distribution")
 
-        jac_mu = gp.predictive_gradients(z_bar.T)
         a_mu = jac_mu[0, :, :n_s]
         b_mu = jac_mu[0, :, n_s:]
 
