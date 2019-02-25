@@ -17,7 +17,7 @@ from .gp_models_utils_casadi import gp_pred_function
 from ..utils import rgetattr, rsetattr
 
 
-class SimpleGPModel():
+class SimpleGPModelOld():
     """ Simple Wrapper around GPy
 
     Wrapper around the GPy library
