@@ -248,7 +248,7 @@ class SimpleSafeMPC:
 
         prob = {'f': cost, 'x': opt_vars, 'p': opt_params, 'g': g}
 
-        opt = {'error_on_fail': True,
+        opt = {'error_on_fail': False,
                'ipopt': {'hessian_approximation': 'limited-memory', "max_iter": 120,
                          "expect_infeasible_problem": "no", \
                          'acceptable_tol': 1e-4, "acceptable_constr_viol_tol": 1e-5,
@@ -366,7 +366,6 @@ class SimpleSafeMPC:
         # terminal state constraint
         p_T = p_all[-1, :].T
         q_T = q_all[-1, :].reshape((self.n_s, self.n_s))
-
 
         g_terminal = lin_ellipsoid_safety_distance(p_T, q_T, self.h_mat_safe,
                                                    self.h_safe)

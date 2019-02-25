@@ -70,13 +70,17 @@ def onestep_reachability(p_center, ssm, k_ff, l_mu, l_sigma, q_shape=None, k_fb=
             print(u_p)
 
         z_bar = np.vstack((p_center, u_p))
-        mu_0, sigm_0, _ = ssm(z_bar.T)
-        rkhs_bounds = c_safety * np.sqrt(sigm_0).reshape((n_s,))
+
+        mu_0, sigm_0, _ = ssm(p_center.T, u_p.T)
+        mu_0 = np.array(mu_0)
+        sigm_0 = np.array(sigm_0)
+
+        rkhs_bounds = c_safety * np.sqrt(sigm_0.T).reshape((n_s,))
 
         q_1 = ellipsoid_from_rectangle(rkhs_bounds)
 
         p_lin = np.dot(a, p_center) + np.dot(b, u_p)
-        p_1 = p_lin + mu_0.T
+        p_1 = p_lin + mu_0
 
         if verbose > 0:
             print_ellipsoid(p_1, q_1, text="uncertainty first state")
@@ -94,18 +98,21 @@ def onestep_reachability(p_center, ssm, k_ff, l_mu, l_sigma, q_shape=None, k_fb=
             print("\nApplying action:")
             print(u_bar)
         # compute the zero and first order matrices
-        mu_0, sigm_0, jac_mu = ssm(z_bar.T)
+        mu_0, sigm_0, jac_mu = ssm(x_bar.T, u_bar.T)
+        mu_0 = np.array(mu_0)
+        sigm_0 = np.array(sigm_0)
+        jac_mu = np.array(jac_mu)
 
         if verbose > 0:
             print_ellipsoid(mu_0, diag(sigm_0.squeeze()),
                             text="predictive distribution")
 
-        a_mu = jac_mu[0, :, :n_s]
-        b_mu = jac_mu[0, :, n_s:]
+        a_mu = jac_mu[:, :n_s]
+        b_mu = jac_mu[:, n_s:]
 
         # reach set of the affine terms
         H = a + a_mu + np.dot(b_mu + b, k_fb)
-        p_0 = mu_0.T + np.dot(a, x_bar) + np.dot(b, u_bar)
+        p_0 = mu_0 + np.dot(a, x_bar) + np.dot(b, u_bar)
 
         Q_0 = np.dot(H, np.dot(q_shape, H.T))
 
@@ -117,8 +124,7 @@ def onestep_reachability(p_center, ssm, k_ff, l_mu, l_sigma, q_shape=None, k_fb=
         # lb_sigm,ub_sigm = compute_bounding_box_lagrangian(q_shape,L_sigm,K,k,order = 1,verbose = verbose)
         ub_mean, ub_sigma = compute_remainder_overapproximations(q_shape, k_fb, l_mu,
                                                                  l_sigma)
-
-        b_sigma_eps = c_safety * (np.sqrt(sigm_0) + ub_sigma)
+        b_sigma_eps = c_safety * (np.sqrt(sigm_0.T) + ub_sigma)
 
         Q_lagrange_sigm = ellipsoid_from_rectangle(b_sigma_eps.squeeze())
         p_lagrange_sigm = zeros((n_s, 1))

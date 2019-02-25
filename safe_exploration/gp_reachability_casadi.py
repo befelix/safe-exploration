@@ -76,7 +76,7 @@ def onestep_reachability(p_center, ssm, k_ff, l_mu, l_sigma,
         p_lin = mtimes(a, p_center) + mtimes(b, u_p)
         p_1 = p_lin + mu_new
 
-        rkhs_bound = c_safety * sqrt(pred_var.T)
+        rkhs_bound = c_safety * sqrt(pred_var)
         q_1 = ellipsoid_from_rectangle(rkhs_bound)
 
         return p_1, q_1, pred_var
