@@ -158,9 +158,8 @@ class TestMultiOutputGP(object):
         kernel = BatchKernel([cov1, cov2])
 
         # Training data
-        train_x = torch.linspace(0, 2, 5).unsqueeze(-1)
-        train_y = train_x.squeeze(-1)
-        train_y = torch.stack([train_y, train_y])
+        train_x = torch.randn(5, 2)
+        train_y = torch.randn(5, 2).t()
 
         # Combined GP
         likelihood = gpytorch.likelihoods.GaussianLikelihood(batch_size=2)
@@ -177,7 +176,7 @@ class TestMultiOutputGP(object):
         gp2.eval()
 
         # Evaluate
-        test_x = torch.linspace(-2, 2, 5)[:, None]
+        test_x = torch.randn(10, 2)
         pred = gp(test_x)
         pred1 = gp1(test_x)
         pred2 = gp2(test_x)
