@@ -39,9 +39,9 @@ def get_gpy_ssm(path,n_s,n_u):
 
     train_data = dict(list(np.load(path).items()))
     X = train_data["X"]
-    X = X[:80, :]
+    X = X[:20, :]
     y = train_data["y"]
-    y = y[:80, :]
+    y = y[:20, :]
 
     kerns = ["rbf"]*n_s
     m = None
@@ -59,11 +59,9 @@ def get_gpytorch_ssm(path,n_s,n_u):
 
     train_data = dict(list(np.load(path).items()))
     X = np.array(train_data["X"],dtype=np.float32)
-    train_x = torch.from_numpy(X[:80, :])
+    train_x = torch.from_numpy(X[:20, :])
     y = np.array(train_data["y"],dtype=np.float32)
-    train_y = torch.from_numpy(y[:80, :])
-    print(train_x.dtype)
-    print(train_y.dtype)
+    train_y = torch.from_numpy(y[:20, :]).t()
 
     ssm = GPyTorchSSM(n_s,n_u,train_x,train_y,kernel,likelihood)
 
@@ -88,7 +86,6 @@ def before_test_casadissm(request):
         ssm = get_gpy_ssm(path,n_s,n_u)
 
     elif ssm == "gpytorch":
-        pytest.xfail(reason="Requires multi-input multi-output GP fix!")
         if not _has_ssm_gpytorch:
             pytest.skip("Test requires optional dependencies 'ssm_gp'")
         ssm = get_gpytorch_ssm(path,n_s,n_u)
@@ -130,15 +127,14 @@ def pytest_namespace():
                     (2, 3, True)])
 def gpy_torch_ssm_init(request,check_has_ssm_pytorch):
 
-    pytest.xfail(reason= "Requires multi-input multi-output GP fix!")
     n_s, n_u, linearize_mean = request.param
 
     n_data = 10
     kernel = BatchKernel([gpytorch.kernels.RBFKernel()]*n_s)
 
     likelihood = gpytorch.likelihoods.GaussianLikelihood(batch_size=n_s)
-    train_x = torch.randn((n_data,n_s+n_u))
-    train_y = torch.randn((n_data,n_s))
+    train_x = torch.randn(n_data, n_s+n_u)
+    train_y = torch.randn(n_s, n_data)
     ssm = GPyTorchSSM(n_s,n_u,train_x,train_y,kernel,likelihood)
 
 
@@ -361,8 +357,8 @@ def test_ipopt_ssmevaluator_multistep_ahead(before_test_casadissm):
     solver = cas.nlpsol("solver", "ipopt", {"x": x_safe, "f": f_safe, "p":params_safe,"g":g}, options)
     with capture_stdout() as out:
         solver(x0=np.random.randn(n_x,1),p = np.random.randn(n_p,1),lbg=lbg,ubg=ubg)
-
     opt_sol_found = solver.stats()
+
     if not opt_sol_found:
         max_numb_exceeded = parse_solver_output_pass(out)
         if not max_numb_exceeded:
@@ -375,6 +371,7 @@ def test_ipopt_ssmevaluator_multistep_ahead(before_test_casadissm):
     with capture_stdout() as out:
         solver(x0=np.random.randn(n_x,1),p = np.random.randn(n_p,1))
     opt_sol_found = solver.stats()
+
     if not opt_sol_found:
         max_numb_exceeded = parse_solver_output_pass(out)
         if not max_numb_exceeded:
@@ -387,11 +384,11 @@ def test_ipopt_ssmevaluator_multistep_ahead(before_test_casadissm):
     with capture_stdout() as out:
         solver(x0=np.random.randn(n_x,1),p = np.random.randn(n_p,1))
     opt_sol_found = solver.stats()
+
     if not opt_sol_found:
         max_numb_exceeded = parse_solver_output_pass(out)
         if not max_numb_exceeded:
             pytest.fail("Neither optimal solution found, nor maximum number of iterations exceeded. Sth. is wrong")
-
 
 def parse_solver_output_pass(out):
     """ Check if the solver exited without crash
