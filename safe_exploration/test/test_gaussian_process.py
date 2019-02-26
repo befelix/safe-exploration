@@ -173,9 +173,8 @@ class TestMultiOutputGP(object):
         kernel = BatchKernel([cov1, cov2])
 
         # Training data
-        train_x = torch.linspace(0, 2, 5).unsqueeze(-1)
-        train_y = train_x.squeeze(-1)
-        train_y = torch.stack([train_y, train_y])
+        train_x = torch.randn(5, 2)
+        train_y = torch.randn(5, 2).t()
 
         # Combined GP
         likelihood = gpytorch.likelihoods.GaussianLikelihood(batch_size=2)
@@ -192,7 +191,7 @@ class TestMultiOutputGP(object):
         gp2.eval()
 
         # Evaluate
-        test_x = torch.linspace(-2, 2, 5)[:, None]
+        test_x = torch.randn(10, 2)
         pred = gp(test_x)
         pred1 = gp1(test_x)
         pred2 = gp2(test_x)
@@ -215,62 +214,8 @@ class TestMultiOutputGP(object):
         optimizer.zero_grad()
         loss = gp.loss(mll)
         loss.backward()
+
         optimizer.step()
-
-    @pytest.mark.xfail(reason="Not sure about correct input/output shape yet!")
-    def test_multi_input_multi_output_gp(self):
-        n_inp = 2
-        n_train = 10
-        n_out = 3
-
-        # Setup composite mean and kernel
-        means = []
-        covs = []
-        for i in range(n_inp):
-            covs += [gpytorch.kernels.RBFKernel()]
-            means += [gpytorch.means.ConstantMean()]
-        kernel = BatchKernel(covs)
-        mean = BatchMean(means)
-
-        # Training data
-        train_x = torch.randn(n_train,n_inp)
-        train_y = torch.randn(n_train,n_out)
-
-        # Combined GP
-        likelihood = gpytorch.likelihoods.GaussianLikelihood(batch_size=n_out)
-        gp = MultiOutputGP(train_x, train_y, kernel, likelihood, mean=mean)
-
-        # Individual GPs
-        likelihood1 = gpytorch.likelihoods.GaussianLikelihood()
-        gp1 = ExactGPModel(train_x, train_y[0], covs[0], likelihood1, mean=means[0])
-        gp2 = ExactGPModel(train_x, train_y[1], covs[1], likelihood1, mean=means[1])
-
-        # Evaluation mode
-        gp.eval()
-        gp1.eval()
-        gp2.eval()
-
-        # Evaluate
-        n_test = 4
-        test_x = torch.randn(n_test,n_inp)
-        test_x = test_x.expand(n_out, *test_x.shape)
-        print(test_x.shape)
-
-        pred1 = gp1(test_x)
-        pred2 = gp2(test_x)
-        pred = gp(test_x)
-
-
-        torch.testing.assert_allclose(pred.mean[0], pred1.mean)
-        torch.testing.assert_allclose(pred.mean[1], pred2.mean)
-
-        torch.testing.assert_allclose(pred.covariance_matrix[0],
-                                      pred1.covariance_matrix)
-        torch.testing.assert_allclose(pred.covariance_matrix[1],
-                                      pred2.covariance_matrix)
-
-        torch.testing.assert_allclose(pred.variance[0], pred1.variance)
-        torch.testing.assert_allclose(pred.variance[1], pred2.variance)
 
 @pytest.fixture()
 def before_test_gpytorchssm(check_has_ssm_pytorch):
@@ -290,11 +235,3 @@ def before_test_gpytorchssm(check_has_ssm_pytorch):
 
     return ssm,n_s,n_u,train_x,train_y,kernel,likelihood
 
-#def test_gpytorch_predict(before_test_gpytorchssm):
-#    """ """
-#
-#    ssm,n_s,n_u,train_x,train_y,kernel,likelihood = before_test_gpytorchssm
-#
-#    test_x = torch.linspace(-2, 2, 5)[:, None]
-#
-#    ssm.predict()
