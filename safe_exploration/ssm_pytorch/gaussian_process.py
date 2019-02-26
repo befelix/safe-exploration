@@ -215,7 +215,7 @@ class GPyTorchSSM(StateSpaceModel):
 
         # check compatability of the parameters required for super classes
         assert np.shape(train_x)[1] == num_states + num_actions, "Input needs to have dimensions N x(n + m)"
-        assert np.shape(train_y)[1] == num_states, "Input needs to have dimensions N x n"
+        assert np.shape(train_y)[0] == num_states, "Input needs to have dimensions N x n"
 
         self.pytorch_gp = MultiOutputGP(train_x, train_y, kernel, likelihood, mean)
         self.pytorch_gp.eval()
@@ -244,7 +244,7 @@ class GPyTorchSSM(StateSpaceModel):
 
         hess_mean = torch.empty(self.num_states, n_in, n_in)
         for i in range(self.num_states):  # unfortunately hessian only works for scalar outputs
-            hess_mean[i, :, :] = hessian.hessian(self.pytorch_gp(inp).mean[0, i], inp)
+            hess_mean[i, :, :] = hessian.hessian(self.pytorch_gp(inp).mean[i, 0], inp)
 
         return hess_mean.numpy()
 
@@ -279,8 +279,8 @@ class GPyTorchSSM(StateSpaceModel):
         inp = torch.cat((torch.from_numpy(np.array(states, dtype=np.float32)), torch.from_numpy(np.array(actions, dtype=np.float32))), dim=1)
         inp.requires_grad = True
         pred = self.pytorch_gp(inp)
-        pred_mean = pred.mean.t()
-        pred_var = pred.variance.t()
+        pred_mean = pred.mean
+        pred_var = pred.variance
 
         if jacobians:
             jac_mean = compute_jacobian(pred_mean, inp).squeeze()
