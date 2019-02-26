@@ -43,13 +43,14 @@ except:
 a_tol = 1e-5
 r_tol = 1e-4
 
+
 def get_gpy_ssm(path,n_s,n_u):
 
     train_data = dict(list(np.load(path).items()))
     X = train_data["X"]
-    X = X[:80, :]
+    X = X[:20, :]
     y = train_data["y"]
-    y = y[:80, :]
+    y = y[:20, :]
 
     kerns = ["rbf"]*n_s
     m = None
@@ -89,7 +90,7 @@ class DummySSM(StateSpaceModel):
                 self.num_states + self.num_actions)
         return np.random.randn(self.num_states, 1), np.ones((self.num_states, 1))
 
-@pytest.mark.xfail("This is still bugged!")
+
 def get_gpytorch_ssm(path,n_s,n_u):
     kernel = BatchKernel([gpytorch.kernels.RBFKernel()]*n_s)
 
@@ -97,16 +98,15 @@ def get_gpytorch_ssm(path,n_s,n_u):
 
     train_data = dict(list(np.load(path).items()))
     X = train_data["X"]
-    train_x = torch.from_numpy(np.array(X[:80, :],dtype=np.float32))
+    train_x = torch.from_numpy(np.array(X[:20, :],dtype=np.float32))
     y = train_data["y"]
-    train_y = torch.from_numpy(np.array(y[:80, :],dtype=np.float32))
+    train_y = torch.from_numpy(np.array(y[:20, :],dtype=np.float32)).t()
 
-    ssm = GPyTorchSSM(n_s,n_u,train_x,train_y,kernel,likelihood)
+    ssm = GPyTorchSSM(n_s, n_u, train_x, train_y, kernel, likelihood)
 
     return ssm
 
 
-#@pytest.fixture(params=[("CartPole", True,"gpytorch")])
 @pytest.fixture(params=[("CartPole", True,"gpytorch"),("CartPole", True,"GPy")])#,("CartPole", True,"dummy")])
 def before_test_safempc(request):
     np.random.seed(12345)
@@ -123,13 +123,12 @@ def before_test_safempc(request):
         if not _has_ssm_gpy:
             pytest.skip("Test requires optional dependencies 'ssm_gpy'")
 
-        ssm = get_gpy_ssm(path,env.n_s,env.n_u)
+        ssm = get_gpy_ssm(path, env.n_s, env.n_u)
 
     elif ssm == "gpytorch":
-        pytest.xfail(reason="Requires multi-input multi-output GP fix!")
         if not _has_ssm_gpytorch:
             pytest.skip("Test requires optional dependencies 'ssm_gpytorch'")
-        ssm = get_gpytorch_ssm(path,env.n_s,env.n_u)
+        ssm = get_gpytorch_ssm(path, env.n_s, env.n_u)
     elif ssm == "dummy":
         ssm = DummySSM(n_s,n_u)
 
@@ -150,15 +149,15 @@ def before_test_safempc(request):
     l_sigma = np.array([0.01] * n_s)
 
     h_mat_safe = np.hstack((np.eye(n_s, 1), -np.eye(n_s, 1))).T
-    h_safe = np.array([300, 300]).reshape((2, 1))
+    h_safe = np.array([3000, 3000]).reshape((2, 1))
     h_mat_obs = np.copy(h_mat_safe)
-    h_obs = np.array([300, 300]).reshape((2, 1))
+    h_obs = np.array([3000, 3000]).reshape((2, 1))
 
     wx_cost = 10 * np.eye(n_s)
     wu_cost = 0.1
 
     dt = 0.1
-    ctrl_bounds = np.hstack((np.reshape(-1, (-1, 1)), np.reshape(1, (-1, 1))))
+    ctrl_bounds = np.hstack((np.reshape(-1000, (-1, 1)), np.reshape(1000, (-1, 1))))
 
     opt_perf = {'type_perf_traj': 'mean_equivalent', 'n_perf': n_perf, 'r': 1,
                     'perf_has_fb': True}
@@ -181,14 +180,15 @@ def before_test_safempc(request):
     safe_mpc = SimpleSafeMPC(n_safe, ssm, env_opts_safempc, wx_cost, wu_cost,
                              beta_safety = c_safety, opt_perf_trajectory = opt_perf)
 
-    #if n_perf > 1:
-    #    cost = lambda p_0, u_0, p_all, q_all, k_ff_safe, k_fb_safe, \
-    #                                    sigma_safe, mu_perf, sigma_perf, \
-    #                                    gp_pred_sigma_perf, k_fb_perf, k_ff_perf: MX(1)
-    #else:
-    #    cost = lambda p_0, u_0, p_all, q_all, k_ff_safe, k_fb_safe, \
-    #                                    sigma_safe: MX(1)
-    safe_mpc.init_solver()
+    if n_perf > 1:
+        cost = lambda p_0, u_0, p_all, q_all, k_ff_safe, k_fb_safe, \
+                                        sigma_safe, mu_perf, sigma_perf, \
+                                        gp_pred_sigma_perf, k_fb_perf, k_ff_perf: MX(1)
+    else:
+        cost = lambda p_0, u_0, p_all, q_all, k_ff_safe, k_fb_safe, \
+                                        sigma_safe: MX(1)
+
+    safe_mpc.init_solver(cost)
 
     x_0 = 0.2 * np.random.randn(n_s, 1)
 
@@ -197,31 +197,11 @@ def before_test_safempc(request):
 
     return env, safe_mpc, None, None, k_fb_apply, k_ff_apply, p_all, q_all, sol
 
+
 def test_run_safempc(before_test_safempc):
     """ """
     env, safe_mpc, k_ff_perf_traj, k_fb_perf_traj, k_fb_apply, k_ff_apply, p_all, q_all, sol = before_test_safempc
     safe_mpc.solve(np.random.randn(env.n_s,1))
-
-@pytest.mark.skip(reason="Not implemented yet")
-def test_mpc_casadi_same_objective_value_values_as_numeric_eval(before_test_safempc):
-    """ check if casadi mpc constr values are the same as from numpy reachability results
-
-    TODO: A rather circuituous way to check if the internal function evaluations
-    are the same as when applying the resulting controls to the reachability functions.
-    Source of failure could be: bad reshaping operations resulting in different controls
-    per time step. If the reachability functions itself are identical is tested
-    in test_gp_reachability_casadi.py
-
-    """
-    env, safe_mpc, k_ff_perf_traj, k_fb_perf_traj, k_fb_apply, k_ff_apply, p_all, q_all, sol = before_test_safempc
-
-    h_mat_safe = safe_mpc.h_mat_safe
-    h_safe = safe_mpc.h_safe
-    h_mat_obs = safe_mpc.h_mat_obs
-    h_obs = safe_mpc.h_obs
-
-    _, _, _, k_fb_apply, k_ff_all, p_all_planner, q_all_planner, sol = safe_mpc.solve(
-        x_0, sol_verbose=True)
 
 
 def test_mpc_casadi_same_constraint_values_as_numeric_eval(before_test_safempc):
