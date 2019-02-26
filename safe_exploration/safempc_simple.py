@@ -70,6 +70,7 @@ class SimpleSafeMPC:
         """
         self.rhc = rhc
         self.ssm = ssm
+        self.ssm_forward = ssm.get_forward_model_casadi(True)
         self.n_safe = n_safe
         self.n_fail = self.n_safe  # initialize s.t. there is no backup strategy
         self.n_s = self.ssm.num_states
@@ -177,8 +178,6 @@ class SimpleSafeMPC:
         """
         self.cost_func = cost_func
 
-        x_cstr_scaling = 1
-
         u_0 = MX.sym("init_control", (self.n_u, 1))
         k_ff_all = MX.sym("feed-forward control", (self.n_safe - 1, self.n_u))
         g = []
@@ -191,12 +190,8 @@ class SimpleSafeMPC:
         k_fb_0 = MX.sym("base feedback matrices",
                         (self.n_safe - 1, self.n_s * self.n_u))
 
-        ssm_forward = self.ssm.get_forward_model_casadi(True)
-        # print(ssm_forward)
-
-        # ssm_forward = CasadiSSMEvaluator(self.ssm)
         p_all, q_all, gp_sigma_pred_safe_all = cas_multistep(p_0, u_0, k_fb_0, k_ff_all,
-                                                             ssm_forward, self.l_mu,
+                                                             self.ssm_forward, self.l_mu,
                                                              self.l_sigma,
                                                              self.beta_safety, self.a,
                                                              self.b,
@@ -232,16 +227,12 @@ class SimpleSafeMPC:
             sigma_perf = np.array([])
             gp_sigma_pred_perf_all = None
 
-        # k_fb_perf_combined = k_fb_perf
-        # if self.n_safe > 1 and self.perf_has_fb:
-        #    k_fb_perf_combined = k_fb_perf + cas_reshape(k_fb_0[0,:],(self.n_u,self.n_s))
         cost = self.generate_cost_function(p_0, u_0, p_all, q_all, mu_perf, sigma_perf,
                                            k_ff_all, k_fb_0, gp_sigma_pred_safe_all,
                                            k_fb_perf=k_fb_perf_traj,
                                            k_ff_perf=k_ff_perf_traj,
                                            gp_pred_sigma_perf=gp_sigma_pred_perf_all,
                                            custom_cost_func=cost_func)
-        # cost = 0
 
         opt_vars = vertcat(u_0, k_ff_perf, k_ff_all.reshape((-1, 1)))
         opt_params = vertcat(p_0, k_fb_0.reshape((-1, 1)), k_fb_perf.reshape((-1, 1)))
@@ -249,7 +240,7 @@ class SimpleSafeMPC:
         prob = {'f': cost, 'x': opt_vars, 'p': opt_params, 'g': g}
 
         opt = {'error_on_fail': False,
-               'ipopt': {'hessian_approximation': 'limited-memory', "max_iter": 120,
+               'ipopt': {'hessian_approximation': 'limited-memory', "max_iter": 1,
                          "expect_infeasible_problem": "no", \
                          'acceptable_tol': 1e-4, "acceptable_constr_viol_tol": 1e-5,
                          "bound_frac": 0.5, "start_with_resto": "no",
@@ -258,7 +249,7 @@ class SimpleSafeMPC:
 
         # opt = {'qpsol':'qpoases','max_iter':120,'hessian_approximation':'limited-memory'}#,"c1":5e-4} #sqpmethod #,
         # opt = {'max_iter':120,'qpsol':'qpoases'}
-        # print(opt)
+
         solver = cas.nlpsol('solver', 'ipopt', prob, opt)
         # solver = cas.nlpsol('solver','sqpmethod',prob,opt)
         # solver = cas.nlpsol('solver','blocksqp',prob,opt)
@@ -400,7 +391,6 @@ class SimpleSafeMPC:
             True, if we want to put a constraint after (n_safe+1)th performance trajectory state to
             be inside the terminal safe set. Can potentially help with (recursive) feasibility
         """
-        ssm_forward = self.ssm.get_forward_model_casadi(True)
         if self.r > 1:
             warnings.warn(
                 "Coupling performance and safety trajectory for more than one step is UNTESTED")
@@ -409,7 +399,7 @@ class SimpleSafeMPC:
         if self.n_perf <= 1:
             return np.array([]), np.array([]), np.array([]), np.array(
                 []), None, np.array([]), [], [], [], [], []
-        if self.n_perf > 1:
+        else:
             k_ff_perf = MX.sym("k_ff_perf", (self.n_perf - self.r, self.n_u))
             k_ff_perf_traj = vertcat(k_ff_ctrl[:self.r - 1, :], k_ff_perf)
 
@@ -436,7 +426,7 @@ class SimpleSafeMPC:
             list_kfb_perf = [cas_reshape(k_fb_perf_all_eval[i, :], (self.n_u, self.n_s))
                              for i in range(self.n_perf - 1)]
             mu_perf_eval_all, sigma_perf_eval_all, gp_sigma_pred_perf_all_eval = self.perf_trajectory(
-                mu_0_eval, ssm_forward, vertcat(u_0_eval, k_ff_perf_all_eval),
+                mu_0_eval, self.ssm_forward, vertcat(u_0_eval, k_ff_perf_all_eval),
                 list_kfb_perf, None, a, b, lin_trafo_gp_input)
             self._f_multistep_perf_eval = cas.Function("f_multistep_perf_eval",
                                                        [mu_0_eval, u_0_eval,
@@ -698,11 +688,9 @@ class SimpleSafeMPC:
                          cas_reshape(k_ff_all_0, (-1, 1)))
 
         crash = False
-        sol = self.solver(x0=u_init, lbg=self.lbg, ubg=self.ubg, p=params)
         try:
             # pass
             sol = self.solver(x0=u_init, lbg=self.lbg, ubg=self.ubg, p=params)
-
         except:
             crash = True
             warnings.warn("NLP solver crashed, solution infeasible")
@@ -1101,6 +1089,7 @@ class SimpleSafeMPC:
         x = np.hstack((x_trafo, x_u))
 
         self.ssm.update_model(x, y - y_prior, opt_hyp, replace_old)
+        self.ssm_forward = self.ssm.get_forward_model_casadi(True)
 
         if reinitialize_solver:
             self.init_solver(self.cost_func)
