@@ -67,9 +67,19 @@ def get_gpytorch_ssm(path,n_s,n_u):
 
     return ssm
 
+@pytest.fixture(params=[(True, False),(False, True),(True, True)])
+def gpytorch_ssm_diff_modes(request):
+    has_jac, has_reverse = request.param
+
+    def gpytorch_ssm_diff_modes(ssm):
+        ssm.has_jacobian = has_jac
+        ssm.has_reverse = has_reverse
+
+    return gpytorch_ssm_diff_modes
+
 
 @pytest.fixture(params=[("CartPole", True,"gpytorch",True),("CartPole", True,"GPy",True)])
-def before_test_casadissm(request):
+def before_test_casadissm(request, gpytorch_ssm_diff_modes):
     np.random.seed(12345)
     env, lin_model, ssm, init_uncertainty = request.param
 
@@ -89,6 +99,7 @@ def before_test_casadissm(request):
         if not _has_ssm_gpytorch:
             pytest.skip("Test requires optional dependencies 'ssm_gp'")
         ssm = get_gpytorch_ssm(path,n_s,n_u)
+        gpytorch_ssm_diff_modes(ssm)
     else:
         pytest.fail("unknown ssm")
 
@@ -209,8 +220,10 @@ class TestDerivativesCasadiSSMEvaluator(object):
                 f_jac(x_in_dummy, u_in_dummy)
 
     #@pytest.mark.skip(reason = "Still need to fully implement the GPytorchSSM to fit the CasadiSSMEvaluator")
-    def test_integration_gpytorch_ssm_casadissm_evaluator_casadi_no_error_thrown(self,gpy_torch_ssm_init):
+    def test_integration_gpytorch_ssm_casadissm_evaluator_casadi_no_error_thrown(self,gpy_torch_ssm_init,gpytorch_ssm_diff_modes):
         ssm, n_s, n_u, linearize_mean = gpy_torch_ssm_init
+        gpytorch_ssm_diff_modes(ssm)
+
         self.ipopt_output += [tuple(run_ipopt_ssmevaluator(ssm,n_s,n_u,linearize_mean))]
 
     @pytest.mark.dependency(depends=['test_integration_dummy_ssm_casadissm_evaluator_casadi_no_error_thrown',
@@ -231,6 +244,7 @@ class TestDerivativesCasadiSSMEvaluator(object):
             assert n_errors == 0, ("Did the derivative checker fail for"
                                    f" model {model_name} with"
                                    f" linearize_mean = {lin_mean}?")
+
 
 @pytest.mark.skip(reason="Not sure how to implement yet and not sure if we need this")
 def test_jacobian_ssm_evaluator_same_as_ssm(dummy_ssm_init):
@@ -272,12 +286,7 @@ def run_ipopt_ssmevaluator(ssm,n_s,n_u,linearize_mean):
     return str(type(ssm)),linearize_mean,out[0]
 
 
-
-
-#def test_
-
 def test_ipopt_ssmevaluator_multistep_ahead(before_test_casadissm):
-
     p_0, q_0, ssm, k_fb, k_ff, L_mu, L_sigm, c_safety, a, b = before_test_casadissm
     T = 3
 
@@ -355,6 +364,7 @@ def test_ipopt_ssmevaluator_multistep_ahead(before_test_casadissm):
     n_x = np.shape(x_safe)[0]
     n_p = np.shape(params_safe)[0]
     solver = cas.nlpsol("solver", "ipopt", {"x": x_safe, "f": f_safe, "p":params_safe,"g":g}, options)
+
     with capture_stdout() as out:
         solver(x0=np.random.randn(n_x,1),p = np.random.randn(n_p,1),lbg=lbg,ubg=ubg)
     opt_sol_found = solver.stats()
@@ -389,6 +399,7 @@ def test_ipopt_ssmevaluator_multistep_ahead(before_test_casadissm):
         max_numb_exceeded = parse_solver_output_pass(out)
         if not max_numb_exceeded:
             pytest.fail("Neither optimal solution found, nor maximum number of iterations exceeded. Sth. is wrong")
+
 
 def parse_solver_output_pass(out):
     """ Check if the solver exited without crash
@@ -478,4 +489,5 @@ class DummySSM(StateSpaceModel):
                 (self.num_states, self.num_states + self.num_actions)), np.random.randn(
                 self.num_states, self.num_actions + self.num_states,
                 self.num_states + self.num_actions)
-        return np.random.randn(self.num_states, 1), np.zeros((self.num_states, 1))
+        return np.random.randn(self.num_states, 1), np.zeros((self.num_states, 1)), np.random.randn(
+                self.num_states, self.num_states + self.num_actions)
