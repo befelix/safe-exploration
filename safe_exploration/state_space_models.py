@@ -40,7 +40,7 @@ class StateSpaceModel(object):
         See get_reverse method.
     """
 
-    def __init__(self, num_states, num_actions, has_jacobian = True, has_reverse = False):
+    def __init__(self, num_states, num_actions, has_jacobian=True, has_reverse=False):
         self.num_states = num_states
         self.num_actions = num_actions
 
@@ -139,7 +139,6 @@ class StateSpaceModel(object):
                                     get_forward_model_casadi() method that requires this method for the
                                     CasadiSSMEvaluator! Otherwise it is not strictly necessary. """)
 
-
     def get_forward_model_casadi(self, linearize_mu=True):
         """ Returns a forward model that can be used in Casadi
 
@@ -224,8 +223,8 @@ class CasadiSSMEvaluator(cas.Callback):
 
     """
 
-    def __init__(self, ssm, linearize_mu=True, has_jacobian= True,
-                 has_reverse = False, opts={}):
+    def __init__(self, ssm, linearize_mu=True, has_jacobian=True,
+                 has_reverse=False, opts={}):
         """
 
           Parameters
@@ -438,7 +437,7 @@ class CasadiSSMEvaluator(cas.Callback):
 
         return self.v_has_jacobian
 
-    def get_reverse(self,nadj,name,inames,onames,opts):
+    def get_reverse(self, nadj, name, inames, onames, opts):
         """ Return the Callback function for the reverse
 
                 Parameters
