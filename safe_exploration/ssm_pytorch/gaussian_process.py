@@ -5,6 +5,7 @@ import torch
 import hessian
 import gpytorch
 import numpy as np
+import casadi
 
 from torch.nn import ModuleList
 from gpytorch.distributions import MultivariateNormal
@@ -220,7 +221,7 @@ class GPyTorchSSM(StateSpaceModel):
         self.pytorch_gp = MultiOutputGP(train_x, train_y, kernel, likelihood, mean)
         self.pytorch_gp.eval()
 
-        super(GPyTorchSSM, self).__init__(num_states, num_actions)
+        super(GPyTorchSSM, self).__init__(num_states, num_actions, True, True)
 
     def _compute_hessian_mean(self, states, actions):
         """ Generate the hessian of the mean prediction
@@ -247,6 +248,57 @@ class GPyTorchSSM(StateSpaceModel):
             hess_mean[i, :, :] = hessian.hessian(self.pytorch_gp(inp).mean[i, 0], inp)
 
         return hess_mean.numpy()
+
+    def _predict(self, states, actions, jacobians=False, full_cov=False):
+        """Predict the next states and uncertainty.
+
+        Parameters
+        ----------
+        states : torch.tensor
+            A (N x n) tensor of states.
+        actions : torch.tensor
+            A (N x m) tensor of actions.
+        jacobians : bool, optional
+            If true, return two additional outputs corresponding to the jacobians.
+        full_cov : bool, optional
+            Whether to return the full covariance.
+
+        Returns
+        -------
+        mean : torch.tensor
+            A (N x n) mean prediction for the next states.
+        variance : torch.tensor
+            A (N x n) variance prediction for the next states. If full_cov is True,
+            then instead returns the (n x N x N) covariance matrix for each independent
+            output of the GP model.
+        jacobian_mean : torch.tensor
+            A (N x n x n + m) tensor with the jacobians for each datapoint on the axes.
+        jacobian_variance : torch.tensor
+            Only supported without the full_cov flag.
+        """
+        if full_cov:
+            raise NotImplementedError("Not implemented right now.")
+        inp = torch.cat((states, actions), dim=1)
+        inp.requires_grad = True
+        self.inp = inp
+
+
+        pred = self.pytorch_gp(inp)
+        pred_mean = pred.mean
+        pred_var = pred.variance
+
+        if jacobians:
+            jac_mean = compute_jacobian(pred_mean, inp).squeeze()
+            jac_var = compute_jacobian(pred_var, inp).squeeze()
+
+            return pred_mean, pred_var, jac_mean, jac_var
+
+        else:
+            self._forward_cache = torch.cat((pred_mean, pred_var))
+
+            return pred_mean, pred_var
+
+
 
     def predict(self, states, actions, jacobians=False, full_cov=False):
         """Predict the next states and uncertainty.
@@ -276,20 +328,11 @@ class GPyTorchSSM(StateSpaceModel):
             Only supported without the full_cov flag.
         """
 
-        inp = torch.cat((torch.from_numpy(np.array(states, dtype=np.float32)), torch.from_numpy(np.array(actions, dtype=np.float32))), dim=1)
-        inp.requires_grad = True
-        pred = self.pytorch_gp(inp)
-        pred_mean = pred.mean
-        pred_var = pred.variance
-
-        if jacobians:
-            jac_mean = compute_jacobian(pred_mean, inp).squeeze()
-            jac_var = compute_jacobian(pred_var, inp).squeeze()
-
-            return pred_mean.detach().numpy(), pred_var.detach().numpy(), jac_mean.detach().numpy(), jac_var.detach().numpy()
-
-        else:
-            return pred_mean.detach().numpy(), pred_var.detach().numpy()
+        out = self._predict(torch.from_numpy(np.array(states, dtype=np.float32)),
+                            torch.from_numpy(np.array(actions, dtype=np.float32)),
+                            jacobians,
+                            full_cov)
+        return tuple([var.detach().numpy() for var in out])
 
     def linearize_predict(self, states, actions, jacobians=False, full_cov=False):
         """Predict the next states and uncertainty.
@@ -327,12 +370,40 @@ class GPyTorchSSM(StateSpaceModel):
             raise NotImplementedError("""'linearize_predict' currently only allows for single
                                           inputs, i.e. (1 x n) arrays, when computing jacobians.""")
 
-        out = self.predict(states, actions, jacobians, False)
+        out = self._predict(torch.from_numpy(np.array(states, dtype=np.float32)),
+                            torch.from_numpy(np.array(actions, dtype=np.float32)),
+                            True,
+                            full_cov)
 
+        jac_mean = out[2]
+        self._linearize_forward_cache = torch.cat((out[0], out[1], jac_mean.view(-1, 1)))
+
+        out = [var.detach().numpy() for var in out]
         if jacobians:
             hess_mean = self._compute_hessian_mean(states, actions)
 
             return out[0], out[1], out[2], out[3], hess_mean
 
         else:
-            return out[0], out[1]
+
+            return out[0], out[1], out[2]
+
+    def get_reverse(self, seed):
+        """ """
+        self._forward_cache.backward(torch.from_numpy(seed), retain_graph=True)
+
+        inp_grad = self.inp.grad
+        grad_state = inp_grad[0, :self.num_states]
+
+        grad_action = inp_grad[0, self.num_states:]
+
+        return grad_state.detach().numpy(), grad_action.detach().numpy()
+
+    def get_linearize_reverse(self, seed):
+        """ """
+        self._linearize_forward_cache.backward(torch.from_numpy(seed), retain_graph=True)
+        inp_grad = self.inp.grad
+        grad_state = inp_grad[0, :self.num_states].detach().numpy()[:, None]
+        grad_action = inp_grad[0, self.num_states:].detach().numpy()[:, None]
+
+        return grad_state, grad_action
