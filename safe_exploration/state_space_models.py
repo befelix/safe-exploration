@@ -10,7 +10,6 @@ import numpy as np
 import casadi as cas
 import copy
 
-
 from .utils import reshape_derivatives_3d_to_2d
 
 
@@ -27,11 +26,28 @@ class StateSpaceModel(object):
         The state dimension (n).
     num_actions : int
         The input dimension (m).
+    forward_cache : ??
+        Stores the forward pass information when
+        calling predict(state, action). Can
+        then be used for reverse directional derivatives
+        (e.g forward_cache.backward(v), where v in (n+m)x1.
+        See get_reverse method.
+    _linearize_forward_cache : ??
+        Stores the forward pass information when
+        calling predict(state, action). Can
+        then be used for reverse directional derivatives
+        (e.g forward_cache.backward(v), where v in (n+m)x1.
+        See get_reverse method.
     """
 
-    def __init__(self, num_states, num_actions):
+    def __init__(self, num_states, num_actions, has_jacobian = True, has_reverse = False):
         self.num_states = num_states
         self.num_actions = num_actions
+
+        self._forward_cache = None
+        self._linearize_forward_cache = None
+        self.has_jacobian = has_jacobian
+        self.has_reverse = has_reverse
 
     def __call__(self, states, actions):
         """
@@ -123,8 +139,6 @@ class StateSpaceModel(object):
                                     get_forward_model_casadi() method that requires this method for the
                                     CasadiSSMEvaluator! Otherwise it is not strictly necessary. """)
 
-        if jacobians and full_cov:
-            raise NotImplementedError('Jacobians of full covariance not supported.')
 
     def get_forward_model_casadi(self, linearize_mu=True):
         """ Returns a forward model that can be used in Casadi
@@ -142,17 +156,43 @@ class StateSpaceModel(object):
         Returns
         -------
         pred_mean: Casadi function
-            Function with vector-valued inputs x (px1 array), u (qx1 array)
+            Function with vector-valued inputs x (nx1 array), u (mx1 array)
             that returns the predictive mean of the SSM evaluated at (x,u).
         pred_var: Casadi function
-            Function with vector-valued inputs x (px1 array), u (qx1 array)
+            Function with vector-valued inputs x (nx1 array), u (mx1 array)
             that returns the predictive variance of the SSM evaluated at (x,u).
         jac_pred_mu: Casadi function
-            Function with vector-valued inputs x (px1 array), u (qx1 array)
+            Function with vector-valued inputs x (nx1 array), u (mx1 array)
             that returns the jacobian of te predictive mean of the SSM evaluated at (x,u).
 
         """
-        return CasadiSSMEvaluator(copy.deepcopy(self), linearize_mu)
+        return CasadiSSMEvaluator(copy.deepcopy(self), linearize_mu, self.has_jacobian, self.has_reverse)
+
+    def get_reverse(self, seed):
+        """ Get directional derivative through reverse automatic differentiation
+
+        Compute the derivative v^T \cdot J(w), where
+        v \in \R^{n+n} is the seed vector and J(w) is the Jacobian
+        of the output mu(w), var(w) = ssm(w) w.r.t some input w \in \R^{n+m}.
+
+        In reverse automatic differentiation, we have mu(w), var(w) already computed in the
+        forward pass and stored.
+
+        """
+        raise NotImplementedError("Need to implement this in a sublass when providing reverse AD for forward model")
+
+    def get_linearize_reverse(self, seed):
+        """ Get directional derivative through reverse automatic differentiation
+
+            Compute the directional derivative v^T \cdot J(w), where
+            v \in \R^{n + n + n*(n+m)} is the seed and J(w) is the stacked Jacobian
+            of the output mu(w), var(w), jac_mu(w) = ssm(w), w \in \R^{n+m}.
+
+            In reverse automatic differentiation, we have mu(w), var(w), jac_mu(w) already computed in the
+            forward pass and stored.
+
+        """
+        raise NotImplementedError("Need to implement this in a sublass when providing reverse AD for linearized forward")
 
     def update_model(self, train_x, train_y, opt_hyp=False, replace_old=False):
         """ Update the state space model
@@ -184,8 +224,8 @@ class CasadiSSMEvaluator(cas.Callback):
 
     """
 
-    def __init__(self, ssm, linearize_mu=True, differentiation_mode="jacobian",
-                 opts={}):
+    def __init__(self, ssm, linearize_mu=True, has_jacobian= True,
+                 has_reverse = False, opts={}):
         """
 
           Parameters
@@ -198,9 +238,14 @@ class CasadiSSMEvaluator(cas.Callback):
 
         """
         cas.Callback.__init__(self)
-        if not differentiation_mode is "jacobian":
-            raise NotImplementedError(
-                "For now we only allow the 'jacobian' differentation mode, may implement reverse/forward in future ")
+
+        self.v_has_jacobian = has_jacobian
+        self.v_has_reverse = has_reverse
+        self.v_has_forward = False  # option not implemented yet
+        any_diff = self.v_has_jacobian or self.v_has_reverse or self.v_has_forward
+        if not any_diff:
+            raise ValueError("Need to specify either the ")
+
         self.ssm = ssm
         self.linearize_mu = linearize_mu
         self.construct("CasadiModelEvaluator", opts)
@@ -255,7 +300,7 @@ class CasadiSSMEvaluator(cas.Callback):
         action = arg[1]
 
         if self.linearize_mu:
-            mu, sigma, jac_mu, _ = self.ssm.predict(state.T, action.T, True, False)
+            mu, sigma, jac_mu = self.ssm.linearize_predict(state.T, action.T, False, False)
 
             return [mu, sigma, jac_mu]
         else:
@@ -297,8 +342,6 @@ class CasadiSSMEvaluator(cas.Callback):
 
                 cas.Callback.__init__(self)
                 self.construct(name, opts)
-
-                warnings.warn("Need to test this!")
 
             def get_n_in(self):
                 """ """
@@ -357,10 +400,12 @@ class CasadiSSMEvaluator(cas.Callback):
                     A (2*n x (n+m)) array containing the stacked jacobians of the predictive mean
                     and predictive variance of the ssm
                 """
+
                 state = arg[0]
                 action = arg[1]
 
                 if self.linearize_mu:
+
                     mu, sigma, jac_mu, jac_sigma, gradients_jac_mu = self.ssm.linearize_predict(
                         state.T, action.T, True, False)
 
@@ -369,9 +414,11 @@ class CasadiSSMEvaluator(cas.Callback):
                     jac_pred = np.vstack(
                         (jac_mu, jac_sigma, gradient_jac_mu_compressed))
                 else:
+
                     mu, sigma, jac_mu, jac_sigma = self.ssm.predict(state.T, action.T, True,
                                                                     False)
                     jac_pred = np.vstack((jac_mu, jac_sigma))
+
                 return [jac_pred]
 
         self.jac_callback = JacFun(self.ssm, self.linearize_mu)
@@ -380,22 +427,148 @@ class CasadiSSMEvaluator(cas.Callback):
 
     def has_reverse(self, nadj):
         """ """
-        return False
+        return self.v_has_reverse and nadj == 1
 
     def has_forward(self, nfwd):
         """ """
-        return False
+        return self.v_has_forward
 
     def has_jacobian(self):
         """ """
-        return True
 
-    def get_reverse(self, name, inames, onames, opts):
-        """ """
-        raise NotImplementedError(
-            "Need to implement this if you set has_reverse = True")
+        return self.v_has_jacobian
+
+    def get_reverse(self,nadj,name,inames,onames,opts):
+        """ Return the Callback function for the reverse
+
+                Parameters
+                ----------
+                name:
+                inames:
+                onames:
+
+                Returns
+                -------
+                jac_callback: Casadi.Callback
+                    A Callback-type function returning the gradient function for
+                    the predictive mean and variance
+                """
+        if not self.v_has_reverse:
+            raise ValueError("Calling reverse even though it is not provided! This should not happen.")
+
+        class BackFun(cas.Callback):
+            """ Nested class representing the Jacobian
+
+            Parameters
+            ----------
+            ssm: StateSpaceModel
+                The underlying state space model.
+            linearize_mu: Bool
+                If True, we linearize the predictive mean of the SSM. Hence, we need to
+                provide the derivatives of the predictive jacobian.
+
+            """
+
+            def __init__(self, ssm, linearize_mu, opts={}):
+                self.ssm = ssm
+                self.linearize_mu = linearize_mu
+
+                cas.Callback.__init__(self)
+                self.construct(name, opts)
+
+                warnings.warn("Need to test this!")
+
+            def get_n_in(self):
+                """ """
+                if self.linearize_mu:
+                    return 2 + 3 + 3  # n_in + n_out + n_out
+                else:
+                    return 2 + 2 + 2  # n_in + n_out + n_out
+
+            def get_n_out(self):
+                """ """
+                return 2
+
+            def has_reverse(self, nadj):
+                """ """
+                return False
+
+            def has_forward(self, nfwd):
+                """ """
+                return False
+
+            def has_jacobian(self):
+                """ """
+                return False
+
+            def get_sparsity_in(self, i):
+                """ """
+                if self.linearize_mu:
+                    return [cas.Sparsity.dense(self.ssm.num_states, 1),
+                            cas.Sparsity.dense(self.ssm.num_actions, 1),
+                            cas.Sparsity.dense(self.ssm.num_states, 1),
+                            cas.Sparsity.dense(self.ssm.num_states, 1),
+                            cas.Sparsity.dense(self.ssm.num_states,
+                                               self.ssm.num_states + self.ssm.num_actions),
+                            cas.Sparsity.dense(self.ssm.num_states,
+                                               1),
+                            cas.Sparsity.dense(self.ssm.num_states,
+                                               1),
+                            cas.Sparsity.dense(self.ssm.num_states,
+                                               self.ssm.num_states + self.ssm.num_actions)
+                            ][i]
+                else:
+                    return [cas.Sparsity.dense(self.ssm.num_states, 1),
+                            cas.Sparsity.dense(self.ssm.num_actions, 1),
+                            cas.Sparsity.dense(self.ssm.num_states, 1),
+                            cas.Sparsity.dense(self.ssm.num_states, 1),
+                            cas.Sparsity.dense(self.ssm.num_states,
+                                               self.ssm.num_states + self.ssm.num_actions),
+                            cas.Sparsity.dense(self.ssm.num_states,
+                                               self.ssm.num_states + self.ssm.num_actions)
+                            ][i]
+
+            def get_sparsity_out(self, i):
+                """ """
+
+                return [cas.Sparsity.dense(self.ssm.num_states, 1), cas.Sparsity.dense(self.ssm.num_actions, 1)][i]
+
+            def eval(self, arg):
+                """ Evaluate the Jacobian of the ssm predictive mean/variance
+
+                Parameters
+                ----------
+                arg: list
+                    List of length n_in containing the inputs to the function (state,action)
+
+                Returns
+                -------
+                jac_pred: np.ndarray
+                    A (nx1) array containing the stacked jacobians of the predictive mean
+                    and predictive variance of the ssm
+                """
+
+                mean_seed = arg[5]
+                cov_seed = arg[6]
+
+                seed = cas.vertcat(mean_seed, cov_seed)
+
+                if self.linearize_mu:
+                    jac_mean_seed = arg[7]
+                    seed = cas.vertcat(seed, jac_mean_seed.reshape((-1, 1)))
+                    adj_state, adj_action = self.ssm.get_linearize_reverse(np.array(seed, dtype=np.float32))
+
+                    return cas.DM(adj_state), cas.DM(adj_action)
+                else:
+                    adj_state, adj_action = self.ssm.get_reverse(np.array(seed, dtype=np.float32))
+                    return cas.DM(adj_state), cas.DM(adj_action)
+
+        self.reverse_callback = BackFun(self.ssm, self.linearize_mu)
+
+        return self.reverse_callback
 
     def get_forward(self, name, inames, onames, opts):
         """ """
-        raise NotImplementedError(
-            "Need to implement this if you set has_forward = True")
+        if not self.v_has_forward:
+            raise ValueError("Calling forward even though it is not provided! This should not happen.")
+        raise NotImplementedError("Not implemented yet")
