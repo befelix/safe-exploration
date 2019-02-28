@@ -5,7 +5,6 @@ import torch
 import hessian
 import gpytorch
 import numpy as np
-import casadi
 
 from torch.nn import ModuleList
 from gpytorch.distributions import MultivariateNormal
@@ -282,7 +281,6 @@ class GPyTorchSSM(StateSpaceModel):
         inp.requires_grad = True
         self.inp = inp
 
-
         pred = self.pytorch_gp(inp)
         pred_mean = pred.mean
         pred_var = pred.variance
@@ -297,8 +295,6 @@ class GPyTorchSSM(StateSpaceModel):
             self._forward_cache = torch.cat((pred_mean, pred_var))
 
             return pred_mean, pred_var
-
-
 
     def predict(self, states, actions, jacobians=False, full_cov=False):
         """Predict the next states and uncertainty.
@@ -331,7 +327,7 @@ class GPyTorchSSM(StateSpaceModel):
         out = self._predict(torch.from_numpy(np.array(states, dtype=np.float32)),
                             torch.from_numpy(np.array(actions, dtype=np.float32)),
                             jacobians,
-                            full_cov)
+                                full_cov)
         return tuple([var.detach().numpy() for var in out])
 
     def linearize_predict(self, states, actions, jacobians=False, full_cov=False):
