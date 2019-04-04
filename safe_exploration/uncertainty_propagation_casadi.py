@@ -8,7 +8,7 @@ Created on Mon Sep 25 09:18:58 2017
 from casadi import *
 
 
-def one_step_taylor(mu_x, gp, k_ff, sigma_x=None, k_fb=None, a=None, b=None,
+def one_step_taylor(mu_x, ssm, k_ff, sigma_x=None, k_fb=None, a=None, b=None,
                     a_gp_inp_x=None):
     """ One-step uncertainty propagation via first-order taylor approximation
 
@@ -16,8 +16,8 @@ def one_step_taylor(mu_x, gp, k_ff, sigma_x=None, k_fb=None, a=None, b=None,
     ----------
     mu: n_s x 1 ndarray[casadi.sym]
             Mean of the gaussian input
-    gp: GaussianProcess
-            The GP
+    ssm: StateSpaceModel
+            The statistical model
     k_ff: n_u x 1 array[float]
             The additive term of the controls
     sigma: n_s x n_s ndarray[casadi.sym]
@@ -37,23 +37,24 @@ def one_step_taylor(mu_x, gp, k_ff, sigma_x=None, k_fb=None, a=None, b=None,
 
     u_p = k_ff
     if a_gp_inp_x is None:
-        a_gp_inp_x = SX.eye(n_s)
+        a_gp_inp_x = MX.eye(n_s)
 
     n_gp_in, _ = np.shape(a_gp_inp_x)
 
-    z_bar = vertcat(mtimes(a_gp_inp_x, mu_x), u_p)
+    x_bar = mtimes(a_gp_inp_x, mu_x)
+    z_bar = vertcat(x_bar, u_p)
     if a is None:
-        a = SX.eye(n_s)
-        b = SX.zeros(n_s, n_u)
+        a = MX.eye(n_s)
+        b = MX.zeros(n_s, n_u)
 
     if sigma_x is None:
-        pred_mu, pred_var = gp.predict_casadi_symbolic(z_bar.T)
+        pred_mu, pred_var, _ = ssm(x_bar.T, u_p.T)
         lin_prior = mtimes(a, mu_x) + mtimes(b, u_p)
-        mu_new = lin_prior + pred_mu.T
+        mu_new = lin_prior + pred_mu
 
-        return mu_new, diag(pred_var), pred_var
+        return mu_new, diag(pred_var), pred_var.T
 
-    mu_g, sigma_g, jac_mu = gp.predict_casadi_symbolic(z_bar.T, True)
+    mu_g, sigma_g, jac_mu = ssm(x_bar.T, u_p.T)
 
     jac_mu = horzcat(mtimes(jac_mu[:, :n_gp_in], a_gp_inp_x), jac_mu[:, n_gp_in:])
     # Compute taylor approximation of the posterior
@@ -72,21 +73,21 @@ def one_step_taylor(mu_x, gp, k_ff, sigma_x=None, k_fb=None, a=None, b=None,
                                                     jac_mu.T))  # The addtitional term stemming from the taylor approxiamtion
 
     sigma_all_0 = horzcat(sigma_z, sigma_zg)
-    sigma_all_1 = horzcat(sigma_zg.T, sigma_g)
+    sigma_all_1 = horzcat(sigma_zg.T, sigma_g.T)
 
     sigma_all = vertcat(sigma_all_0, sigma_all_1)  # covariance of combined z and g
 
-    lin_trafo_mat = horzcat(a, b, SX.eye(n_s))  # linear trafo matrix
+    lin_trafo_mat = horzcat(a, b, MX.eye(n_s))  # linear trafo matrix
 
-    mu_zg = vertcat(mu_x, k_ff, mu_g.T)
+    mu_zg = vertcat(mu_x, k_ff, mu_g)
     mu_new = mtimes(lin_trafo_mat, mu_zg)
 
     sigma_new = mtimes(lin_trafo_mat, mtimes(sigma_all, lin_trafo_mat.T))
 
-    return mu_new, sigma_new, sigma_g
+    return mu_new, sigma_new, sigma_g.T
 
 
-def multi_step_taylor_symbolic(mu_0, gp, k_ff, k_fb, sigma_0=None, a=None, b=None,
+def multi_step_taylor_symbolic(mu_0, ssm, k_ff, k_fb, sigma_0=None, a=None, b=None,
                                a_gp_inp_x=None):
     """ Multi step ahead predictions of the taylor uncertainty propagation
 
@@ -96,8 +97,8 @@ def multi_step_taylor_symbolic(mu_0, gp, k_ff, k_fb, sigma_0=None, a=None, b=Non
     ----------
     mu_0: n_s x 1 ndarray[casadi.sym | float]
         Initial state
-    gp: GaussianProcess
-        The GP
+    ssm: StateSpaceModel
+            The statistical model
     k_ff: T x n_u ndarray[casadi.sym]
         The feed forward terms to optimize over
     k_fb: n_s x n_u ndarray[casadi.SX]
@@ -125,7 +126,7 @@ def multi_step_taylor_symbolic(mu_0, gp, k_ff, k_fb, sigma_0=None, a=None, b=Non
     n_s = np.shape(mu_0)[0]
     T, n_u = np.shape(k_ff)
 
-    mu_new, sigma_new, gp_sigma_pred = one_step_taylor(mu_0, gp,
+    mu_new, sigma_new, gp_sigma_pred = one_step_taylor(mu_0, ssm,
                                                        k_ff[0, :].reshape((n_u, 1)),
                                                        None, None, a, b, a_gp_inp_x)
     mu_all = mu_new.T
@@ -137,7 +138,7 @@ def multi_step_taylor_symbolic(mu_0, gp, k_ff, k_fb, sigma_0=None, a=None, b=Non
         sigma_old = sigma_new
         k_ff_i = k_ff[i + 1, :].reshape((n_u, 1))
 
-        mu_new, sigma_new, gp_sigma_pred = one_step_taylor(mu_old, gp, k_ff_i,
+        mu_new, sigma_new, gp_sigma_pred = one_step_taylor(mu_old, ssm, k_ff_i,
                                                            sigma_old, k_fb[i], a, b,
                                                            a_gp_inp_x)
 
@@ -148,7 +149,7 @@ def multi_step_taylor_symbolic(mu_0, gp, k_ff, k_fb, sigma_0=None, a=None, b=Non
     return mu_all, sigma_all, gp_sigma_pred_all
 
 
-def mean_equivalent_multistep(mu_0, gp, k_ff, k_fb, sigma_0=None, a=None, b=None,
+def mean_equivalent_multistep(mu_0, ssm, k_ff, k_fb, sigma_0=None, a=None, b=None,
                               a_gp_inp_x=None):
     """ Compute the simple 'mean-equivalent' uncertainty propagation with GPs
 
@@ -156,8 +157,8 @@ def mean_equivalent_multistep(mu_0, gp, k_ff, k_fb, sigma_0=None, a=None, b=None
     ----------
     mu_0: n_s x 1 ndarray[casadi.sym | float]
         Initial state
-    gp: GaussianProcess
-        The gp
+    ssm: StateSpaceModel
+            The statistical model
     k_ff: T x n_u ndarray[casadi.sym]
         The feed forward terms to optimize over
     a: n_s x n_s ndarray[float]
@@ -183,7 +184,7 @@ def mean_equivalent_multistep(mu_0, gp, k_ff, k_fb, sigma_0=None, a=None, b=None
     n_s = np.shape(mu_0)[0]
     T, n_u = np.shape(k_ff)
 
-    mu_new, sigma_new, gp_sigma_pred = one_step_mean_equivalent(mu_0, gp,
+    mu_new, sigma_new, gp_sigma_pred = one_step_mean_equivalent(mu_0, ssm,
                                                                 k_ff[0, :].reshape(
                                                                     (n_u, 1)), None,
                                                                 None, a, b, a_gp_inp_x)
@@ -195,7 +196,7 @@ def mean_equivalent_multistep(mu_0, gp, k_ff, k_fb, sigma_0=None, a=None, b=None
         sigma_old = sigma_new
         k_ff_i = k_ff[i + 1, :].reshape((n_u, 1))
 
-        mu_new, sigma_new, gp_sigma_pred = one_step_mean_equivalent(mu_old, gp, k_ff_i,
+        mu_new, sigma_new, gp_sigma_pred = one_step_mean_equivalent(mu_old, ssm, k_ff_i,
                                                                     sigma_old, k_fb[i],
                                                                     a, b, a_gp_inp_x)
 
@@ -206,7 +207,7 @@ def mean_equivalent_multistep(mu_0, gp, k_ff, k_fb, sigma_0=None, a=None, b=None
     return mu_all, sigma_all, gp_sigma_pred_all
 
 
-def one_step_mean_equivalent(mu_x, gp, k_ff, sigma_x=None, k_fb=None, a=None, b=None,
+def one_step_mean_equivalent(mu_x, ssm, k_ff, sigma_x=None, k_fb=None, a=None, b=None,
                              a_gp_inp_x=None):
     """ One-step uncertainty propagation via first-order taylor approximation
 
@@ -214,8 +215,8 @@ def one_step_mean_equivalent(mu_x, gp, k_ff, sigma_x=None, k_fb=None, a=None, b=
     ----------
     mu: n_s x 1 ndarray[casadi.sym]
             Mean of the gaussian input
-    gp: GaussianProcess
-            The gp
+    ssm: StateSpaceModel
+            The statistical model
     k_ff: n_u x 1 array[float]
             The additive term of the controls
     sigma: n_s x n_s ndarray[casadi.sym]
@@ -237,19 +238,20 @@ def one_step_mean_equivalent(mu_x, gp, k_ff, sigma_x=None, k_fb=None, a=None, b=
     n_u = np.shape(k_ff)[0]
 
     u_p = k_ff
-    z_bar = vertcat(mtimes(a_gp_inp_x, mu_x), u_p)
+    x_bar = mtimes(a_gp_inp_x, mu_x)
+    z_bar = vertcat(x_bar, u_p)
     if a is None:
-        a = SX.eye(n_s)
-        b = SX.zeros(n_s, n_u)
+        a = MX.eye(n_s)
+        b = MX.zeros(n_s, n_u)
 
     if sigma_x is None:
-        pred_mu, pred_var = gp.predict_casadi_symbolic(z_bar.T)
+        pred_mu, pred_var, _ = ssm(x_bar.T, u_p.T)
         lin_prior = mtimes(a, mu_x) + mtimes(b, u_p)
-        mu_new = lin_prior + pred_mu.T
+        mu_new = lin_prior + pred_mu
 
-        return mu_new, diag(pred_var), pred_var
+        return mu_new, diag(pred_var), pred_var.T
 
-    mu_g, sigma_g = gp.predict_casadi_symbolic(z_bar.T, False)
+    mu_g, sigma_g, _ = ssm(x_bar.T, u_p.T)
 
     # Compute taylor approximation of the posterior
     sigma_u = mtimes(k_fb, mtimes(sigma_x, k_fb.T))  # covariance of control input
@@ -261,18 +263,18 @@ def one_step_mean_equivalent(mu_x, gp, k_ff, sigma_x=None, k_fb=None, a=None, b=
     sigma_z = vertcat(sigma_z_0,
                       sigma_z_1)  # covariance matrix of combined state-control input z
 
-    sigma_zg = SX.zeros(n_s + n_u, n_s)  # cross-covariance between g and z
+    sigma_zg = MX.zeros(n_s + n_u, n_s)  # cross-covariance between g and z
 
     sigma_all_0 = horzcat(sigma_z, sigma_zg)
     sigma_all_1 = horzcat(sigma_zg.T, diag(sigma_g))
 
     sigma_all = vertcat(sigma_all_0, sigma_all_1)  # covariance of combined z and g
 
-    lin_trafo_mat = horzcat(a, b, SX.eye(n_s))  # linear trafo matrix
+    lin_trafo_mat = horzcat(a, b, MX.eye(n_s))  # linear trafo matrix
 
-    mu_zg = vertcat(mu_x, k_ff, mu_g.T)
+    mu_zg = vertcat(mu_x, k_ff, mu_g)
     mu_new = mtimes(lin_trafo_mat, mu_zg)
 
     sigma_new = mtimes(lin_trafo_mat, mtimes(sigma_all, lin_trafo_mat.T))
 
-    return mu_new, sigma_new, sigma_g
+    return mu_new, sigma_new, sigma_g.T

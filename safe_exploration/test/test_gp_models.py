@@ -12,7 +12,11 @@ import pytest
 from casadi import Function, SX
 from numpy.testing import assert_allclose
 
-from ..gp_models import SimpleGPModel
+try:
+    from safe_exploration.ssm_gpy.gaussian_process import SimpleGPModel
+    _has_ssm_gp = True
+except:
+    _has_ssm_gp = False
 
 np.random.seed(125)
 a_tol = 1e-6
@@ -23,6 +27,10 @@ r_tol = 1e-4
                         ("InvPend", ["lin_rbf", "lin_rbf"]),
                         ("InvPend", ["lin_mat52", "lin_mat52"])])
 def before_gp_predict_test(request):
+
+    if not _has_ssm_gp:
+        pytest.skip("Test requires optional dependencies 'ssm_gp'")
+
     env, kern_types = request.param
     n_s = 2
     n_u = 1
@@ -51,7 +59,7 @@ def test_predict_casadi_symbolic(before_gp_predict_test):
     out_cas = f_nograd(test_input.T)
     out_numeric = gp.predict(test_input.T)
 
-    assert_allclose(out_cas[0], out_numeric[0], r_tol, a_tol,
+    assert_allclose(out_cas[0].T, out_numeric[0], r_tol, a_tol,
                     err_msg="Do the predictive means match?")
-    assert_allclose(out_cas[1], out_numeric[1], r_tol, a_tol,
+    assert_allclose(out_cas[1].T, out_numeric[1], r_tol, a_tol,
                     err_msg="Do the predictive vars match?")

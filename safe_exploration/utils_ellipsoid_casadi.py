@@ -66,7 +66,8 @@ def ellipsoid_from_rectangle(u_b):
             The (diagonal) shape matrix of covering ellipsoid
 
     """
-    n, _ = u_b.shape
+    n, m = u_b.shape
+    assert m == 1, "Wrong input shape"
     d = n * u_b ** 2
     q = diag(d)
 

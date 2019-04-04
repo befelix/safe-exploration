@@ -1,11 +1,21 @@
 """Test the multi-output GP implementations."""
 
-import torch
+
 import pytest
-import gpytorch
+import numpy as np
 
-from mps import BatchMean, BatchKernel, MultiOutputGP, LinearMean
+try:
+    import torch
+    from safe_exploration.ssm_pytorch import BatchMean, BatchKernel, MultiOutputGP, LinearMean, GPyTorchSSM
+    import gpytorch
+    from torch.nn.functional import softplus
+except:
+    pass
 
+
+@pytest.fixture(autouse = True)
+def check_has_ssm_pytorch_module(check_has_ssm_pytorch):
+    pass
 
 class TestBatchMean(object):
 
@@ -52,6 +62,8 @@ class TestBatchKernel(object):
         cov1 = gpytorch.kernels.RBFKernel()
         cov2 = gpytorch.kernels.RBFKernel()
         cov = BatchKernel([cov1, cov2])
+
+
         return cov1, cov2, cov
 
     def test_index(self, covariances):
@@ -110,29 +122,32 @@ class TestLinearMean(object):
         torch.testing.assert_allclose(out[[0]], (x[0] @ A[[0]].t()).t())
         torch.testing.assert_allclose(out[[1]], (x[1] @ A[[1]].t()).t())
 
+try: # This requires the ssm_pytorch dependencies and throws an error.
+     # However we do not use it anyways in this case hence no exception
+     # handling required
+    class ExactGPModel(gpytorch.models.ExactGP):
+        def __init__(self, train_x, train_y, cov, likelihood, mean = None):
+            super().__init__(train_x, train_y, likelihood)
+            if mean is None:
+                mean = gpytorch.means.ConstantMean()
+            self.mean_module = mean
+            self.covar_module = cov
 
-class ExactGPModel(gpytorch.models.ExactGP):
-
-    def __init__(self, train_x, train_y, kernel, likelihood, mean=None):
-        super(ExactGPModel, self).__init__(train_x, train_y, likelihood)
-        if mean is None:
-            mean = gpytorch.means.ZeroMean()
-        self.mean_module = mean
-        self.covar_module = kernel
-
-    def forward(self, x):
-        mean_x = self.mean_module(x)
-        covar_x = self.covar_module(x)
-        return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
+        def forward(self, x):
+            mean_x = self.mean_module(x)
+            covar_x = self.covar_module(x)
+            return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
+except:
+    pass
 
 
 class TestMultiOutputGP(object):
 
     def test_single_output_gp(self):
-        kernel = gpytorch.kernels.MaternKernel()
+        kernel = gpytorch.kernels.MaternKernel(nu=2.5, ard_num_dims=None, batch_size=1, active_dims=None, lengthscale_prior=None, param_transform=softplus, inv_param_transform=None, eps=1e-6)
         mean = LinearMean(torch.tensor([[0.5]]))
         likelihood = gpytorch.likelihoods.GaussianLikelihood()
-        likelihood.noise = torch.tensor(0.01 ** 2)
+        #likelihood.noise = torch.tensor(0.01 ** 2)
 
         train_x = torch.tensor([-0.5, -0.1, 0., 0.1, 1.])[:, None]
         train_y = 0.5 * train_x.t()
@@ -199,4 +214,24 @@ class TestMultiOutputGP(object):
         optimizer.zero_grad()
         loss = gp.loss(mll)
         loss.backward()
+
         optimizer.step()
+
+@pytest.fixture()
+def before_test_gpytorchssm(check_has_ssm_pytorch):
+
+    n_s = 2
+    n_u = 1
+
+    kernel = gpytorch.kernels.MaternKernel()
+    mean = LinearMean(torch.tensor([[0.5]]))
+    likelihood = gpytorch.likelihoods.GaussianLikelihood()
+    likelihood.noise = torch.tensor(0.01 ** 2)
+
+    train_x = torch.tensor([-0.5, -0.1, 0., 0.1, 1.])[:, None]
+    train_y = 0.5 * train_x.t()
+
+    ssm = GPyTorchSSM(n_s,n_u,train_x,train_y,kernel,likelihood)#,mean)
+
+    return ssm,n_s,n_u,train_x,train_y,kernel,likelihood
+

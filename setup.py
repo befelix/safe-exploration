@@ -9,16 +9,17 @@ setup(
     packages=find_packages(exclude=['docs', 'mps']),
     install_requires=['numpy>=1.0,<2',
                       'casadi',
-                      'GPy',
                       'scikit-learn',
-                      'deepdish',
-                      'scipy',
-                      'matplotlib',
-                      'pygame'],
+                      'scipy'],
     extras_require={'test': ['pytest>=4,<5',
                              'flake8==3.6.0',
                              'pydocstyle==3.0.0',
-                             'pytest_cov>=2.0']},
+                             'pytest_cov>=2.0'],
+                    'visualization': ['matplotlib',
+                             'pygame'],
+                    'ssm_gpy':  ['GPy'],
+                    'ssm_pytorch': ['gpytorch','hessian @ https://github.com/mariogeiger/hessian/tarball/master#egg=hessian']},
+
     classifiers=[
         # How mature is this project? Common values are
         #   3 - Alpha
@@ -34,5 +35,8 @@ setup(
         'Programming Language :: Python :: 3.6',
         'Programming Language :: Python :: 3.7'
     ],
-    package_data={'safe_exploration': ['test/*.npz']},
+    package_data={'safe_exploration': ['test/*.npz']}
+
+
+
 )

@@ -185,7 +185,7 @@ def gp_pred(x, kern, beta, x_train, k_inv_training=None, pred_var=True):
 
     if pred_var:
         if k_inv_training is None:
-            raise ValueError("""The inverted kernel matrix is required 
+            raise ValueError("""The inverted kernel matrix is required
                 for computing the predictive variance""")
 
         k_expl_var = kern(x, y=x_train, diag_only=True)

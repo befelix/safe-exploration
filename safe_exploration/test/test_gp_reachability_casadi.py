@@ -8,10 +8,16 @@ import os.path
 
 import numpy as np
 import pytest
-from casadi import SX, Function
+from casadi import MX, Function
 from casadi import reshape as cas_reshape
 
-from .. import gp_models
+try:
+    from safe_exploration.ssm_gpy.gaussian_process import SimpleGPModel
+    from GPy.kern import RBF
+    _has_ssm_gpy = True
+except:
+    _has_ssm_gpy = False
+
 from .. import gp_reachability as reach_num
 from .. import gp_reachability_casadi as reach_cas
 from ..utils import array_of_vec_to_array_of_mat
@@ -24,7 +30,10 @@ r_tol = 1e-4
 @pytest.fixture(params=[("InvPend", True, True), ("InvPend", False, True),
                         ("InvPend", True, True), ("InvPend", False, True)])
 def before_test_onestep_reachability(request):
-    np.random.seed(50)
+    if not _has_ssm_gpy:
+        pytest.skip("Test requires optional dependencies 'ssm_gpy'")
+
+    np.random.seed(125)
 
     env, init_uncertainty, lin_model = request.param
     n_s = 2
@@ -40,7 +49,8 @@ def before_test_onestep_reachability(request):
     X = train_data["X"]
     y = train_data["y"]
     m = 50
-    gp = gp_models.SimpleGPModel(n_s, n_s, n_u, X, y, m, train=False)
+    #kerns = [RBF(n_s+n_u)]*n_s
+    gp = SimpleGPModel(n_s, n_s, n_u, X, y, m, train=False)
     gp.train(X, y, m, opt_hyp=True, choose_data=False)
     L_mu = np.array([0.001] * n_s)
     L_sigm = np.array([0.001] * n_s)
@@ -64,8 +74,8 @@ def test_onestep_reachability(before_test_onestep_reachability):
 
     n_u, n_s = np.shape(k_fb)
 
-    k_fb_cas = SX.sym("k_fb", (n_u, n_s))
-    k_ff_cas = SX.sym("k_ff", (n_u, 1))
+    k_fb_cas = MX.sym("k_fb", (n_u, n_s))
+    k_ff_cas = MX.sym("k_ff", (n_u, 1))
 
     p_new_cas, q_new_cas, _ = reach_cas.onestep_reachability(p, gp, k_ff_cas, L_mu,
                                                              L_sigm, q, k_fb_cas,
@@ -97,9 +107,9 @@ def test_multistep_reachability(before_test_onestep_reachability):
     k_ff = np.random.randn(T - 1, n_u)
     # k_fb_ctrl = np.zeros((n_u,n_s))#np.random.randn(n_u,n_s)
 
-    u_0_cas = SX.sym("u_0", (n_u, 1))
-    k_fb_cas_0 = SX.sym("k_fb", (T - 1, n_u * n_s))
-    k_ff_cas = SX.sym("k_ff", (T - 1, n_u))
+    u_0_cas = MX.sym("u_0", (n_u, 1))
+    k_fb_cas_0 = MX.sym("k_fb", (T - 1, n_u * n_s))
+    k_ff_cas = MX.sym("k_ff", (T - 1, n_u))
 
     p_new_cas, q_new_cas, _ = reach_cas.multi_step_reachability(p, u_0, k_fb_cas_0,
                                                                 k_ff_cas, gp, L_mu,
@@ -128,10 +138,13 @@ def test_multistep_reachability(before_test_onestep_reachability):
 
     assert np.allclose(p_all_cas, p_all_num, r_tol,
                        a_tol), "Are the centers of the ellipsoids same?"
+
+    assert np.allclose(q_all_cas[0, :], q_all_num[0, :, :].reshape((-1, n_s * n_s)),
+                       r_tol, a_tol), "Are the first shape matrices the same?"
     assert np.allclose(q_all_cas[1, :], q_all_num[1, :, :].reshape((-1, n_s * n_s)),
                        r_tol, a_tol), "Are the second shape matrices the same?"
     # assert np.allclose(q_all_cas[1,:],q_all_num[1,:].reshape((-1,n_s*n_s))), "Are the second shape matrices the same?"
     assert np.allclose(q_all_cas[-1, :], q_all_num[-1, :, :].reshape((-1, n_s * n_s)),
                        r_tol, a_tol), "Are the last shape matrices the same?"
     assert np.allclose(q_all_cas, q_all_num.reshape((T, n_s * n_s)), r_tol,
-                       a_tol), "Are the shape matrices of the final state the same?"
+                       a_tol), "Are the shape matrices the same?"

@@ -4,8 +4,10 @@ Created on Mon Dec  4 13:24:39 2017
 
 @author: tkoller
 """
+import builtins
 import numpy as np
 import pytest
+import sys
 from scipy.optimize import approx_fprime
 
 from ..environments import InvertedPendulum, CartPole
@@ -19,6 +21,38 @@ def before_test_inv_pend(request):
     env = request.param
 
     return env
+
+@pytest.fixture
+def no_matplotlib(monkeypatch):
+    """ Mock an import error for matplotlib"""
+    import_orig = builtins.__import__
+    def mocked_import(name, globals, locals, fromlist, level):
+        """ """
+        if name == 'matplotlib.pyplot':
+
+            raise ImportError("This is a mocked import error")
+        return import_orig(name, globals, locals, fromlist, level)
+    monkeypatch.setattr(builtins, '__import__', mocked_import)
+
+
+@pytest.mark.usefixtures('no_matplotlib')
+def test_plotting_invpend_without_matplotlib_throws_error():
+    """ """
+
+    sys.modules.pop('safe_exploration.environments', None)
+    import safe_exploration.environments as env_plot
+
+    assert not env_plot._has_matplotlib
+
+    env = env_plot.InvertedPendulum()
+    with pytest.raises(ImportError) as e_info:
+        env.plot_safety_bounds()
+
+    with pytest.raises(ImportError) as e_info:
+        env.plot_state(None)
+
+    with pytest.raises(ImportError) as e_info:
+        env.plot_ellipsoid_trajectory(None,None)
 
 
 def test_normalization(before_test_inv_pend):
@@ -37,7 +71,6 @@ def test_normalization(before_test_inv_pend):
 
 def test_safety_bounds_normalization(before_test_inv_pend):
     """ """
-
     env = before_test_inv_pend
 
     n_samples = 50

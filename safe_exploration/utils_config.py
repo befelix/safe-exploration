@@ -5,18 +5,23 @@ Created on Tue Nov 21 09:44:58 2017
 @author: tkoller
 """
 import warnings
-from importlib import import_module
-from os.path import abspath, exists, split
-
 import numpy as np
 
+from importlib import import_module
+from os.path import abspath, exists, split
 from .cautious_mpc import CautiousMPC
 from .environments import InvertedPendulum, CartPole
-from .gp_models import SimpleGPModel
 from .safempc_simple import SimpleSafeMPC
-from .utils import dlqr
+from .utils import dlqr, unavailable
+
+try:
+    _has_ssm_gpy = True
+    from safe_exploration.ssm_gpy.gaussian_process import GaussianProcess
+except:
+    _has_ssm_gpy = False
 
 
+@unavailable(_has_ssm_gpy, "ssm_gpy")
 def create_solver(conf, env, model_options=None):
     """ Create a solver from a set of options and environment information"""
 
@@ -44,10 +49,10 @@ def create_solver(conf, env, model_options=None):
     safe_policy = lambda x: np.dot(k_fb, x)
 
     if model_options is None:
-        gp = SimpleGPModel(conf.gp_ns_out, conf.gp_ns_in, env.n_u, m=conf.m,
+        gp = GaussianProcess(conf.gp_ns_out, conf.gp_ns_in, env.n_u, m=conf.m,
                            kern_types=conf.kern_types, Z=conf.Z)
     else:
-        gp = SimpleGPModel.from_dict(model_options)
+        gp = GaussianProcess.from_dict(model_options)
 
     dt = env.dt
     ctrl_bounds = np.hstack(

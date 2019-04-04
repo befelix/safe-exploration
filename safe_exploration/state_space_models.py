@@ -5,12 +5,10 @@ Created on Wed Sep 20 10:37:51 2017
 @author: tkoller
 """
 import warnings
-
-import GPy
-import casadi as cas
 import numpy as np
-import numpy.linalg as nLa
-from sklearn import cluster
+import numpy as np
+import casadi as cas
+import copy
 
 from .utils import reshape_derivatives_3d_to_2d
 
@@ -28,11 +26,52 @@ class StateSpaceModel(object):
         The state dimension (n).
     num_actions : int
         The input dimension (m).
+    forward_cache : ??
+        Stores the forward pass information when
+        calling predict(state, action). Can
+        then be used for reverse directional derivatives
+        (e.g forward_cache.backward(v), where v in (n+m)x1.
+        See get_reverse method.
+    _linearize_forward_cache : ??
+        Stores the forward pass information when
+        calling predict(state, action). Can
+        then be used for reverse directional derivatives
+        (e.g forward_cache.backward(v), where v in (n+m)x1.
+        See get_reverse method.
     """
 
-    def __init__(self, num_states, num_actions):
+    def __init__(self, num_states, num_actions, has_jacobian=True, has_reverse=False):
         self.num_states = num_states
         self.num_actions = num_actions
+
+        self._forward_cache = None
+        self._linearize_forward_cache = None
+        self.has_jacobian = has_jacobian
+        self.has_reverse = has_reverse
+
+    def __call__(self, states, actions):
+        """
+
+        Parameters
+        ----------
+        states : np.ndarray
+            A (N x n) array of states.
+        actions : np.ndarray
+            A (N x m) array of actions.
+
+        Returns
+        -------
+        mean : np.ndarray
+            A (N x n) mean prediction for the next states.
+        variance : np.ndarray
+            A (N x n) variance prediction for the next states. If full_cov is True,
+            then instead returns the (n x N x N) covariance matrix for each independent
+            output of the GP model.
+        jacobian_mean : np.ndarray
+            A (N x n x n + m) array with the jacobians for each datapoint on the axes.
+
+        """
+        return self.predict(states, actions, True, False)
 
     def predict(self, states, actions, jacobians=False, full_cov=False):
         """Predict the next states and uncertainty.
@@ -100,9 +139,6 @@ class StateSpaceModel(object):
                                     get_forward_model_casadi() method that requires this method for the
                                     CasadiSSMEvaluator! Otherwise it is not strictly necessary. """)
 
-        if jacobians and full_cov:
-            raise NotImplementedError('Jacobians of full covariance not supported.')
-
     def get_forward_model_casadi(self, linearize_mu=True):
         """ Returns a forward model that can be used in Casadi
 
@@ -119,17 +155,62 @@ class StateSpaceModel(object):
         Returns
         -------
         pred_mean: Casadi function
-            Function with vector-valued inputs x (px1 array), u (qx1 array)
+            Function with vector-valued inputs x (nx1 array), u (mx1 array)
             that returns the predictive mean of the SSM evaluated at (x,u).
         pred_var: Casadi function
-            Function with vector-valued inputs x (px1 array), u (qx1 array)
+            Function with vector-valued inputs x (nx1 array), u (mx1 array)
             that returns the predictive variance of the SSM evaluated at (x,u).
         jac_pred_mu: Casadi function
-            Function with vector-valued inputs x (px1 array), u (qx1 array)
+            Function with vector-valued inputs x (nx1 array), u (mx1 array)
             that returns the jacobian of te predictive mean of the SSM evaluated at (x,u).
 
         """
-        return CasadiSSMEvaluator(self, True)
+        return CasadiSSMEvaluator(copy.deepcopy(self), linearize_mu, self.has_jacobian, self.has_reverse)
+
+    def get_reverse(self, seed):
+        """ Get directional derivative through reverse automatic differentiation
+
+        Compute the derivative v^T \cdot J(w), where
+        v \in \R^{n+n} is the seed vector and J(w) is the Jacobian
+        of the output mu(w), var(w) = ssm(w) w.r.t some input w \in \R^{n+m}.
+
+        In reverse automatic differentiation, we have mu(w), var(w) already computed in the
+        forward pass and stored.
+
+        """
+        raise NotImplementedError("Need to implement this in a sublass when providing reverse AD for forward model")
+
+    def get_linearize_reverse(self, seed):
+        """ Get directional derivative through reverse automatic differentiation
+
+            Compute the directional derivative v^T \cdot J(w), where
+            v \in \R^{n + n + n*(n+m)} is the seed and J(w) is the stacked Jacobian
+            of the output mu(w), var(w), jac_mu(w) = ssm(w), w \in \R^{n+m}.
+
+            In reverse automatic differentiation, we have mu(w), var(w), jac_mu(w) already computed in the
+            forward pass and stored.
+
+        """
+        raise NotImplementedError("Need to implement this in a sublass when providing reverse AD for linearized forward")
+
+    def update_model(self, train_x, train_y, opt_hyp=False, replace_old=False):
+        """ Update the state space model
+
+        Parameters
+        ----------
+        train_x: np.ndarray
+            A (N x (n+m)) array of state-action pairs as training inputs
+        train_y: np.ndarray
+            A (N x n) array of states as training targets
+
+        opt_hyp: Bool
+            True, if we want to reoptimize hyperparameters
+        replace_old: Bool
+            True, if we want to replace previous training data with
+            the current set of train_x/train_y data
+
+        """
+        raise NotImplementedError("Need to implement this in subclass")
 
 
 class CasadiSSMEvaluator(cas.Callback):
@@ -142,8 +223,8 @@ class CasadiSSMEvaluator(cas.Callback):
 
     """
 
-    def __init__(self, ssm, linearize_mu=True, differentiation_mode="jacobian",
-                 opts={}):
+    def __init__(self, ssm, linearize_mu=True, has_jacobian=True,
+                 has_reverse=False, opts={}):
         """
 
           Parameters
@@ -156,9 +237,14 @@ class CasadiSSMEvaluator(cas.Callback):
 
         """
         cas.Callback.__init__(self)
-        if not differentiation_mode is "jacobian":
-            raise NotImplementedError(
-                "For now we only allow the 'jacobian' differentation mode, may implement reverse/forward in future ")
+
+        self.v_has_jacobian = has_jacobian
+        self.v_has_reverse = has_reverse
+        self.v_has_forward = False  # option not implemented yet
+        any_diff = self.v_has_jacobian or self.v_has_reverse or self.v_has_forward
+        if not any_diff:
+            raise ValueError("Need to specify either the ")
+
         self.ssm = ssm
         self.linearize_mu = linearize_mu
         self.construct("CasadiModelEvaluator", opts)
@@ -184,11 +270,11 @@ class CasadiSSMEvaluator(cas.Callback):
     def get_sparsity_out(self, i):
         """ Output dimensionality"""
         if self.linearize_mu:
+            # mean, variance and mean_jacobian
             return [cas.Sparsity.dense(self.ssm.num_states, 1),
                     cas.Sparsity.dense(self.ssm.num_states, 1),
                     cas.Sparsity.dense(self.ssm.num_states,
-                                       self.ssm.num_states + self.ssm.num_actions)][
-                i]  # mean, mean_jacobian and variance
+                                       self.ssm.num_states + self.ssm.num_actions)][i]
         else:
             return [cas.Sparsity.dense(self.ssm.num_states, 1),
                     cas.Sparsity.dense(self.ssm.num_states, 1)][i]
@@ -211,11 +297,13 @@ class CasadiSSMEvaluator(cas.Callback):
         """
         state = arg[0]
         action = arg[1]
+
         if self.linearize_mu:
-            mu, sigma, jac_mu, _ = self.ssm.predict(state, action, True, False)
+            mu, sigma, jac_mu = self.ssm.linearize_predict(state.T, action.T, False, False)
+
             return [mu, sigma, jac_mu]
         else:
-            mu, sigma = self.ssm.predict(state, action)
+            mu, sigma = self.ssm.predict(state.T, action.T)
             return [mu, sigma]
 
     def get_jacobian(self, name, inames, onames, opts):
@@ -254,8 +342,6 @@ class CasadiSSMEvaluator(cas.Callback):
                 cas.Callback.__init__(self)
                 self.construct(name, opts)
 
-                warnings.warn("Need to test this!")
-
             def get_n_in(self):
                 """ """
                 if self.linearize_mu:
@@ -267,6 +353,18 @@ class CasadiSSMEvaluator(cas.Callback):
                 """ """
                 return 1
 
+            def has_reverse(self, nadj):
+                """ """
+                return False
+
+            def has_forward(self, nfwd):
+                """ """
+                return False
+
+            def has_jacobian(self):
+                """ """
+                return False
+
             def get_sparsity_in(self, i):
                 """ """
                 return [cas.Sparsity.dense(self.ssm.num_states, 1),
@@ -274,8 +372,7 @@ class CasadiSSMEvaluator(cas.Callback):
                         cas.Sparsity.dense(self.ssm.num_states, 1),
                         cas.Sparsity.dense(self.ssm.num_states, 1),
                         cas.Sparsity.dense(self.ssm.num_states,
-                                           self.ssm.num_states + self.ssm.num_actions)][
-                    i]
+                                           self.ssm.num_states + self.ssm.num_actions)][i]
 
             def get_sparsity_out(self, i):
                 """ """
@@ -302,21 +399,25 @@ class CasadiSSMEvaluator(cas.Callback):
                     A (2*n x (n+m)) array containing the stacked jacobians of the predictive mean
                     and predictive variance of the ssm
                 """
+
                 state = arg[0]
                 action = arg[1]
 
                 if self.linearize_mu:
+
                     mu, sigma, jac_mu, jac_sigma, gradients_jac_mu = self.ssm.linearize_predict(
-                        state, action, True, False)
+                        state.T, action.T, True, False)
 
                     gradient_jac_mu_compressed = reshape_derivatives_3d_to_2d(
                         gradients_jac_mu)
                     jac_pred = np.vstack(
                         (jac_mu, jac_sigma, gradient_jac_mu_compressed))
                 else:
-                    mu, sigma, jac_mu, jac_sigma = self.ssm.predict(state, action, True,
+
+                    mu, sigma, jac_mu, jac_sigma = self.ssm.predict(state.T, action.T, True,
                                                                     False)
                     jac_pred = np.vstack((jac_mu, jac_sigma))
+
                 return [jac_pred]
 
         self.jac_callback = JacFun(self.ssm, self.linearize_mu)
@@ -325,360 +426,148 @@ class CasadiSSMEvaluator(cas.Callback):
 
     def has_reverse(self, nadj):
         """ """
-        return False
+        return self.v_has_reverse and nadj == 1
 
     def has_forward(self, nfwd):
         """ """
-        return False
+        return self.v_has_forward
 
     def has_jacobian(self):
         """ """
-        return True
 
-    def get_reverse(self, name, inames, onames, opts):
-        """ """
-        raise NotImplementedError(
-            "Need to implement this if you set has_reverse = True")
+        return self.v_has_jacobian
+
+    def get_reverse(self, nadj, name, inames, onames, opts):
+        """ Return the Callback function for the reverse
+
+                Parameters
+                ----------
+                name:
+                inames:
+                onames:
+
+                Returns
+                -------
+                jac_callback: Casadi.Callback
+                    A Callback-type function returning the gradient function for
+                    the predictive mean and variance
+                """
+        if not self.v_has_reverse:
+            raise ValueError("Calling reverse even though it is not provided! This should not happen.")
+
+        class BackFun(cas.Callback):
+            """ Nested class representing the Jacobian
+
+            Parameters
+            ----------
+            ssm: StateSpaceModel
+                The underlying state space model.
+            linearize_mu: Bool
+                If True, we linearize the predictive mean of the SSM. Hence, we need to
+                provide the derivatives of the predictive jacobian.
+
+            """
+
+            def __init__(self, ssm, linearize_mu, opts={}):
+                self.ssm = ssm
+                self.linearize_mu = linearize_mu
+
+                cas.Callback.__init__(self)
+                self.construct(name, opts)
+
+                warnings.warn("Need to test this!")
+
+            def get_n_in(self):
+                """ """
+                if self.linearize_mu:
+                    return 2 + 3 + 3  # n_in + n_out + n_out
+                else:
+                    return 2 + 2 + 2  # n_in + n_out + n_out
+
+            def get_n_out(self):
+                """ """
+                return 2
+
+            def has_reverse(self, nadj):
+                """ """
+                return False
+
+            def has_forward(self, nfwd):
+                """ """
+                return False
+
+            def has_jacobian(self):
+                """ """
+                return False
+
+            def get_sparsity_in(self, i):
+                """ """
+                if self.linearize_mu:
+                    return [cas.Sparsity.dense(self.ssm.num_states, 1),
+                            cas.Sparsity.dense(self.ssm.num_actions, 1),
+                            cas.Sparsity.dense(self.ssm.num_states, 1),
+                            cas.Sparsity.dense(self.ssm.num_states, 1),
+                            cas.Sparsity.dense(self.ssm.num_states,
+                                               self.ssm.num_states + self.ssm.num_actions),
+                            cas.Sparsity.dense(self.ssm.num_states,
+                                               1),
+                            cas.Sparsity.dense(self.ssm.num_states,
+                                               1),
+                            cas.Sparsity.dense(self.ssm.num_states,
+                                               self.ssm.num_states + self.ssm.num_actions)
+                            ][i]
+                else:
+                    return [cas.Sparsity.dense(self.ssm.num_states, 1),
+                            cas.Sparsity.dense(self.ssm.num_actions, 1),
+                            cas.Sparsity.dense(self.ssm.num_states, 1),
+                            cas.Sparsity.dense(self.ssm.num_states, 1),
+                            cas.Sparsity.dense(self.ssm.num_states,
+                                               self.ssm.num_states + self.ssm.num_actions),
+                            cas.Sparsity.dense(self.ssm.num_states,
+                                               self.ssm.num_states + self.ssm.num_actions)
+                            ][i]
+
+            def get_sparsity_out(self, i):
+                """ """
+
+                return [cas.Sparsity.dense(self.ssm.num_states, 1), cas.Sparsity.dense(self.ssm.num_actions, 1)][i]
+
+            def eval(self, arg):
+                """ Evaluate the Jacobian of the ssm predictive mean/variance
+
+                Parameters
+                ----------
+                arg: list
+                    List of length n_in containing the inputs to the function (state,action)
+
+                Returns
+                -------
+                jac_pred: np.ndarray
+                    A (nx1) array containing the stacked jacobians of the predictive mean
+                    and predictive variance of the ssm
+                """
+
+                mean_seed = arg[5]
+                cov_seed = arg[6]
+
+                seed = cas.vertcat(mean_seed, cov_seed)
+
+                if self.linearize_mu:
+                    jac_mean_seed = arg[7]
+                    seed = cas.vertcat(seed, jac_mean_seed.reshape((-1, 1)))
+                    adj_state, adj_action = self.ssm.get_linearize_reverse(np.array(seed, dtype=np.float32))
+
+                    return cas.DM(adj_state), cas.DM(adj_action)
+                else:
+                    adj_state, adj_action = self.ssm.get_reverse(np.array(seed, dtype=np.float32))
+                    return cas.DM(adj_state), cas.DM(adj_action)
+
+        self.reverse_callback = BackFun(self.ssm, self.linearize_mu)
+
+        return self.reverse_callback
 
     def get_forward(self, name, inames, onames, opts):
         """ """
-        raise NotImplementedError(
-            "Need to implement this if you set has_forward = True")
-
-
-class CasadiGaussianProcess(StateSpaceModel):
-    """ Simple Wrapper around GPy
-
-    Wrapper around the GPy library
-    to get predictions per dimension.
-
-    Attributes:
-        gp_trained (bool): Is set to TRUE once the train() method
-            was called.
-        n_s (int): number of state dimensions of the dynamic system
-        n_u (int): number of action/control dimensions of the dynamic system
-        gps (list[GPy.core.GP]): A list of length n_s with the trained GPs
-
-    """
-
-    def __init__(self, n_s_out, n_s_in, n_u, kerns, X=None, y=None, m=None, train=False,
-                 Z=None):
-        """ Initialize GP Model ( possibly without training set)
-
-        Parameters
-        ----------
-            X (np.ndarray[float], optional): Training inputs
-            y (np.ndarray[float], optional): Training targets
-            m (int, optional): number of datapoints to be selected (randomly)
-                    from the training set
-            kern_types (list[str]): a list of pre-specified covariance function types
-            Z (tuple): Inducing points
-
-        """
-        self.n_s_out = n_s_out
-        self.n_s_in = n_s_in
-        self.n_u = n_u
-        self.gp_trained = False
-        self.m = m
-        self.Z = Z
-        self.kerns = kerns
-        self.do_sparse_gp = False
-
-        self.z_fixed = False
-        if not Z is None:
-            self.z_fixed = True
-
-        if X is None or y is None:  # initialize without training (no data available)
-            train = False
-        if train:
-            self.train(X, y, m, Z=Z)
-
-    def train(self, X, y, m=None, opt_hyp=True, noise_diag=1e-5, Z=None,
-              choose_data=True):
-        """ Train a GP for each state dimension
-
-        Args:
-            X: Training inputs of size [N, n_s + n_u]
-            y: Training targets of size [N, n_s]
-        """
-        n_data, _ = np.shape(X)
-
-        X_train = X
-        y_train = y
-
-        if not m is None:
-            if self.do_sparse_gp and not Z is None:
-                pass
-            else:
-                if n_data < m:
-                    warnings.warn("""The desired number of datapoints is not available. Dataset consist of {}
-                           Datapoints! """.format(n_data))
-                    X_train = X
-                    y_train = y
-                    Z = X
-                    y_z = y_train
-                else:
-
-                    if choose_data:
-                        Z, y_z = self.choose_datapoints_maxvar(X_train, y_train, self.m)
-
-                    else:
-                        idx = np.random.choice(n_data, size=m, replace=False)
-                        Z = X[idx, :]
-                        y_z = y[idx, :]
-        else:
-            if self.do_sparse_gp:
-                raise ValueError(
-                    "Number of inducing points m needs to be specified for sparse gp regression")
-
-            Z = X_train
-            y_z = y_train
-
-        gps = [None] * self.n_s_out
-
-        for i in range(self.n_s_out):
-            kern = self.kerns[i]
-
-            if self.do_sparse_gp:
-                y_i = y_train[:, i].reshape(-1, 1)
-                model_gp = GPy.models.SparseGPRegression(X_train, y_i, kernel=kern, Z=Z)
-            else:
-                y_i = y_z[:, i].reshape(-1, 1)
-                model_gp = GPy.models.GPRegression(Z, y_i, kernel=kern)
-
-            if opt_hyp:
-                model_gp.optimize(max_iters=1000, messages=True)
-
-            post = model_gp.posterior
-            gps[i] = model_gp
-
-        # update the class attributes
-        if self.z_fixed:
-            self.z = self.Z
-        else:
-            self.z = Z
-
-        self.gps = gps
-        self.gp_trained = True
-        self.x_train = X_train
-        self.y_train = y_train
-
-    def choose_datapoints_maxvar(self, x, y, m, k=10, min_ratio_k=0.25, n_reopt_gp=1):
-        """ Choose datapoints for the GP based on the maximum predicted variance criterion
-
-        Parameters
-        ----------
-        x: n x (n_s + n_u) array[float]
-            The training set
-        y: n x n_s
-            The training targets
-
-        m: The number of datapoints to select
-
-        """
-        n_data = np.shape(x)[0]
-
-        if n_data <= m:  # we have less data than the subset m -> use the whole dataset
-            return x, y
-
-        if not self.gp_trained:
-            self.train(x, y, m=None)
-
-        k = np.minimum(int(n_data * min_ratio_k), k)
-
-        # get initial set of datapoints using k-means
-        km = cluster.KMeans(n_clusters=k)
-        clust_ids = km.fit_predict(x)
-
-        sort_idx = np.argsort(clust_ids)
-        clust_ids_sorted = clust_ids[sort_idx]
-
-        unq_first = np.concatenate(
-            ([True], clust_ids_sorted[1:] != clust_ids_sorted[:-1]))
-        unq_items = clust_ids_sorted[unq_first]
-        unq_count = np.diff(np.nonzero(unq_first)[0])
-        unq_idx = np.split(sort_idx, np.cumsum(
-            unq_count))  # list containing k arrays -> the indices of the samples in the corresponding classes
-
-        unq_per_cluster_idx = [np.random.choice(clust_idx) for clust_idx in unq_idx]
-        idx_not_selected = np.setdiff1d(np.arange(n_data), unq_per_cluster_idx)
-
-        x_chosen = x[np.array(unq_per_cluster_idx), :]
-        y_chosen = y[np.array(unq_per_cluster_idx), :]
-
-        x_pool = x[idx_not_selected, :]
-        y_pool = y[idx_not_selected, :]
-
-        chunks = int((m - k) / (n_reopt_gp + 1))
-
-        for i in range(m - k):
-            if i % chunks == 0:
-                self.train(x_pool, y_pool, m=None)
-
-            _, pred_var_pool = self.predict(x_pool)
-            idx_max_sigma = np.argmax(np.sum(pred_var_pool, axis=1))
-
-            x_chosen = np.vstack((x_chosen, x_pool[None, idx_max_sigma, :]))
-            y_chosen = np.vstack((y_chosen, y_pool[None, idx_max_sigma, :]))
-
-            x_pool = np.delete(x_pool, (idx_max_sigma), axis=0)
-            y_pool = np.delete(y_pool, (idx_max_sigma), axis=0)
-
-            for j in range(self.n_s_out):
-                self.gps[j].set_XY(x_chosen, y_chosen[:, j, None])
-
-        return x_chosen, y_chosen
-
-    def update_model(self, x, y, opt_hyp=False, replace_old=True, noise_diag=1e-5,
-                     choose_data=True):
-        """ Update the model based on the current settings and new data
-
-        Parameters
-        ----------
-        x: n x (n_s + n_u) array[float]
-            The training set
-        y: n x n_s
-            The training targets
-        train: bool, optional
-            If this is set to TRUE the hyperparameters are re-optimized
-        """
-        if replace_old:
-            x_new = x
-            y_new = y
-        else:
-            x_new = np.vstack((self.x_train, x))
-            y_new = np.vstack((self.y_train, y))
-
-        if opt_hyp or not self.gp_trained:
-            self.train(x_new, y_new, self.m, opt_hyp=opt_hyp, Z=self.Z)
-        else:
-            n_data = np.shape(x_new)[0]
-            inv_K = [None] * self.n_s_out
-            if self.m is None:
-                n_beta = n_data
-                Z = x_new
-                y_z = y_new
-            else:
-
-                if n_data < self.m:
-                    warnings.warn("""The desired number of datapoints is not available. Dataset consist of {}
-                           Datapoints! """.format(n_data))
-                    Z = x_new
-                    y_z = y_new
-                    n_beta = n_data
-                else:
-                    if choose_data:
-                        Z, y_z = self.choose_datapoints_maxvar(x_new, y_new, self.m)
-
-                    else:
-                        idx = np.random.choice(n_data, size=self.m, replace=False)
-                        Z = x_new[idx, :]
-                        y_z = y_new[idx, :]
-                    n_beta = self.m
-
-            beta = np.empty((n_beta, self.n_s_out))
-
-            for i in range(self.n_s_out):
-                if self.do_sparse_gp:
-                    self.gps[i].set_XY(x_new, y_new[:, i].reshape(-1, 1))
-                    if not self.z_fixed:
-                        self.gps[i].set_Z(Z)
-                else:
-                    self.gps[i].set_XY(Z, y_z[:, i].reshape(-1, 1))
-
-            self.x_train = x_new
-            self.y_train = y_new
-            self.z = Z
-
-    def predict(self, states, actions, jacobians=False, full_cov=False):
-        """ Compute the predictive mean and variance for a set of test inputs
-
-
-        """
-        assert self.gp_trained, "Cannot predict, need to train the GP first"
-
-        T = np.shape(states)[0]
-        y_mu_pred = np.empty((T, self.n_s_out))
-        y_sigm_pred = np.empty((T, self.n_s_out))
-
-        z_new = np.hstack((states, actions))
-        for i in range(self.n_s_out):
-            y_mu_pred[:, None, i], y_sigm_pred[:, None, i] = self.gps[
-                i].predict_noiseless(z_new)
-
-        if jacobians:
-            grad_mu, grad_sigma = self.predictive_gradients(z_new, True)
-            return y_mu_pred, y_sigm_pred, grad_mu, grad_sigma
-
-        return y_mu_pred, y_sigm_pred
-
-    def linearize_predict(self, states, actions, jacobians=False, linearize_cov=False):
-        """ """
-        raise NotImplementedError("Need to implement this")
-
-        if jacobians and full_cov:
-            raise NotImplementedError('Jacobians of full covariance not supported.')
-
-    def predictive_gradients(self, x_new, grad_sigma=False):
-        """ Compute the gradients of the predictive mean/variance w.r.t. inputs
-
-        Parameters
-        ----------
-        x_new: T x (n_s + n_u) array[float]
-            The test inputs to compute the gradients at
-        grad_sigma: bool, optional
-            Additionaly returns the gradients of the predictive variance w.r.t. the inputs if
-            this is set to TRUE
-
-        """
-        T = np.shape(x_new)[0]
-
-        grad_mu_pred = np.empty([T, self.n_s_out, self.n_s_in + self.n_u])
-        grad_var_pred = np.empty([T, self.n_s_out, self.n_s_in + self.n_u])
-
-        for i in range(self.n_s_out):
-            g_mu_pred, g_var_pred_ = self.gps[i].predictive_gradients(x_new)
-            grad_mu_pred[:, i, :] = g_mu_pred[:, :, 0]
-            grad_var_pred[:, i, :] = grad_var_pred[:, :, 0]
-
-        if grad_sigma:
-            return grad_mu_pred, grad_var_pred
-
-        return grad_mu_pred
-
-    def sample_from_gp(self, inp, size=10):
-        """ Sample from GP predictive distribution
-
-
-        Args:
-            inp (numpy.ndarray[float]): array of shape n x (n_s + n_u); the
-                test inputs
-            size (int, optional): number of samples per test point
-
-        Returns:
-            S (numpy.ndarray[float]): array of shape n x size x n_s; array of size samples
-            of the posterior distribution per test input
-
-        """
-        n = np.shape(inp)[0]
-        S = np.empty((n, size, self.n_s_out))
-
-        for i in range(self.n_s_out):
-            S[:, :, i] = self.gps[i].posterior_samples_f(inp, size=size, full_cov=False)
-
-        return S
-
-    def information_gain(self, x=None):
-        """ Mutual information between samples and system """
-
-        if x is None:
-            x = self.z
-
-        n_data = np.shape(x)[0]
-        inf_gain_x_f = [None] * self.n_s_out
-        for i in range(self.n_s_out):
-            noise_var_i = float(self.gps[i].Gaussian_noise.variance)
-            inf_gain_x_f[i] = np.log(
-                nLa.det(np.eye(n_data) + (1 / noise_var_i) * self.gps[i].posterior._K))
-
-        return inf_gain_x_f
+        if not self.v_has_forward:
+            raise ValueError("Calling forward even though it is not provided! This should not happen.")
+        raise NotImplementedError("Not implemented yet")

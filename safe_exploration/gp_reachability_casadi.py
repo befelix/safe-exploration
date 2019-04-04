@@ -6,14 +6,14 @@ Created on Mon Sep 25 09:18:58 2017
 """
 
 import numpy as np
-from casadi import SX, mtimes, vertcat, sum1, sqrt, Function
+from casadi import SX, MX, mtimes, vertcat, sum1, sqrt, Function
 from casadi import reshape as cas_reshape
 
 from .utils_casadi import compute_remainder_overapproximations
 from .utils_ellipsoid_casadi import sum_two_ellipsoids, ellipsoid_from_rectangle
 
 
-def onestep_reachability(p_center, gp, k_ff, l_mu, l_sigma,
+def onestep_reachability(p_center, ssm, k_ff, l_mu, l_sigma,
                          q_shape=None, k_fb=None, c_safety=1., a=None, b=None,
                          t_z_gp=None):
     """ Overapproximate the reachable set of states under affine control law
@@ -58,36 +58,39 @@ def onestep_reachability(p_center, gp, k_ff, l_mu, l_sigma,
     n_u = np.shape(k_ff)[0]
 
     if t_z_gp is None:
-        t_z_gp = SX.eye(n_s)
+        t_z_gp = MX.eye(n_s)
 
     if a is None:
-        a = SX.eye(n_s)
-        b = SX.zeros(n_s, n_u)
+        a = MX.eye(n_s)
+        b = MX.zeros(n_s, n_u)
 
     if q_shape is None:  # the state is a point
 
         u_p = k_ff
 
-        z_bar = vertcat(mtimes(t_z_gp, p_center), u_p)
+        x_bar = mtimes(t_z_gp, p_center)
+        z_bar = vertcat(x_bar, u_p)
 
-        mu_new, pred_var = gp.predict_casadi_symbolic(z_bar.T)
+        mu_new, pred_var, _ = ssm(x_bar.T, u_p.T)
 
         p_lin = mtimes(a, p_center) + mtimes(b, u_p)
-        p_1 = p_lin + mu_new.T
+        p_1 = p_lin + mu_new
 
-        rkhs_bound = c_safety * sqrt(pred_var.T)
+        rkhs_bound = c_safety * sqrt(pred_var)
         q_1 = ellipsoid_from_rectangle(rkhs_bound)
 
         return p_1, q_1, pred_var
     else:  # the state is a (ellipsoid) set
 
         # compute the linearization centers
-        x_bar = p_center  # center of the state ellipsoid
+        x_bar = mtimes(t_z_gp, p_center)  # center of the state ellipsoid
         u_bar = k_ff  # u_bar = K*(u_bar-u_bar) + k = k
-        z_bar = vertcat(mtimes(t_z_gp, x_bar), u_bar)
+
+        z_bar = vertcat(x_bar, u_bar)
 
         # compute the zero and first order matrices
-        mu_0, sigm_0, jac_mu = gp.predict_casadi_symbolic(z_bar.T, True)
+
+        mu_0, sigm_0, jac_mu = ssm(x_bar.T, u_bar.T)
 
         n_x_in = np.shape(t_z_gp)[0]
 
@@ -97,7 +100,7 @@ def onestep_reachability(p_center, gp, k_ff, l_mu, l_sigma,
 
         # reach set of the affine terms
         H = a + a_mu + mtimes(b_mu + b, k_fb)
-        p_0 = mu_0.T + mtimes(a, x_bar) + mtimes(b, u_bar)
+        p_0 = mu_0 + mtimes(a, x_bar) + mtimes(b, u_bar)
 
         Q_0 = mtimes(H, mtimes(q_shape, H.T))
 
@@ -105,17 +108,16 @@ def onestep_reachability(p_center, gp, k_ff, l_mu, l_sigma,
                                                                  l_sigma)
         # computing the box approximate to the lagrange remainder
         Q_lagrange_mu = ellipsoid_from_rectangle(ub_mean)
-        p_lagrange_mu = SX.zeros((n_s, 1))
+        p_lagrange_mu = MX.zeros((n_s, 1))
 
-        b_sigma_eps = c_safety * (sqrt(sigm_0.T) + ub_sigma)
+        b_sigma_eps = c_safety * (sqrt(sigm_0) + ub_sigma)
         Q_lagrange_sigm = ellipsoid_from_rectangle(b_sigma_eps)
-        p_lagrange_sigm = SX.zeros((n_s, 1))
+        p_lagrange_sigm = MX.zeros((n_s, 1))
 
         p_sum_lagrange, Q_sum_lagrange = sum_two_ellipsoids(p_lagrange_sigm,
                                                             Q_lagrange_sigm,
                                                             p_lagrange_mu,
                                                             Q_lagrange_mu)
-
         p_1, q_1 = sum_two_ellipsoids(p_sum_lagrange, Q_sum_lagrange, p_0, Q_0)
 
         return p_1, q_1, sigm_0
