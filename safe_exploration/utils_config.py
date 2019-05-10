@@ -16,15 +16,14 @@ from .utils import dlqr, unavailable
 
 try:
     _has_ssm_gpy = True
-    from safe_exploration.ssm_gpy.gaussian_process import GaussianProcess
+    from safe_exploration.ssm_gpy.gaussian_process import SimpleGPModel
 except:
     _has_ssm_gpy = False
 
 
-@unavailable(_has_ssm_gpy, "ssm_gpy")
-def create_solver(conf, env, model_options=None):
+@unavailable(not _has_ssm_gpy, "ssm_gpy")
+def create_solver(conf, env):
     """ Create a solver from a set of options and environment information"""
-
     lin_model = None
     lin_trafo_gp_input = conf.lin_trafo_gp_input
 
@@ -48,11 +47,8 @@ def create_solver(conf, env, model_options=None):
     k_fb = -k_lqr
     safe_policy = lambda x: np.dot(k_fb, x)
 
-    if model_options is None:
-        gp = GaussianProcess(conf.gp_ns_out, conf.gp_ns_in, env.n_u, m=conf.m,
-                           kern_types=conf.kern_types, Z=conf.Z)
-    else:
-        gp = GaussianProcess.from_dict(model_options)
+    gp = SimpleGPModel(conf.gp_ns_out, conf.gp_ns_in, env.n_u, m=conf.m,
+                       kern_types=conf.kern_types, Z=conf.Z)
 
     dt = env.dt
     ctrl_bounds = np.hstack(
@@ -73,9 +69,6 @@ def create_solver(conf, env, model_options=None):
     if conf.solver_type == "safempc":
         # the environment options needed for the safempc algorithm
         n_safe = conf.n_safe
-        n_perf = conf.n_perf
-        l_mu = env.l_mu
-        l_sigm = env.l_sigm
 
         env_opts_safempc["l_mu"] = env.l_mu
         env_opts_safempc["l_sigma"] = env.l_sigm
@@ -87,7 +80,7 @@ def create_solver(conf, env, model_options=None):
         perf_opts_safempc["perf_has_fb"] = conf.perf_has_fb
 
         solver = SimpleSafeMPC(n_safe, gp, env_opts_safempc, wx_cost, wu_cost,
-                               beta_safety=conf.beta_safety, lin_model=lin_model,
+                               beta_safety=conf.beta_safety,
                                safe_policy=safe_policy,
                                opt_perf_trajectory=perf_opts_safempc,
                                lin_trafo_gp_input=lin_trafo_gp_input)
@@ -95,7 +88,7 @@ def create_solver(conf, env, model_options=None):
         T = conf.T
 
         solver = CautiousMPC(T, gp, env_opts_safempc, conf.beta_safety,
-                             lin_trafo_gp_input=lin_trafo_gp_input, k_fb=k_fb)
+                             lin_trafo_gp_input=lin_trafo_gp_input, perf_trajectory=conf.type_perf_traj, k_fb=k_fb)
     else:
         raise ValueError("Unknown solver type: {}".format(conf.solver_type))
 
