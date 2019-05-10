@@ -83,7 +83,7 @@ def create_solver(conf, env):
                                beta_safety=conf.beta_safety,
                                safe_policy=safe_policy,
                                opt_perf_trajectory=perf_opts_safempc,
-                               lin_trafo_gp_input=lin_trafo_gp_input)
+                               lin_trafo_gp_input=lin_trafo_gp_input, verbosity=conf.verbose)
     elif conf.solver_type == "cautious_mpc":
         T = conf.T
 
