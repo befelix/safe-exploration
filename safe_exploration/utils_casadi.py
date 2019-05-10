@@ -11,7 +11,7 @@ admits being use by a Casadi ( symbolic ) framework.
 
 import numpy as np
 from casadi import mtimes, fmax, norm_2, sqrt, exp, SX, cos, sin, det, inv, vertcat, \
-    horzcat, trace
+    horzcat, trace, MX, Function
 from casadi import reshape as cas_reshape
 
 
@@ -201,8 +201,8 @@ def trig_prop(m, v, idx, a=1.0):
     c_out: inv(v) times input-output-covariance
 
     """
-    m_out = SX(2, 1)
-    v_out = SX(2, 2)
+    m_out = MX(2, 1)
+    v_out = MX(2, 2)
 
     v_exp_0 = exp(-v[idx, idx] / 2)
 
@@ -227,7 +227,7 @@ def trig_prop(m, v, idx, a=1.0):
     v_out = a ** 2 * v_out
 
     d = np.shape(m)[0]
-    c_out = SX(d, 2)
+    c_out = MX(d, 2)
     c_out[idx, 0] = m_out[1]
     c_out[idx, 1] = -m_out[0]
 
@@ -346,6 +346,7 @@ def loss_sat(m, v, z, W=None):
     TO-DO: Should be fixed
 
     """
+
     D = np.shape(m)[0]
 
     if W is None:
@@ -357,9 +358,9 @@ def loss_sat(m, v, z, W=None):
     inv_G = inv(G)
     iSpW = mtimes(W, inv_G)
 
-    L = -exp(mtimes(-(m - z).T, mtimes(iSpW, (m - z) / 2))) / sqrt(det(G))
+    L = 1 - exp(mtimes(-(m - z).T, mtimes(iSpW, (m - z) / 2))) / sqrt(det(G))
 
-    return 1 + L
+    return Function("l_sat", [m, v], [L])  # convert into MX function
 
 
 def loss_quadratic(m, z, v=None, W=None):
