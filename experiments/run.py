@@ -54,7 +54,7 @@ def check_config_conflicts(conf):
     if conf.task == "exploration" and not conf.solver_type == "safempc":
         return True, "Exploration task only allowed with safempc solver"
     elif conf.task == "uncertainty_propagation" and not conf.solver_type == "safempc":
-        return True ,"Uncertainty propagation task only allowed with safempc solver"
+        return True, "Uncertainty propagation task only allowed with safempc solver"
 
     return has_conflict, conflict_str
 
@@ -74,20 +74,19 @@ def run_scenario(args):
     if conflict:
         raise ValueError("There are conflicting settings: {}".format(conflict_str))
 
-    env = create_env(conf.env_name,conf.env_options)
+    env = create_env(conf.env_name, conf.env_options)
 
-    gp_model_options = get_model_options_from_conf(conf,env)
-    solver, safe_policy = create_solver(conf,env,gp_model_options)
+    solver, safe_policy = create_solver(conf, env)
 
     task = conf.task
     if task == "exploration":
-        run_exploration(conf,conf.visualize)#,conf.static_exploration,conf.n_iterations,
+        run_exploration(conf, conf.visualize)#,conf.static_exploration,conf.n_iterations,
                         #conf.n_restarts_optimizer,conf.visualize,conf.save_vis,conf.save_path,conf.verify_safety,conf.n_experiments)
     elif task == "episode_setting":
         run_episodic(conf)
 
     elif task == "uncertainty_propagation":
-        run_uncertainty_propagation(env,solver,conf)
+        run_uncertainty_propagation(env, solver, conf)
 
 
 if __name__ == "__main__":

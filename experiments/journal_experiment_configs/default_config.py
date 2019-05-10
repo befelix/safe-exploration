@@ -21,27 +21,32 @@ class DefaultConfig(object):
     verbosity = 2
     ilqr_init = True
 
-    type_perf_traj = 'mean_equivalent'
+    type_perf_traj = 'taylor'
     r = 1
     perf_has_fb = True
     
     env_options=dict()
-    
-    
-    def create_savedirs(self,file_path):
+
+    def create_savedirs(self, file_path):
         """ """
+
         conf_name = splitext(basename(file_path))[0]
-        
-        if self.save_results and self.save_dir is None:
-            time_string = datetime.datetime.now().strftime("%d-%m-%y-%H-%M-%S")
-            res_path = "{}/res_{}_{}".format(self.save_path_base,conf_name,time_string)
+
+        if self.save_results:
+            if self.save_dir is None:
+                time_string = datetime.datetime.now().strftime("%d-%m-%y-%H-%M-%S")
+                res_path = "{}/res_{}_{}".format(self.save_path_base,conf_name,time_string)
+            else:
+                res_path = f"{self.save_path_base}/{self.save_dir}"
+
             try:
                 makedirs(res_path)
-            except Exception, e:
+            except Exception as e:
                 warnings.warn(e)
+
             self.save_path = res_path
-            
             #copy config file into results folder
             dirname_conf = dirname(file_path)
             copy("{}/{}.py".format(dirname_conf,conf_name),"{}/".format(res_path))
+
             

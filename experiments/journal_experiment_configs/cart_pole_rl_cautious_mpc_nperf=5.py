@@ -4,15 +4,8 @@ Created on Tue Nov 21 18:09:14 2017
 
 @author: tkoller
 """
-import warnings
-import numpy as np
-import datetime
 
-from defaultconfig_episode import DefaultConfigEpisode
-from os.path import basename, splitext,dirname
-from os import makedirs, getcwd
-
-from shutil import copy
+from .defaultconfig_episode import DefaultConfigEpisode
 
 
 class Config(DefaultConfigEpisode):
@@ -40,7 +33,7 @@ class Config(DefaultConfigEpisode):
     def __init__(self):
         """ """
 
-        super(Config,self).__init__(__file__)
-        self.cost = super(Config,self)._generate_cost()
+        super(Config, self).__init__(__file__)
+        self.cost = super(Config, self)._generate_cost()
 
 
