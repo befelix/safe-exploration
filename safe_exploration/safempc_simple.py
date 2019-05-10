@@ -32,7 +32,7 @@ class SimpleSafeMPC:
 
     def __init__(self, n_safe, ssm, opt_env, wx_cost, wu_cost, beta_safety=2.5,
                  rhc=True,
-                 safe_policy=None, opt_perf_trajectory={}, lin_trafo_gp_input=None, opts_solver=None, verbosity = 0):
+                 safe_policy=None, opt_perf_trajectory={}, lin_trafo_gp_input=None, opts_solver=None, verbosity=0):
         """ Initialize the SafeMPC object with dynamic model information
 
         Parameters
