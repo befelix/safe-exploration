@@ -238,6 +238,9 @@ def one_step_mean_equivalent(mu_x, ssm, k_ff, sigma_x=None, k_fb=None, a=None, b
     n_u = np.shape(k_ff)[0]
 
     u_p = k_ff
+
+    if a_gp_inp_x is None:
+        a_gp_inp_x = MX.eye(n_s)
     x_bar = mtimes(a_gp_inp_x, mu_x)
     z_bar = vertcat(x_bar, u_p)
     if a is None:
