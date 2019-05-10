@@ -43,6 +43,15 @@ except:
 a_tol = 1e-5
 r_tol = 1e-4
 
+# custom opts. To make tests fast, it's important to have max_iter == 1
+OPTS_SOLVER = {'error_on_fail': False,
+                   'ipopt': {'hessian_approximation': 'limited-memory', "max_iter": 1,
+                             "expect_infeasible_problem": "no", \
+                             'acceptable_tol': 1e-4, "acceptable_constr_viol_tol": 1e-5,
+                             "bound_frac": 0.5, "start_with_resto": "no",
+                             "required_infeasibility_reduction": 0.85,
+                             "acceptable_iter": 8}}
+
 
 def get_gpy_ssm(path,n_s,n_u):
 
@@ -178,7 +187,7 @@ def before_test_safempc(request):
     env_opts_safempc["lin_model"] = lin_model_param
 
     safe_mpc = SimpleSafeMPC(n_safe, ssm, env_opts_safempc, wx_cost, wu_cost,
-                             beta_safety = c_safety, opt_perf_trajectory = opt_perf)
+                             beta_safety = c_safety, opt_perf_trajectory = opt_perf, opts_solver=OPTS_SOLVER)
 
     if n_perf > 1:
         cost = lambda p_0, u_0, p_all, q_all, k_ff_safe, k_fb_safe, \
