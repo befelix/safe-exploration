@@ -6,17 +6,16 @@ Created on Thu Sep 28 09:28:15 2017
 """
 
 import warnings
-
 import casadi as cas
 import numpy as np
-from casadi import SX, mtimes, vertcat
+from casadi import MX, mtimes, vertcat
 from casadi import reshape as cas_reshape
 
 from .gp_reachability_casadi import lin_ellipsoid_safety_distance
-from .uncertainty_propagation_casadi import mean_equivalent_multistep
+from .uncertainty_propagation_casadi import mean_equivalent_multistep, multi_step_taylor_symbolic
 
 ATTR_NAMES_ENV = ['h_mat_safe', 'h_safe', 'lin_model', 'ctrl_bounds', 'h_mat_obs',
-                  'h_obs', 'dt']
+                  'h_obs']
 DEFAULT_OPT_ENV = {'ctrl_bounds': None, 'safe_policy': None, 'lin_model': None,
                    'h_mat_obs': None, 'h_obs': None}
 
@@ -55,8 +54,8 @@ class CautiousMPC:
         overview)
     """
 
-    def __init__(self, T, gp, env_options, beta_safety, rhc=True, lin_model=None,
-                 lin_trafo_gp_input=None, perf_trajectory=mean_equivalent_multistep,
+    def __init__(self, T, gp, env_options, beta_safety,
+                 lin_trafo_gp_input=None, perf_trajectory="mean_equivalent",
                  k_fb=None):
         self.T = T
         self.gp = gp
@@ -65,6 +64,7 @@ class CautiousMPC:
         self.n_fail = T - 1
         self.beta_safety = beta_safety
         self.perf_trajectory = perf_trajectory
+        self.opt_x0 = False
 
         self.cost_func = None
         self.lin_prior = False
@@ -73,7 +73,7 @@ class CautiousMPC:
 
         self.lin_trafo_gp_input = lin_trafo_gp_input
         if self.lin_trafo_gp_input is None:
-            self.lin_trafo_gp_input = SX.zeros(self.n_s_out)
+            self.lin_trafo_gp_input = MX.eye(self.n_s)
 
         if self.h_mat_obs is None:
             m_obs_mat = 0
@@ -119,12 +119,21 @@ class CautiousMPC:
                 attr_val = default_attribs[attr_name]
             else:
                 raise ValueError(
-                    "Neither a custom nor a default value is given for the requried"
+                    "Neither a custom nor a default value is given for the required "
                     "attribute {}".format(attr_name))
 
             setattr(self, attr_name, attr_val)
 
-    def init_solver(self, cost_func=None):
+    def _set_perf_trajectory(self, name):
+        """ Get the peformance trajectory function from identifier"""
+        if name == 'mean_equivalent':
+            self.perf_trajectory = mean_equivalent_multistep
+        elif name == 'taylor':
+            self.perf_trajectory = multi_step_taylor_symbolic
+        else:
+            raise NotImplementedError("Unknown uncertainty propagation method")
+
+    def init_solver(self, cost_func=None, opt_x0=False):
         """ Initialize a casadi solver object with safety bounds information
 
         Parameters:
@@ -138,13 +147,13 @@ class CautiousMPC:
                 cost_func(p_all,k_ff_all)
 
         """
-
+        self.opt_x0 = opt_x0
         # Optimization variables
-        k_ff = SX.sym("k_ff", (self.T, self.n_u))
+        k_ff = MX.sym("k_ff", (self.T, self.n_u))
 
         # Parameters
-        k_fb = SX.sym("k_fb", (self.n_u, self.n_s))
-        mu_0 = SX.sym("mu_0", (self.n_s, 1))
+        k_fb = MX.sym("k_fb", (self.n_u, self.n_s))
+        mu_0 = MX.sym("mu_0", (self.n_s, 1))
 
         k_fb_all = [k_fb] * (self.T - 1)
         mu_all, sigma_all, sigma_g = self.perf_trajectory(mu_0, self.gp, k_ff, k_fb_all,
@@ -160,10 +169,14 @@ class CautiousMPC:
 
         if cost_func is None:
             cost_func = self.cost_func
-        cost = cost_func(mu_0, k_ff[0, :], mu_all, sigma_all, k_ff[1:, :])
+        cost = cost_func(mu_0, k_ff[0, :], mu_all, sigma_all, k_ff[1:, :], k_fb, sigma_g)
 
-        opt_vars = vertcat(k_ff)
-        opt_params = vertcat(mu_0, k_fb.reshape((-1, 1)))
+        if opt_x0:
+            opt_vars = vertcat(mu_0, k_ff)
+            opt_params = vertcat(k_fb.reshape((-1, 1)))
+        else:
+            opt_vars = vertcat(k_ff)
+            opt_params = vertcat(mu_0, k_fb.reshape((-1, 1)))
 
         prob = {'f': cost, 'x': opt_vars, 'p': opt_params, 'g': g}
 
@@ -185,7 +198,7 @@ class CautiousMPC:
         self.g_name = g_name
         self.cost_func = cost_func
 
-    def get_action(self, x0_mu):
+    def get_action(self, x0_mu, verbose=False):
         """ Wrapper around the solve Function
 
         Parameters
@@ -209,10 +222,15 @@ class CautiousMPC:
 
         assert self.solver_initialized, "Need to initialize the solver first!"
 
-        k_ff_0, k_fb_0 = self._get_init_controls()
-
-        params = vertcat(cas_reshape(x0_mu, (-1, 1)), cas_reshape(k_fb_0, (-1, 1)))
-        opt_vars_init = vertcat(cas_reshape(k_ff_0, (-1, 1)))
+        if self.opt_x0:
+            k_ff_0 = np.random.randn(self.T, self.n_u)
+            k_fb_0 = self.k_fb
+            params = vertcat(cas_reshape(k_fb_0, (-1, 1)))
+            opt_vars_init = vertcat(cas_reshape(x0_mu, (-1, 1)), cas_reshape(k_ff_0, (-1, 1)))
+        else:
+            k_ff_0, k_fb_0 = self._get_init_controls()
+            params = vertcat(cas_reshape(x0_mu, (-1, 1)), cas_reshape(k_fb_0, (-1, 1)))
+            opt_vars_init = vertcat(cas_reshape(k_ff_0, (-1, 1)))
 
         crash = False
         # sol = self.solver(x0=opt_vars_init,lbg=self.lbg,ubg=self.ubg,p=params)
@@ -225,9 +243,9 @@ class CautiousMPC:
             warnings.warn("NLP solver crashed, solution infeasible")
             sol = None
 
-        return self._get_solution(sol, crash, x0_mu, k_fb_0)
+        return self._get_solution(sol, crash, x0_mu, k_fb_0, verbose)
 
-    def _get_solution(self, sol, crash, p_0, k_fb_0, feas_tol=1e-6):
+    def _get_solution(self, sol, crash, p_0, k_fb_0, verbose=False, feas_tol=1e-6):
         if crash:
             self.n_fail += 1
             exit_code = 2
@@ -235,7 +253,11 @@ class CautiousMPC:
             return u_apply, exit_code
 
         x_opt = sol["x"]
-        k_ff = cas_reshape(x_opt, (-1, self.n_u))
+        if self.opt_x0:
+            p_0 = cas_reshape(x_opt[:self.n_s], (self.n_s, 1))
+            k_ff = cas_reshape(x_opt[self.n_s:], (-1, self.n_u))
+        else:
+            k_ff = cas_reshape(x_opt, (-1, self.n_u))
 
         mu_all, sigma_all, sigma_g = self.f_multistep_eval(p_0, k_ff, k_fb_0)
 
@@ -251,10 +273,18 @@ class CautiousMPC:
             exit_code = 0
             self.n_fail = 0
 
+            if verbose:
+                return np.array(k_ff[0, :]).reshape(self.n_u, ), exit_code, np.vstack((p_0.T, mu_all)), sigma_all, k_ff, k_fb_0
+
             return np.array(k_ff[0, :]).reshape(self.n_u, ), exit_code
         else:
             self.n_fail += 1
-            return self._get_old_solution(p_0)
+
+            u_apply, exit_code = self._get_old_solution(p_0)
+
+            if verbose:
+                return u_apply, exit_code, None, None, None
+            return u_apply, exit_code
 
     def _get_old_solution(self, x0_mu):
         """ Get previous solution in case of infeasibility
@@ -281,7 +311,7 @@ class CautiousMPC:
             u_apply = self.k_ff_old[self.n_fail, :]
             exit_code = 1
         else:
-            u_apply = np.dot(self.k_fb, p_0)
+            u_apply = np.dot(self.k_fb, x0_mu)
             exit_code = 3
 
         return u_apply.reshape(self.n_u, ), exit_code
