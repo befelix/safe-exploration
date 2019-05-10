@@ -32,7 +32,7 @@ class SimpleSafeMPC:
 
     def __init__(self, n_safe, ssm, opt_env, wx_cost, wu_cost, beta_safety=2.5,
                  rhc=True,
-                 safe_policy=None, opt_perf_trajectory={}, lin_trafo_gp_input=None):
+                 safe_policy=None, opt_perf_trajectory={}, lin_trafo_gp_input=None, opts_solver=None, verbosity = 0):
         """ Initialize the SafeMPC object with dynamic model information
 
         Parameters
@@ -76,6 +76,7 @@ class SimpleSafeMPC:
         self.n_s = self.ssm.num_states
         self.n_u = self.ssm.num_actions
         self.has_openloop = False
+        self.opts_solver = opts_solver
 
         self.safe_policy = safe_policy
 
@@ -132,7 +133,7 @@ class SimpleSafeMPC:
         self.solver_initialized = False
 
         self.beta_safety = beta_safety
-        self.verbosity = 0
+        self.verbosity = verbosity
 
         # SET ALL ATTRIBUTES FOR THE ENVIRONMENT
 
@@ -239,15 +240,17 @@ class SimpleSafeMPC:
 
         prob = {'f': cost, 'x': opt_vars, 'p': opt_params, 'g': g}
 
-        opt = {'error_on_fail': False,
-               'ipopt': {'hessian_approximation': 'limited-memory', "max_iter": 1,
-                         "expect_infeasible_problem": "no", \
-                         'acceptable_tol': 1e-4, "acceptable_constr_viol_tol": 1e-5,
-                         "bound_frac": 0.5, "start_with_resto": "no",
-                         "required_infeasibility_reduction": 0.85,
-                         "acceptable_iter": 8}}  # ipopt
+        opt = self.opts_solver
+        if opt is None:
+            opt = {'error_on_fail': False,
+                   'ipopt': {'hessian_approximation': 'limited-memory', "max_iter": 100,
+                             "expect_infeasible_problem": "no", \
+                             'acceptable_tol': 1e-4, "acceptable_constr_viol_tol": 1e-5,
+                             "bound_frac": 0.5, "start_with_resto": "no",
+                             "required_infeasibility_reduction": 0.85,
+                             "acceptable_iter": 8}}  # ipopt
 
-        # opt = {'qpsol':'qpoases','max_iter':120,'hessian_approximation':'limited-memory'}#,"c1":5e-4} #sqpmethod #,
+            # opt = {'max_iter':120,'hessian_approximation':'limited-memory'}#,"c1":5e-4} #sqpmethod #,
         # opt = {'max_iter':120,'qpsol':'qpoases'}
 
         solver = cas.nlpsol('solver', 'ipopt', prob, opt)
@@ -413,7 +416,7 @@ class SimpleSafeMPC:
                     k_fb_perf_traj = np.append(k_fb_perf_traj, [k_fb_perf])
 
             mu_perf_all, sigma_perf_all, gp_sigma_pred_perf_all = self.perf_trajectory(
-                mu_0, ssm_forward, vertcat(u_0, k_ff_perf_traj), k_fb_perf_traj, None, a, b,
+                mu_0, self.ssm_forward, vertcat(u_0, k_ff_perf_traj), k_fb_perf_traj, None, a, b,
                 lin_trafo_gp_input)
 
             # evaluation trajectory (mainly for verbosity)
@@ -783,6 +786,8 @@ class SimpleSafeMPC:
                 print("=== Safe Trajectory: ===")
                 print("Centers:")
                 print(p_safe)
+                print("Shape matrices:")
+                print(q_safe)
                 print("Safety controls:")
                 print(u_apply)
                 print(k_ff_safe)
