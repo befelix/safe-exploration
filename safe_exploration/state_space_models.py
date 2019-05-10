@@ -4,8 +4,6 @@ Created on Wed Sep 20 10:37:51 2017
 
 @author: tkoller
 """
-import warnings
-import numpy as np
 import numpy as np
 import casadi as cas
 import copy
@@ -249,8 +247,6 @@ class CasadiSSMEvaluator(cas.Callback):
         self.linearize_mu = linearize_mu
         self.construct("CasadiModelEvaluator", opts)
 
-        warnings.warn("Need to test this!")
-
     def get_n_in(self):
         """ """
         return 2  # state and action
@@ -475,8 +471,6 @@ class CasadiSSMEvaluator(cas.Callback):
                 cas.Callback.__init__(self)
                 self.construct(name, opts)
 
-                warnings.warn("Need to test this!")
-
             def get_n_in(self):
                 """ """
                 if self.linearize_mu:
@@ -486,7 +480,7 @@ class CasadiSSMEvaluator(cas.Callback):
 
             def get_n_out(self):
                 """ """
-                return 2
+                return 2  # n_in
 
             def has_reverse(self, nadj):
                 """ """
@@ -501,7 +495,12 @@ class CasadiSSMEvaluator(cas.Callback):
                 return False
 
             def get_sparsity_in(self, i):
-                """ """
+                """
+
+                1. input dimensionalities
+                2. output dimensionalities
+                3. gradient dimensionalities
+                """
                 if self.linearize_mu:
                     return [cas.Sparsity.dense(self.ssm.num_states, 1),
                             cas.Sparsity.dense(self.ssm.num_actions, 1),
