@@ -69,7 +69,6 @@ def onestep_reachability(p_center, ssm, k_ff, l_mu, l_sigma,
         u_p = k_ff
 
         x_bar = mtimes(t_z_gp, p_center)
-        z_bar = vertcat(x_bar, u_p)
 
         mu_new, pred_var, _ = ssm(x_bar.T, u_p.T)
 
@@ -100,7 +99,8 @@ def onestep_reachability(p_center, ssm, k_ff, l_mu, l_sigma,
 
         # reach set of the affine terms
         H = a + a_mu + mtimes(b_mu + b, k_fb)
-        p_0 = mu_0 + mtimes(a, x_bar) + mtimes(b, u_bar)
+
+        p_0 = mu_0 + mtimes(a, p_center) + mtimes(b, u_bar)
 
         Q_0 = mtimes(H, mtimes(q_shape, H.T))
 
