@@ -10,7 +10,7 @@ TODO: Undocumented!
 """
 
 import numpy as np
-from casadi import mtimes, exp, sum2, repmat, SX, Function, sqrt, vertcat, horzcat
+from casadi import mtimes, exp, sum2, repmat, Function, sqrt, vertcat, horzcat, SX
 from casadi import reshape as cas_reshape
 
 
@@ -174,22 +174,23 @@ def _unscaled_dist(x, y):
     return sqrt(r2)
 
 
-def gp_pred(x, kern, beta, x_train, k_inv_training=None, pred_var=True):
+def gp_pred(x, kern, beta=None, x_train=None, k_inv_training=None, pred_var=True):
     """
 
     """
     n_pred, _ = np.shape(x)
 
-    k_star = kern(x, y=x_train)
-    pred_mu = mtimes(k_star, beta)
+    if beta is None:
+        pred_mu = SX.zeros(n_pred, 1)
+    else:
+        k_star = kern(x, y=x_train)
+        pred_mu = mtimes(k_star, beta)
 
     if pred_var:
-        if k_inv_training is None:
-            raise ValueError("""The inverted kernel matrix is required
-                for computing the predictive variance""")
+        pred_sigm = kern(x, diag_only=True)
 
-        k_expl_var = kern(x, y=x_train, diag_only=True)
-        pred_sigm = k_expl_var - sum2(mtimes(k_star, k_inv_training) * k_star)
+        if not beta is None:
+            pred_sigm = pred_sigm - sum2(mtimes(k_star, k_inv_training) * k_star)
 
         return pred_mu, pred_sigm
 
@@ -220,6 +221,9 @@ def _get_kernel_function(kern_type, hyp):
     elif kern_type == "lin_rbf":
         return lambda x, y=None, diag_only=False: _k_lin_rbf(x, hyp, y=y,
                                                              diag_only=diag_only)
+    elif kern_type == "mat52":
+        return lambda x, y=None, diag_only=False: _k_mat52(x, y=y,
+                                                             diag_only=diag_only, **hyp)
     elif kern_type == "lin_mat52":
         return lambda x, y=None, diag_only=False: _k_lin_mat52(x, hyp, y=y,
                                                                diag_only=diag_only)
@@ -227,13 +231,13 @@ def _get_kernel_function(kern_type, hyp):
         raise ValueError("Unknown kernel {}".format(kern_type))
 
 
-def gp_pred_function(x, x_train, beta, hyp, kern_types, k_inv_training=None,
+def gp_pred_function(x, hyp, kern_types, x_train=None, beta=None, k_inv_training=None,
                      pred_var=True, compute_grads=False):
     """
 
     """
-    n_gps = np.shape(beta)[1]
-    inp = SX.sym("input", (x.shape))
+    n_gps = len(kern_types)
+    inp = SX.sym("input", x.shape)
 
     out_dict = dict()
     mu_all = []
@@ -242,7 +246,10 @@ def gp_pred_function(x, x_train, beta, hyp, kern_types, k_inv_training=None,
 
     for i in range(n_gps):
         kern_i = _get_kernel_function(kern_types[i], hyp[i])
-        beta_i = beta[:, i]
+        if beta is None:
+            beta_i = None
+        else:
+            beta_i = beta[:, i]
         k_inv_i = None
         if not k_inv_training is None:
             k_inv_i = k_inv_training[i]
