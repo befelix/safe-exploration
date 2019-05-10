@@ -221,9 +221,9 @@ class Environment(metaclass=abc.ABCMeta):
             The normalized(!) action
         """
 
+        action = self.norm[1] * action  # unnormalize
         action_clipped = np.clip(np.nan_to_num(action), self.u_min,
                                  self.u_max)  # clip to normalized max action
-        action = self.norm[1] * action_clipped  # unnormalize
 
         self.odesolver.set_f_params(action)
         old_state = np.copy(self.current_state)
@@ -679,10 +679,11 @@ class CartPole(Environment):
 
     def __init__(self, name='CartPole', dt=0.1, l=0.5, m=0.5, M=0.5, b=0.1, g=9.82,
                  init_m=np.array([0.0, 0.0, 0.0, 0.0]), visualize=True, init_std=0.0,
-                 norm_x=None, norm_u=None, verbosity=1):
+                 u_min=np.array([-4.0]), u_max=np.array([4.0]),
+                 norm_x=None, norm_u=None, plant_noise=np.array([0.02, 0.05, 0.02, 0.05]) ** 2, verbosity=1):
         super(CartPole, self).__init__(name, 4, 1, dt, init_m, init_std,
-                                       np.array([0.01, 0.01, 0.01, 0.01]) ** 2,
-                                       np.array([-4.0]), np.array([4.0]),
+                                       plant_noise,
+                                       u_min, u_max,
                                        np.array([0.0, l, 0.0]), verbosity)
 
         self.ns_ode = 4
@@ -713,9 +714,11 @@ class CartPole(Environment):
         self.D_cost = np.array([40, 20, 40])
         self.R_cost = np.array([1.0])
 
-        max_deg = 25
         if norm_x is None:
-            norm_x = np.array([1, 1, np.sqrt(g / l), np.deg2rad(max_deg)])
+            x_max = 3.0
+            x_dot_max = 5.0
+            max_deg = 30
+            norm_x = np.array([x_max, x_dot_max, np.deg2rad(max_deg), 2 * np.sqrt(g / l)])
 
         if norm_u is None:
             norm_u = self.u_max - self.u_min
@@ -732,7 +735,7 @@ class CartPole(Environment):
         self.clock.tick(self.delay)
 
     def state_to_obs(self, state, add_noise=False):
-        """ Represent the angles via sine/cosine components."""
+        """ Normalize the state and add observation noise"""
 
         obs = np.copy(state)
         noise = 0.
@@ -841,7 +844,7 @@ class CartPole(Environment):
         cart_coords = (cart_x, 0.0)
         img_coords_pole_0 = self.convert_coords(cart_coords)
         img_coords_pole_1 = self.convert_coords(
-            self._single_pend_top_pos(self.state_to_obs(self.current_state)))
+            self._single_pend_top_pos(self.current_state))
 
         pole_color = (0, 255, 255)
         pygame.draw.line(self.screen, pole_color, img_coords_pole_0, img_coords_pole_1,
@@ -924,7 +927,7 @@ class CartPole(Environment):
 
         max_deg = 25
         max_dtheta = 1.2
-        max_dx = 1
+        max_dx = 1.66
         lim_x_safe = [-4, 2.6]
 
         max_rad = np.deg2rad(max_deg)
@@ -932,7 +935,6 @@ class CartPole(Environment):
         # Safety constraints
         # -max_dtheta <dtheta <= max_dtheta
         h_0_mat = np.asarray([0., 0., 7.25, 1.])[None, :]
-        # h_0_mat = np.asarray([0.,0.,4,1.])[None,:]
         h_0_vec = np.array([1.])[:, None]
 
         h_1_mat = -h_0_mat
@@ -965,6 +967,7 @@ class CartPole(Environment):
         # normalize safety bounds
         self.h_mat_safe = np.vstack(
             (h_0_mat, h_1_mat, h_2_mat, h_3_mat, h_4_mat, h_5_mat, h_6_mat, h_7_mat))
+
         self.h_safe = np.vstack(
             (h_0_vec, h_1_vec, h_2_vec, h_3_vec, h_4_vec, h_5_vec, h_6_vec, h_7_vec))
 
@@ -1034,12 +1037,6 @@ class CartPole(Environment):
         """
 
         """
-        if not self.current_state is None:
-            x_pos = self.current_state[0]
-            if x_pos > 0.9:
-                return np.random.rand(self.n_u) * self.u_min
-            if x_pos < 0.1:
-                return np.random.rand(self.n_u) * self.u_max
 
         return np.random.rand(self.n_u) * (self.u_max - self.u_min) + self.u_min
 
