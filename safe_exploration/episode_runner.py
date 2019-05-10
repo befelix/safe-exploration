@@ -38,20 +38,22 @@ def run_episodic(conf, visualize=False):
         env = create_env(conf.env_name, conf.env_options)
         solver, safe_policy = create_solver(conf, env)
 
-        X, y = generate_initial_samples(env, conf, conf.relative_dynamics, solver,
+        solver.init_solver(conf.cost)
+        if conf.init_mode is None:
+            X = None
+            y = None
+        else:
+            X, y = generate_initial_samples(env, conf, conf.relative_dynamics, solver,
                                         safe_policy)
+            solver.update_model(X, y, opt_hyp=conf.train_gp, reinitialize_solver=True)
 
         X_list = [X]
         y_list = [y]
         exit_codes_k = []
         safety_failure_k = []
         cc_k = []
+
         for i in range(conf.n_ep):
-
-            solver.update_model(X, y, opt_hyp=conf.train_gp, reinitialize_solver=False)
-
-            if i == 0:
-                solver.init_solver(conf.cost)
 
             xx, yy, cc, exit_codes_i, safety_failure = do_rollout(
                 env, conf.n_steps,
@@ -62,14 +64,20 @@ def run_episodic(conf, visualize=False):
                 render=conf.render,
                 obs_frequency=conf.obs_frequency)
 
-            X = np.vstack((X, xx))
-            y = np.vstack((y, yy))
+            if X is None:
+                X = xx
+                y = yy
+            else:
+                X = np.vstack((X, xx))
+                y = np.vstack((y, yy))
 
             X_list += [xx]
             y_list += [yy]
             cc_k += [cc]
             exit_codes_k += [exit_codes_i]
             safety_failure_k += [safety_failure]
+
+            solver.update_model(X, y, opt_hyp=conf.train_gp, reinitialize_solver=True)
 
         exit_codes_all += [exit_codes_k]
         safety_failure_all += [safety_failure_k]
