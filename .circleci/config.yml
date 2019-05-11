@@ -35,6 +35,8 @@ jobs:
           name: Run tests
           environment:
             OPENBLAS_NUM_THREADS: 2
+            OMP_NUM_THREADS: 2
+            MKL_NUM_THREADS: 2
           command: |
             bash scripts/test_code.sh
 
