@@ -18,7 +18,9 @@ setup(
                     'visualization': ['matplotlib',
                              'pygame'],
                     'ssm_gpy':  ['GPy'],
-                    'ssm_pytorch': ['gpytorch==0.2.1','hessian @ https://github.com/mariogeiger/hessian/tarball/master#egg=hessian']},
+                    'ssm_pytorch': ['gpytorch==0.2.1',
+                                    'torch<1.1',
+                                    'hessian @ https://github.com/mariogeiger/hessian/tarball/master#egg=hessian']},
 
     classifiers=[
         # How mature is this project? Common values are
