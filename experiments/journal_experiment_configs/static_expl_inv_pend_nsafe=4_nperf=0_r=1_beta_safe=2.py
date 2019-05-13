@@ -4,14 +4,7 @@ Created on Tue Nov 21 18:09:14 2017
 
 @author: tkoller
 """
-import warnings
-import numpy as np
-import datetime
-
-from defaultconfig_exploration import DefaultConfigExploration
-from os.path import basename, splitext,dirname
-from os import makedirs, getcwd
-from shutil import copy
+from .defaultconfig_exploration import DefaultConfigExploration
 
 
 class Config(DefaultConfigExploration):
