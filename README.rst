@@ -2,6 +2,12 @@
  Learning-based Model Predictive Control for Safe Exploration
 =============================================================
 
+.. image:: https://circleci.com/gh/befelix/safe-exploration/tree/master.svg?style=svg
+    :target: https://circleci.com/gh/befelix/safe-exploration/tree/master
+    
+.. image:: https://travis-ci.com/befelix/safe-exploration.svg?branch=master
+    :target: https://travis-ci.com/befelix/safe-exploration
+
 This code accompanies the following paper:
 
 .. [1] T. Koller, F. Berkenkamp, M. Turchetta, A. Krause,
