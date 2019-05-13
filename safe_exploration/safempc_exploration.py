@@ -11,7 +11,7 @@ Created on Tue Nov 14 10:08:45 2017
 import casadi as cas
 import numpy as np
 from casadi import reshape as cas_reshape
-from casadi import sum1, sum2, SX, vertcat, mtimes
+from casadi import sum1, sum2, MX, vertcat, mtimes
 
 from .gp_reachability_casadi import lin_ellipsoid_safety_distance
 from .gp_reachability_casadi import multi_step_reachability as cas_multistep
@@ -32,14 +32,14 @@ class StaticSafeMPCExploration:
 
     """
 
-    def __init__(self, safempc, env):
+    def __init__(self, safempc, env, n_restarts_optimizer=1, sample_mean=None, sample_std=None, verbosity=1):
         """ Initialize with a pre-defined safempc object"""
         self.safempc = safempc
         self.env = env
         self.n_s = safempc.n_s
         self.n_u = safempc.n_u
         self.T = safempc.n_safe
-        self.gp = safempc.gp
+        self.gp = safempc.ssm
         self.l_mu = safempc.l_mu
         self.l_sigma = safempc.l_sigma
         self.beta_safety = safempc.beta_safety
@@ -54,7 +54,10 @@ class StaticSafeMPCExploration:
         self.h_obs = safempc.h_obs
         self.m_obs = safempc.m_obs
         self.m_safe = safempc.m_safe
-
+        self.n_restarts_optimizer = n_restarts_optimizer
+        self.sample_mean = sample_mean
+        self.sample_std = sample_std
+        self.verbosity = verbosity
         self.init_solver()
 
     def init_solver(self, cost_func=None):
@@ -67,21 +70,19 @@ class StaticSafeMPCExploration:
 
         """
 
-        u_0 = SX.sym("init_control", (self.n_u, 1))
-        k_ff_all = SX.sym("feed-forward control", (self.T - 1, self.n_u))
+        u_0 = MX.sym("init_control", (self.n_u, 1))
+        k_ff_all = MX.sym("feed-forward control", (self.T - 1, self.n_u))
         g = []
         lbg = []
         ubg = []
         g_name = []
 
-        p_0 = SX.sym("initial state", (self.n_s, 1))
+        p_0 = MX.sym("initial state", (self.n_s, 1))
 
-        k_fb_0 = SX.sym("base feedback matrices", (self.T - 1, self.n_s * self.n_u))
-
-        k_fb_safe_ctrl = SX.zeros(self.n_u, self.n_s)
-        p_all, q_all, gp_sigma_pred_safe_all = cas_multistep(p_0, u_0, k_fb_0,
+        k_fb_safe_ctrl = MX.sym("Feedback term", (self.n_u, self.n_s))
+        p_all, q_all, gp_sigma_pred_safe_all = cas_multistep(p_0, u_0,
                                                              k_fb_safe_ctrl, k_ff_all,
-                                                             self.gp, self.l_mu,
+                                                             self.gp.get_forward_model_casadi(True), self.l_mu,
                                                              self.l_sigma,
                                                              self.beta_safety, self.a,
                                                              self.b,
@@ -89,11 +90,11 @@ class StaticSafeMPCExploration:
 
         # generate open_loop trajectory function [vertcat(x_0,u_0)],[f_x])
         self.f_multistep_eval = cas.Function("safe_multistep",
-                                             [p_0, u_0, k_fb_0, k_ff_all],
+                                             [p_0, u_0, k_fb_safe_ctrl, k_ff_all],
                                              [p_all, q_all])
 
         g_safe, lbg_safe, ubg_safe, g_names_safe = self.generate_safety_constraints(
-            p_all, q_all, u_0, k_fb_0, k_fb_safe_ctrl, k_ff_all)
+            p_all, q_all, u_0, k_fb_safe_ctrl, k_ff_all)
         g = vertcat(g, g_safe)
         lbg += lbg_safe
         ubg += ubg_safe
@@ -105,7 +106,7 @@ class StaticSafeMPCExploration:
             cost = cost_func(p_all, q_all, gp_sigma_pred_safe_all, u_0, k_ff_all)
 
         opt_vars = vertcat(p_0, u_0, k_ff_all.reshape((-1, 1)))
-        opt_params = vertcat(k_fb_0.reshape((-1, 1)))
+        opt_params = vertcat(k_fb_safe_ctrl.reshape((-1, 1)))
 
         prob = {'f': cost, 'x': opt_vars, 'p': opt_params, 'g': g}
 
@@ -124,7 +125,7 @@ class StaticSafeMPCExploration:
         self.lbg = lbg
         self.ubg = ubg
 
-    def generate_safety_constraints(self, p_all, q_all, u_0, k_fb_0, k_fb_ctrl,
+    def generate_safety_constraints(self, p_all, q_all, u_0, k_fb_ctrl,
                                     k_ff_all):
         """ Generate all safety constraints
 
@@ -161,7 +162,7 @@ class StaticSafeMPCExploration:
                 p_i = p_all[i, :].T
                 q_i = q_all[i, :].reshape((self.n_s, self.n_s))
                 k_ff_i = k_ff_all[i, :].reshape((self.n_u, 1))
-                k_fb_i = (k_fb_0[i] + k_fb_ctrl).reshape((self.n_u, self.n_s))
+                k_fb_i = k_fb_ctrl
 
                 g_u_i, lbg_u_i, ubg_u_i = self._generate_control_constraint(k_ff_i, q_i,
                                                                             k_fb_i)
@@ -240,10 +241,8 @@ class StaticSafeMPCExploration:
 
         return g, [-cas.inf] * 2 * n_u, [0] * 2 * n_u
 
-    def find_max_variance(self, x_0, n_restarts=1, ilqr_init=False,
-                          sample_mean=None,
-                          sample_var=None,
-                          verbosity=2, beta_safety=None):
+    def find_max_variance(self, x0,
+                          sol_verbose=False):
         """ Find the most informative sample in the space constrained by the mpc structure
 
         Parameters
@@ -269,22 +268,20 @@ class StaticSafeMPCExploration:
         x_best = None
         u_best = None
 
-        for i in range(n_restarts):
+        for i in range(self.n_restarts_optimizer):
 
-            x_0 = self.env._sample_start_state(sample_mean, sample_var)[:,
+            x_0 = self.env._sample_start_state(self.sample_mean, self.sample_std)[:,
                   None]  # sample initial state
 
             if self.T > 1:
                 u_0 = self.env.random_action()[:, None]
 
                 k_fb_lqr = self.safempc.get_lqr_feedback()
-                k_fb_0 = np.zeros((self.T - 1, self.n_s * self.n_u))
                 k_ff_0 = np.zeros((self.T - 1, self.n_u))
                 for j in range(self.T - 1):
                     k_ff_0[j, :] = self.env.random_action()
-                    k_fb_0[j, :] = cas_reshape(k_fb_lqr, (1, -1))
 
-                params_0 = cas_reshape(k_fb_0, (-1, 1))
+                params_0 = cas_reshape(k_fb_lqr, (-1, 1))
                 vars_0 = np.vstack((x_0, u_0, cas_reshape(k_ff_0, (-1, 1))))
             else:
                 u_0 = self.env.random_action()[:, None]
@@ -307,9 +304,9 @@ class StaticSafeMPCExploration:
                     sigma_best = sigm_i
 
                     z_i = np.vstack((x_best, u_best)).T
-                    if verbosity > 0:
+                    if self.verbosity > 0:
                         print(("New optimal sigma found at iteration {}".format(i)))
-                        if verbosity > 1:
+                        if self.verbosity > 1:
                             print((
                                 "New feasible solution with sigma sum {} found".format(
                                     str(sigm_i))))
@@ -319,11 +316,11 @@ class StaticSafeMPCExploration:
     def update_model(self, x, y, train=False, replace_old=False):
         """ Simple wrapper around the update_model function of SafeMPC"""
         self.safempc.update_model(x, y, train, replace_old)
-        self.gp = self.safempc.gp
+        self.gp = self.safempc.ssm
         self.init_solver()
 
     def get_information_gain(self):
-        return self.safempc.gp.information_gain()
+        return self.safempc.ssm.information_gain()
 
     def _is_feasible(self, g, lbg, ubg, feas_tol=1e-7):
         """ """
@@ -348,11 +345,11 @@ class DynamicSafeMPCExploration:
 
     def find_max_variance(self, x_0, sol_verbose=False):
         if sol_verbose:
-            u_apply, feasible, safe_ctrl_applied, k_fb, k_ff, p_ctrl, q_all = self.safempc.get_action(
+            u_apply, feasible, _, k_fb, k_ff, p_ctrl, q_all, _ = self.safempc.get_action(
                 x_0, sol_verbose=True)
 
             return x_0[:,
-                   None], u_apply, feasible, safe_ctrl_applied, k_fb, k_ff, p_ctrl, q_all
+                   None], u_apply, feasible, k_fb, k_ff, p_ctrl, q_all
         else:
             u_apply, _ = self.safempc.get_action(x_0)
             return x_0[:, None], u_apply[:, None]
@@ -362,4 +359,4 @@ class DynamicSafeMPCExploration:
         self.safempc.update_model(x, y, train, replace_old)
 
     def get_information_gain(self):
-        return self.safempc.gp.information_gain()
+        return self.safempc.ssm.information_gain()
