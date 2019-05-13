@@ -4,8 +4,6 @@ Created on Tue Nov 21 18:09:14 2017
 
 @author: tkoller
 """
-
-import numpy as np
 import warnings
 import datetime
 

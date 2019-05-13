@@ -6,7 +6,7 @@ Created on Tue Nov 21 18:09:14 2017
 """
 
 import numpy as np
-from default_config import DefaultConfig
+from .default_config import DefaultConfig
 
 class DefaultConfigExploration(DefaultConfig):
     """
@@ -21,6 +21,15 @@ class DefaultConfigExploration(DefaultConfig):
     env_options = dict()
     init_std = np.array([.05,.05])
     env_options["init_std"] = init_std
+    solver_type = "safempc"
+
+    init_mode = "safe_samples"
+    n_safe_samples = 25
+    c_max_probing_init = 3
+    c_max_probing_next_state = 2
+
+    init_std_initial_data = np.array([.1, .1])
+    init_m_initial_data = [0., 0.]
 
     # safempc
     beta_safety = 2.0
@@ -51,10 +60,16 @@ class DefaultConfigExploration(DefaultConfig):
     gp_dict_path = None
     gp_data_path = None # None means no initial training data
     m = 25 #subset of data of size m for training
-    kern_types = ["lin_mat52","lin_mat52"] #kernel type
-    train_gp = True # train the gp initially?
+    kern_types = ["lin_mat52", "lin_mat52"] #kernel type
+    train_gp = False # train the gp initially?
     retrain_gp = False # retrain the gp after every sample?
     gp_hyp = None
+    Z = None
+    lin_trafo_gp_input = None
+    gp_ns_in = 2
+    gp_ns_out = 2
+    relative_dynamics = False ## This should be False
+    # gp_ns_in, gp_ns_out = np.shape(lin_trafo_gp_input)
 
     # Similar setting as in befelix/safe_learning
     #with variances = [(a_true-a.b_true-b)**2]
@@ -73,16 +88,18 @@ class DefaultConfigExploration(DefaultConfig):
     gp_hyp = [kern_dict_0, kern_dict_1]
     #gp_hyp = None
     # exploration
+    n_experiments = 1
     n_iterations = 50
     n_restarts_optimizer = 20
 
     #general options
-    visualize = False
+    verify_safety = False
+    visualize = True
     save_results = True
     save_vis = True
     save_dir = None #the directory such that the overall save location is save_path_base/save_dir/
     save_path_base = "results_exploration" #the directory such that the overall save location is save_path_base/save_dir/
     data_savename = None
 
-    def __init__(self,file_path):
+    def __init__(self, file_path):
         super(DefaultConfigExploration,self).create_savedirs(file_path)
