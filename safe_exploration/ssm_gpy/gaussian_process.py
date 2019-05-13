@@ -4,6 +4,8 @@ import GPy
 import numpy as np
 from .gp_models_utils_casadi import gp_pred_function, _get_kernel_function
 from ..state_space_models import StateSpaceModel
+from GPy.util.linalg import pdinv
+import numpy.linalg as nLa
 from casadi import horzcat
 import warnings
 from sklearn import cluster
