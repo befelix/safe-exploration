@@ -20,7 +20,7 @@ except:
     _has_matplotlib = False
 
 
-@unavailable(not _has_matplotlib, "matplotlib", conditionals=["visualize"])
+@unavailable(not _has_matplotlib, "matplotlib", conditionals=["visualize, save_vis"])
 def run_exploration(conf, visualize=False):
     """ Runs exploration algorithm for static and dynamic exploration
 
@@ -47,8 +47,8 @@ def run_exploration(conf, visualize=False):
 
     static_exploration = conf.static_exploration
     n_iterations = conf.n_iterations
-    n_restarts_optimizer = conf.n_restarts_optimizer
     visualize = conf.visualize
+    save_vis = conf.save_vis
     save_path = conf.save_path
     verify_safety = conf.verify_safety
     n_experiments = conf.n_experiments
@@ -70,7 +70,8 @@ def run_exploration(conf, visualize=False):
         safempc.update_model(X, y, opt_hyp=conf.train_gp, reinitialize_solver=False)
 
         if static_exploration:
-            exploration_module = StaticSafeMPCExploration(safempc, env)
+            exploration_module = StaticSafeMPCExploration(safempc, env, conf.n_restarts_optimizer,
+                                                          conf.init_m_initial_data, conf.init_std_initial_data, conf.verbosity)
 
             if verify_safety:
                 warnings.warn("Safety_verification not possible in static mode")
@@ -94,11 +95,11 @@ def run_exploration(conf, visualize=False):
         c_sample = lambda it: (d_red[it], 0.0,
                                0.0)  # d_blue[it]) #use color code which transitions from green to blue
 
-        if visualize or save_vis:
+        if visualize or conf.save_vis:
             fig, ax = env.plot_safety_bounds(color="b")
 
             # plot the initial train set
-            x_train_init = exploration_module.safempc.gp.x_train
+            x_train_init = exploration_module.safempc.ssm.x_train
             c_black = (0., 0., 0.)
             n_train, _ = np.shape(x_train_init)
             for i in range(n_train):
@@ -107,7 +108,6 @@ def run_exploration(conf, visualize=False):
             ell = None
 
         safety_all = None
-        inside_ellipsod = None
         if verify_safety:
             safety_all = np.zeros((n_iterations,), dtype=np.bool)
             inside_ellipsoid = np.zeros((n_iterations, safempc.n_safe))
@@ -121,7 +121,7 @@ def run_exploration(conf, visualize=False):
             # find the most informative sample
 
             if verify_safety:
-                x_i, u_i, feasible, safe_ctrl_applied, k_fb_all, k_ff_all, p_ctrl, q_all = exploration_module.find_max_variance(
+                x_i, u_i, feasible, k_fb_all, k_ff_all, p_ctrl, q_all = exploration_module.find_max_variance(
                     x_i, sol_verbose=True)
 
                 if feasible:
@@ -155,8 +155,7 @@ def run_exploration(conf, visualize=False):
                             plt.pause(0.5)
 
             else:
-                x_i, u_i = exploration_module.find_max_variance(x_i,
-                                                                n_restarts_optimizer)
+                x_i, u_i = exploration_module.find_max_variance(x_i)
 
             if visualize or save_vis:
                 ax = env.plot_state(ax, x=x_i, color=c_sample(i), normalize=False)
@@ -177,7 +176,7 @@ def run_exploration(conf, visualize=False):
             # gather some information
             z_i = np.vstack((x_i, u_i)).T
             z_all[i] = z_i.squeeze()
-            mu_next, s2_next = exploration_module.safempc.gp.predict(z_i)
+            mu_next, s2_next = exploration_module.safempc.ssm.predict(z_i)
             pred_conf = np.sqrt(s2_next)
             sigm[i] = pred_conf.squeeze()
             x_next_prior[i, :] = safempc.eval_prior(x_i.T, u_i.T).squeeze()
@@ -187,7 +186,7 @@ def run_exploration(conf, visualize=False):
 
             # update model and information gain
             exploration_module.update_model(z_i, x_next_obs.reshape((1, env.n_s)),
-                                            train=conf.retrain_gp)
+                                            train=conf.retrain_gp, replace_old=False)
             inf_gain[i, :] = exploration_module.get_information_gain()
 
             x_i = x_next
@@ -199,13 +198,13 @@ def run_exploration(conf, visualize=False):
         l_x_next_obs_all += [x_next_obs_all]
         l_x_next_pred += [x_next_pred]
         l_x_next_prior += [x_next_prior]
-        l_gp_dict += [solver.gp.to_dict()]
+        l_gp_dict += [safempc.ssm.to_dict()]
 
         if not save_path is None:
             results_dict = save_results(save_path, l_sigm_sum, l_sigm, l_inf_gain,
                                         l_z_all, \
                                         l_x_next_obs_all, l_x_next_pred, x_next_prior, \
-                                        safempc.gp, safety_all, x_train_init)
+                                        safempc.ssm, safety_all, x_train_init)
 
 
 def save_results(save_path, sigm_sum, sigm, inf_gain, z_all, x_next_obs_all,
