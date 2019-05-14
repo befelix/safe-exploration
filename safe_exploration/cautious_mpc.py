@@ -63,7 +63,7 @@ class CautiousMPC:
         self.n_u = gp.n_u
         self.n_fail = T - 1
         self.beta_safety = beta_safety
-        self.perf_trajectory = perf_trajectory
+        self._set_perf_trajectory(perf_trajectory)
         self.opt_x0 = False
 
         self.cost_func = None
@@ -156,6 +156,7 @@ class CautiousMPC:
         mu_0 = MX.sym("mu_0", (self.n_s, 1))
 
         k_fb_all = [k_fb] * (self.T - 1)
+
         mu_all, sigma_all, sigma_g = self.perf_trajectory(mu_0, self.gp, k_ff, k_fb_all,
                                                           None, self.a, self.b,
                                                           self.lin_trafo_gp_input)
