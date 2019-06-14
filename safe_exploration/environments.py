@@ -709,7 +709,7 @@ class CartPole(Environment):
 
         self.target_ilqr = init_m
 
-        self.delay = 1.0  # fps
+        self.delay = 20.0  # fps
 
         self.D_cost = np.array([40, 20, 40])
         self.R_cost = np.array([1.0])
@@ -801,8 +801,8 @@ class CartPole(Environment):
         self.delay_vis()
 
     def _init_vis(self):
-        screen_width = 800  #400
-        screen_height = 600  #300
+        screen_width = 800  # 400
+        screen_height = 600  # 300
         axis = [-3.0, 3.0, -2.0, 2.0]
 
         self.screen = pygame.display.set_mode((screen_width, screen_height))
