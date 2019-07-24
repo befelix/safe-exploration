@@ -205,7 +205,7 @@ def before_test_safempc(request):
     x_0 = 0.2 * np.random.randn(n_s, 1)
 
     k_fb_0 = safe_mpc.get_lqr_feedback()
-    _, _, _, _, k_fb_apply, k_ff_apply, p_all, q_all, sol = safe_mpc.solve(x_0,
+    _, _, _, _, k_fb_apply, k_ff_apply, p_all, q_all, sol, _ = safe_mpc.solve(x_0,
                                                                         sol_verbose=True, q_0=q_0, k_fb_0=k_fb_0)
 
     return env, safe_mpc, None, None, k_fb_apply, k_ff_apply, p_all, q_all, sol, q_0, k_fb_0

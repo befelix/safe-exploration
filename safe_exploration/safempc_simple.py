@@ -20,7 +20,7 @@ DEFAULT_OPT_PERF = {'type_perf_traj': 'mean_equivalent', 'n_perf': 5, 'r': 1,
                     'perf_has_fb': True}
 
 ATTR_NAMES_ENV = ['l_mu', 'l_sigma', 'h_mat_safe', 'h_safe', 'lin_model', 'ctrl_bounds',
-                  'safe_policy', 'h_mat_obs', 'h_obs', 'dt']
+                  'safe_policy', 'h_mat_obs', 'h_obs']
 DEFAULT_OPT_ENV = {'ctrl_bounds': None, 'safe_policy': None, 'lin_model': None,
                    'h_mat_obs': None, 'h_obs': None}
 
@@ -210,11 +210,11 @@ class SimpleSafeMPC:
         if init_uncertainty:
             self._f_multistep_eval = cas.Function("safe_multistep",
                                                   [p_0, u_0, k_fb_safe, k_ff_all, q_0, k_fb_0],
-                                                  [p_all, q_all])
+                                                  [p_all, q_all, gp_sigma_pred_safe_all])
         else:
             self._f_multistep_eval = cas.Function("safe_multistep",
                                                   [p_0, u_0, k_fb_safe, k_ff_all],
-                                                  [p_all, q_all])
+                                                  [p_all, q_all, gp_sigma_pred_safe_all])
 
         g_safe, lbg_safe, ubg_safe, g_names_safe = self.generate_safety_constraints(
             p_all, q_all, u_0, k_fb_safe, k_ff_all, q_0, k_fb_0)
@@ -630,11 +630,11 @@ class SimpleSafeMPC:
             k_ff = np.array(self.k_ff_all)
 
         if self.init_uncertainty:
-            p_all, q_all = self._f_multistep_eval(x_0, u_0, k_fb, k_ff, q_0, k_fb_0)
+            p_all, q_all, gp_sigma_pred_safe_all = self._f_multistep_eval(x_0, u_0, k_fb, k_ff, q_0, k_fb_0)
         else:
-            p_all, q_all = self._f_multistep_eval(x_0, u_0, k_fb, k_ff)
+            p_all, q_all, gp_sigma_pred_safe_all = self._f_multistep_eval(x_0, u_0, k_fb, k_ff)
 
-        return p_all, q_all
+        return p_all, q_all, gp_sigma_pred_safe_all
 
     def get_action(self, x0_mu, lqr_only=False, sol_verbose=False):
         """ Wrapper around the solve function
@@ -728,6 +728,8 @@ class SimpleSafeMPC:
             params = vertcat(params, cas_reshape(q_0, (-1, 1)), cas_reshape(k_fb_0, (-1, 1)))
 
         crash = False
+         
+        sol = self.solver(x0=opt_vars_init, lbg=self.lbg, ubg=self.ubg, p=params)
         try:
             # pass
             sol = self.solver(x0=opt_vars_init, lbg=self.lbg, ubg=self.ubg, p=params)
@@ -816,7 +818,7 @@ class SimpleSafeMPC:
             k_fb_safe_output = array_of_vec_to_array_of_mat(np.copy(k_fb), self.n_u,
                                                             self.n_s)
 
-            p_safe, q_safe = self.get_safety_trajectory_openloop(x_0, u_apply,
+            p_safe, q_safe, gp_sigma_pred_safe_all = self.get_safety_trajectory_openloop(x_0, u_apply,
                                                                  np.copy(k_fb),
                                                                  k_ff_safe, q_0, k_fb_0)
 
@@ -903,7 +905,7 @@ class SimpleSafeMPC:
                     k_ff_safe_all = u_apply
 
         if sol_verbose:
-            return x_0, u_apply, feasible, success, k_fb_safe_output, k_ff_safe_all, p_safe, q_safe, sol
+            return x_0, u_apply, feasible, success, k_fb_safe_output, k_ff_safe_all, p_safe, q_safe, sol, gp_sigma_pred_safe_all
 
         return x_0, u_apply, success
 
