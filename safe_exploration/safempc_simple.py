@@ -727,8 +727,7 @@ class SimpleSafeMPC:
         if self.init_uncertainty:
             params = vertcat(params, cas_reshape(q_0, (-1, 1)), cas_reshape(k_fb_0, (-1, 1)))
 
-        crash = False
-         
+        crash = False 
         sol = self.solver(x0=opt_vars_init, lbg=self.lbg, ubg=self.ubg, p=params)
         try:
             # pass
