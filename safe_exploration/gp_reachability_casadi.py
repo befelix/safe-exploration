@@ -123,8 +123,8 @@ def onestep_reachability(p_center, ssm, k_ff, l_mu, l_sigma,
         return p_1, q_1, sigm_0
 
 
-def multi_step_reachability(p_0, u_0, k_fb_0, k_ff, gp, l_mu, l_sigm, c_safety=1.,
-                            a=None, b=None, t_z_gp=None):
+def multi_step_reachability(p_0, u_0, k_fb, k_ff, gp, l_mu, l_sigm, c_safety=1.,
+                            a=None, b=None, t_z_gp=None, q_0=None, k_fb_0=None):
     """Generate trajectory reachset by iteratively computing the one-step reachability.
 
     Parameters
@@ -133,7 +133,7 @@ def multi_step_reachability(p_0, u_0, k_fb_0, k_ff, gp, l_mu, l_sigm, c_safety=1
         Initial state
     u_0: n_u x 1 ndarray[casadi.sym]
         The initial action
-    k_fb_0: n_fb x (n_s * n_u) ndarray[casadi.SX]
+    k_fb: n_fb x (n_s * n_u) ndarray[casadi.SX]
         The initial guess of the feedback controls
     k_ff: n_fb x n_u ndarray[casadi.sym]
         The feed forward terms to optimize over
@@ -147,11 +147,15 @@ def multi_step_reachability(p_0, u_0, k_fb_0, k_ff, gp, l_mu, l_sigm, c_safety=1
     c_safety: float, optional
         The scaling of the semi-axes of the uncertainty matrix
         corresponding to a level-set of the gaussian pdf.
-    a: n_s x n_s ndarray[float]
+    a: n_s x n_s ndarray[float], optional
         The A matrix of the linear model Ax + Bu
-    b: n_s x n_u ndarray[float]
+    b: n_s x n_u ndarray[float], optional
         The B matrix of the linear model Ax + Bu
-
+    q_0: n_s x n_s ndarray[float], optional
+        The n_s x n_s s.p.d. shape matrix of the initial state
+    k_fb_0: n_u x n_s ndarray[float], optional
+        Initial state feedback control matrix only required
+        when q_0 is specified
     Returns
     -------
     p_all
@@ -160,10 +164,10 @@ def multi_step_reachability(p_0, u_0, k_fb_0, k_ff, gp, l_mu, l_sigm, c_safety=1
     n_s = np.shape(p_0)[0]
     n_u = np.shape(u_0)[0]
 
-    n_fb = np.shape(k_fb_0)[0]
+    n_fb = np.shape(k_fb)[0]
 
-    p_new, q_new, gp_pred_sigma = onestep_reachability(p_0, gp, u_0, l_mu, l_sigm, None,
-                                                       None, c_safety, a, b, t_z_gp)
+    p_new, q_new, gp_pred_sigma = onestep_reachability(p_0, gp, u_0, l_mu, l_sigm, q_0,
+                                                       k_fb_0, c_safety, a, b, t_z_gp)
 
     p_all = p_new.T
     q_all = q_new.reshape((1, n_s * n_s))
@@ -173,7 +177,7 @@ def multi_step_reachability(p_0, u_0, k_fb_0, k_ff, gp, l_mu, l_sigm, c_safety=1
         p_old = p_new
         q_old = q_new
         k_ff_i = cas_reshape(k_ff[i, :], (n_u, 1))
-        k_fb_i = cas_reshape(k_fb_0[i, :], (n_u, n_s))
+        k_fb_i = cas_reshape(k_fb[i, :], (n_u, n_s))
 
         p_new, q_new, gp_pred_sigma = onestep_reachability(p_old, gp, k_ff_i, l_mu,
                                                            l_sigm, q_old, k_fb_i,

@@ -150,12 +150,13 @@ class SimpleGPModel(StateSpaceModel):
         """
         return [_get_kernel_function(kern_type, hyp) for (kern_type, hyp) in zip(self.kern_types, self.hyp)]
 
-    def get_forward_model_casadi(self, compute_grads=False):
+    def get_forward_model_casadi(self, linearize_mu=False):
+
         """ Return a symbolic casadi function representing predictive mean/variance
 
         """
 
-        return lambda x_new, u_new: self.predict_casadi_symbolic(horzcat(x_new, u_new), compute_grads)
+        return lambda x_new, u_new: self.predict_casadi_symbolic(horzcat(x_new, u_new), linearize_mu)
 
     def predict_casadi_symbolic(self, x_new, compute_grads=False):
         """ Return a symbolic casadi function representing predictive mean/variance

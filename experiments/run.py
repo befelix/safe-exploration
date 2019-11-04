@@ -25,10 +25,10 @@ def create_parser():
 
     """)
     parser.add_argument("--scenario_config",
-                        default= "example_configs/static_mpc_exploration.py", type = str,
+                        default= "journal_experiment_configs/dynamic_expl_inv_pend_nsafe=2_nperf=0_r=1_beta_safe=2.py", type = str,
                         help= """ Create your own scenario by copying one of the scenarios
                         in the example_configs/ directory and changing the default options.\n
-                        Default scenario is static_mpc_exploration.py (see above for explanation) """)
+                        Default scenario is dynamic_expl_inv_pend_nsafe=2_nperf=0_r=1_beta_safe=2.py (see above for explanation) """)
     return parser
 
 

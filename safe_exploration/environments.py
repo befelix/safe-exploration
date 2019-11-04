@@ -801,8 +801,8 @@ class CartPole(Environment):
         self.delay_vis()
 
     def _init_vis(self):
-        screen_width = 400
-        screen_height = 300
+        screen_width = 800  # 400
+        screen_height = 600  # 300
         axis = [-3.0, 3.0, -2.0, 2.0]
 
         self.screen = pygame.display.set_mode((screen_width, screen_height))
@@ -818,7 +818,7 @@ class CartPole(Environment):
         """ Draw the screen for the cart pole environment."""
 
         # blacken screen
-        self.screen.fill((0, 0, 0))
+        self.screen.fill((192, 192, 192))
         # get the cart box coordinates
         scrwidt = self.display_width
         scrhght = self.display_height
@@ -848,7 +848,7 @@ class CartPole(Environment):
 
         pole_color = (0, 255, 255)
         pygame.draw.line(self.screen, pole_color, img_coords_pole_0, img_coords_pole_1,
-                         4)
+                         10)
 
         pygame.display.flip()
 

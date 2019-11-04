@@ -8,7 +8,7 @@ import warnings
 import numpy as np
 import datetime
 
-from defaultconfig_episode import DefaultConfigEpisode
+from .defaultconfig_episode import DefaultConfigEpisode
 from os.path import basename, splitext,dirname
 from os import makedirs, getcwd
 
@@ -42,7 +42,7 @@ class Config(DefaultConfigEpisode):
         """ """
         #self.cost = super._generate_cost()
         super(Config,self).__init__(__file__)
-	self.cost = super(Config,self)._generate_cost()
+	    self.cost = super(Config,self)._generate_cost()
         
             
             

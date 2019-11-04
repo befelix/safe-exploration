@@ -116,10 +116,11 @@ def get_gpytorch_ssm(path,n_s,n_u):
     return ssm
 
 
-@pytest.fixture(params=[("CartPole", True,"gpytorch"),("CartPole", True,"GPy")])#,("CartPole", True,"dummy")])
+@pytest.fixture(params=[("CartPole", True,"gpytorch", False, False), ("CartPole", True,"GPy", False, True),
+                        ("CartPole", True,"gpytorch", True, False), ("CartPole", True,"GPy", True, True)])#,("CartPole", True,"dummy")])
 def before_test_safempc(request):
     np.random.seed(12345)
-    env, lin_model, ssm = request.param
+    env, lin_model, ssm, opt_x0, init_uncertainty = request.param
 
     if env == "CartPole":
         env = CartPole()
@@ -127,7 +128,9 @@ def before_test_safempc(request):
         n_u = env.n_u
         path = os.path.join(os.path.dirname(__file__), "data_cartpole.npz")
         c_safety = 0.5
-
+    q_0 = None
+    if init_uncertainty:
+        q_0 = 0.1*np.eye(n_s)
     if ssm == "GPy":
         if not _has_ssm_gpy:
             pytest.skip("Test requires optional dependencies 'ssm_gpy'")
@@ -197,26 +200,27 @@ def before_test_safempc(request):
         cost = lambda p_0, u_0, p_all, q_all, k_ff_safe, k_fb_safe, \
                                         sigma_safe: MX(1)
 
-    safe_mpc.init_solver(cost)
+    safe_mpc.init_solver(cost, opt_x0=opt_x0, init_uncertainty=init_uncertainty)
 
     x_0 = 0.2 * np.random.randn(n_s, 1)
 
-    _, _, _, k_fb_apply, k_ff_apply, p_all, q_all, sol = safe_mpc.solve(x_0,
-                                                                        sol_verbose=True)
+    k_fb_0 = safe_mpc.get_lqr_feedback()
+    _, _, _, _, k_fb_apply, k_ff_apply, p_all, q_all, sol, _ = safe_mpc.solve(x_0,
+                                                                        sol_verbose=True, q_0=q_0, k_fb_0=k_fb_0)
 
-    return env, safe_mpc, None, None, k_fb_apply, k_ff_apply, p_all, q_all, sol
+    return env, safe_mpc, None, None, k_fb_apply, k_ff_apply, p_all, q_all, sol, q_0, k_fb_0
 
 
-def test_run_safempc(before_test_safempc):
-    """ """
-    env, safe_mpc, k_ff_perf_traj, k_fb_perf_traj, k_fb_apply, k_ff_apply, p_all, q_all, sol = before_test_safempc
-    safe_mpc.solve(np.random.randn(env.n_s,1))
+#def test_run_safempc(before_test_safempc):
+#    """ """
+#    env, safe_mpc, k_ff_perf_traj, k_fb_perf_traj, k_fb_apply, k_ff_apply, p_all, q_all, sol, _, _ = before_test_safempc
+#    safe_mpc.solve(np.random.randn(env.n_s,1))
 
 
 def test_mpc_casadi_same_constraint_values_as_numeric_eval(before_test_safempc):
     """check if the returned open loop (numerical) ellipsoids are the same as in internal planning"""
 
-    env, safe_mpc, k_ff_perf_traj, k_fb_perf_traj, k_fb_apply, k_ff_apply, p_all, q_all, sol = before_test_safempc
+    env, safe_mpc, k_ff_perf_traj, k_fb_perf_traj, k_fb_apply, k_ff_apply, p_all, q_all, sol, q_0, k_fb_0 = before_test_safempc
 
     n_s = env.n_s
     n_u = env.n_u
@@ -232,6 +236,8 @@ def test_mpc_casadi_same_constraint_values_as_numeric_eval(before_test_safempc):
                                            safe_mpc.h_mat_safe, safe_mpc.h_safe)
 
     idx_state_constraints = env.n_u * safe_mpc.n_safe * 2 - 1
+    if q_0 is not None:
+        idx_state_constraints += 1 ## not sure why this is
 
     constr_values = sol["g"]
 

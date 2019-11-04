@@ -182,7 +182,7 @@ class CautiousMPC:
         prob = {'f': cost, 'x': opt_vars, 'p': opt_params, 'g': g}
 
         opt = {'error_on_fail': False,
-               'ipopt': {'hessian_approximation': 'exact', "max_iter": 120,
+               'ipopt': {'hessian_approximation': 'limited-memory', "max_iter": 120,
                          "expect_infeasible_problem": "no",
                          'acceptable_tol': 1e-4, "acceptable_constr_viol_tol": 1e-5,
                          "bound_frac": 0.5, "start_with_resto": "no",
