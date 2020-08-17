@@ -21,7 +21,7 @@ Install the library including all dependencies with.
 
 ::
 
-  pip install -e ".[test,visualization,ssm_gpy,ssm_pytroch]"
+  pip install -e ".[test,visualization,ssm_gpy,ssm_pytorch]"
   
   
 `test` for the testing tools. `visualization` for visualizations such as matplotlib. `ssm_gpy` and `ssm_pytorch` for state space models based on `GPy` or `PyTorch`, respectively.
